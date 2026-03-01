@@ -1,0 +1,15 @@
+{
+  "name": "courier-ai",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "check": "NO_COLOR=1 biome check packages/",
+    "format": "NO_COLOR=1 biome format packages/ --write",
+    "build": "bun run check && NO_COLOR=1 bun run --filter courier_web build && NO_COLOR=1 bun run --filter courier_ext build",
+    "dev:web": "bun run check && NO_COLOR=1 bun run --filter courier_web typecheck && NO_COLOR=1 bun run --filter courier_web dev",
+    "dev:ext": "bun run check && NO_COLOR=1 bun run --filter courier_ext dev"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.4"
+  }
+}

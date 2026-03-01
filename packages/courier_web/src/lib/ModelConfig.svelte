@@ -1,0 +1,345 @@
+<script lang="ts">
+	import { untrack } from 'svelte';
+	import { PROVIDERS } from './constants';
+
+	let {
+		providerId = $bindable(),
+		modelId = $bindable(),
+		temperature = $bindable(),
+		maxTokens = $bindable(),
+	}: {
+		providerId: string;
+		modelId: string;
+		temperature: number;
+		maxTokens: number;
+	} = $props();
+
+	let currentProvider = $derived(PROVIDERS.find((p) => p.id === providerId) ?? PROVIDERS[0]);
+	let currentModel = $derived(
+		currentProvider.models.find((m) => m.id === modelId) ?? currentProvider.models[0]
+	);
+
+	// When provider changes, reset model if the current one isn't in the new provider's list
+	$effect(() => {
+		const provider = PROVIDERS.find((p) => p.id === providerId);
+		if (provider && !provider.models.find((m) => m.id === modelId)) {
+			modelId = provider.models[0].id;
+		}
+	});
+
+	// Clamp temperature and maxTokens to the selected model's limits
+	$effect(() => {
+		const params = currentModel.params;
+		untrack(() => {
+			if (maxTokens > params.maxOutputTokens) maxTokens = params.maxOutputTokens;
+			if (temperature > params.temperatureMax) temperature = params.defaultTemperature;
+		});
+	});
+</script>
+
+<aside class="model-config">
+	<div class="config-header">
+		<h2>Configuration</h2>
+	</div>
+
+	<div class="config-body">
+		<div class="field">
+			<label for="provider">Provider</label>
+			<div class="select-wrap">
+				<select id="provider" bind:value={providerId}>
+					{#each PROVIDERS as provider}
+						<option value={provider.id}>{provider.name}</option>
+					{/each}
+				</select>
+				<svg class="select-arrow" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+					<path d="M3 4.5l3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+				</svg>
+			</div>
+		</div>
+
+		<div class="field">
+			<label for="model">Model</label>
+			<div class="select-wrap">
+				<select id="model" bind:value={modelId}>
+					{#each currentProvider.models as model}
+						<option value={model.id}>{model.name}</option>
+					{/each}
+				</select>
+				<svg class="select-arrow" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+					<path d="M3 4.5l3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+				</svg>
+			</div>
+		</div>
+
+		{#if currentModel.params.temperatureMax > 0}
+			<div class="field">
+				<div class="label-row">
+					<label for="temperature">Temperature</label>
+					<span class="value-badge">{temperature.toFixed(2)}</span>
+				</div>
+				<input
+					id="temperature"
+					type="range"
+					min="0"
+					max={currentModel.params.temperatureMax}
+					step="0.01"
+					bind:value={temperature}
+				/>
+				<div class="range-hints">
+					<span>Precise</span>
+					<span>Creative</span>
+				</div>
+			</div>
+		{/if}
+
+		<div class="field">
+			<label for="max-tokens">Max Tokens</label>
+			<input
+				id="max-tokens"
+				type="number"
+				min="1"
+				max={currentModel.params.maxOutputTokens}
+				step="256"
+				bind:value={maxTokens}
+			/>
+		</div>
+	</div>
+
+	<div class="model-details">
+		<div class="details-header">
+			<h2>Model Details</h2>
+		</div>
+		<div class="details-body">
+			<div class="detail-row">
+				<span class="detail-label">Context Window</span>
+				<span class="detail-value">{currentModel.params.contextWindow.toLocaleString()}</span>
+			</div>
+			<div class="detail-row">
+				<span class="detail-label">Knowledge Cutoff</span>
+				<span class="detail-value">{currentModel.params.knowledgeCutoff}</span>
+			</div>
+		</div>
+	</div>
+</aside>
+
+<style>
+	.model-config {
+		width: 272px;
+		flex-shrink: 0;
+		display: flex;
+		flex-direction: column;
+		background-color: var(--color-surface);
+		border-left: 1px solid var(--color-border);
+		overflow-y: auto;
+	}
+
+	.model-config::-webkit-scrollbar {
+		width: 3px;
+	}
+
+	.model-config::-webkit-scrollbar-track {
+		background: transparent;
+	}
+
+	.model-config::-webkit-scrollbar-thumb {
+		background-color: var(--color-border);
+		border-radius: 3px;
+	}
+
+	.config-header {
+		padding: 18px 16px;
+		border-bottom: 1px solid var(--color-border);
+		flex-shrink: 0;
+	}
+
+	.config-header h2 {
+		margin: 0;
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--color-text-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.1em;
+	}
+
+	.config-body {
+		padding: 20px 16px;
+		display: flex;
+		flex-direction: column;
+		gap: 22px;
+	}
+
+	.field {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	label {
+		font-size: 13px;
+		font-weight: 500;
+		color: var(--color-text);
+	}
+
+	.label-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.value-badge {
+		font-size: 12px;
+		font-weight: 600;
+		color: var(--color-accent);
+		font-variant-numeric: tabular-nums;
+		background-color: color-mix(in srgb, var(--color-accent) 12%, transparent);
+		padding: 2px 7px;
+		border-radius: 4px;
+	}
+
+	/* Select */
+	.select-wrap {
+		position: relative;
+	}
+
+	select {
+		width: 100%;
+		padding: 9px 32px 9px 10px;
+		appearance: none;
+		background-color: var(--color-surface-raised);
+		border: 1px solid var(--color-border);
+		border-radius: 8px;
+		color: var(--color-text);
+		font-family: var(--font-sans);
+		font-size: 13px;
+		cursor: pointer;
+		box-sizing: border-box;
+		transition: border-color 0.15s;
+	}
+
+	select:focus {
+		outline: none;
+		border-color: var(--color-accent);
+	}
+
+	.select-arrow {
+		position: absolute;
+		right: 10px;
+		top: 50%;
+		transform: translateY(-50%);
+		pointer-events: none;
+		color: var(--color-text-muted);
+	}
+
+	/* Number input */
+	input[type='number'] {
+		width: 100%;
+		padding: 9px 10px;
+		background-color: var(--color-surface-raised);
+		border: 1px solid var(--color-border);
+		border-radius: 8px;
+		color: var(--color-text);
+		font-family: var(--font-sans);
+		font-size: 13px;
+		box-sizing: border-box;
+		transition: border-color 0.15s;
+	}
+
+	input[type='number']:focus {
+		outline: none;
+		border-color: var(--color-accent);
+	}
+
+	/* Range slider */
+	input[type='range'] {
+		-webkit-appearance: none;
+		appearance: none;
+		width: 100%;
+		height: 4px;
+		background: var(--color-surface-raised);
+		border: none;
+		border-radius: 4px;
+		padding: 0;
+		cursor: pointer;
+		outline: none;
+	}
+
+	input[type='range']::-webkit-slider-thumb {
+		-webkit-appearance: none;
+		appearance: none;
+		width: 16px;
+		height: 16px;
+		border-radius: 50%;
+		background-color: var(--color-accent);
+		cursor: pointer;
+		transition: background-color 0.15s, transform 0.1s;
+	}
+
+	input[type='range']::-webkit-slider-thumb:hover {
+		background-color: var(--color-accent-hover);
+		transform: scale(1.15);
+	}
+
+	input[type='range']::-moz-range-thumb {
+		width: 16px;
+		height: 16px;
+		border: none;
+		border-radius: 50%;
+		background-color: var(--color-accent);
+		cursor: pointer;
+	}
+
+	.range-hints {
+		display: flex;
+		justify-content: space-between;
+		font-size: 11px;
+		color: var(--color-text-muted);
+		margin-top: -4px;
+	}
+
+	/* Model Details */
+	.model-details {
+		border-top: 1px solid var(--color-border);
+		margin-top: auto;
+	}
+
+	.details-header {
+		padding: 18px 16px;
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	.details-header h2 {
+		margin: 0;
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--color-text-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.1em;
+	}
+
+	.details-body {
+		padding: 16px;
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+
+	.detail-row {
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+	}
+
+	.detail-label {
+		font-size: 11px;
+		font-weight: 500;
+		color: var(--color-text-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	.detail-value {
+		font-size: 13px;
+		color: var(--color-text);
+		font-variant-numeric: tabular-nums;
+	}
+</style>

@@ -1,1 +1,27 @@
-CLAUDE.md
+# notes/docs
+*.txt
+*.md
+
+# dependencies
+node_modules/
+
+# build outputs
+dist/
+.output/
+*.zip
+
+# wxt generated
+.wxt/
+
+# env / local overrides
+.env
+.env.*
+*.local
+
+# os
+.DS_Store
+Thumbs.db
+
+# editors/etc
+.vscode/
+.claude/
