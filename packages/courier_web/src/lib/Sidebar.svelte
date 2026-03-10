@@ -1,4 +1,6 @@
 <script lang="ts">
+	import SettingsPopover from './SettingsPopover.svelte';
+
 	interface Chat {
 		id: string;
 		title: string;
@@ -9,25 +11,69 @@
 	let {
 		chats,
 		activeChatId,
+		theme = $bindable(),
+		fontSizeIndex = $bindable(),
 		onnewchat,
 		onselectchat,
-		onsettings,
 	}: {
 		chats: Chat[];
 		activeChatId: string | null;
+		theme: string;
+		fontSizeIndex: number;
 		onnewchat: () => void;
 		onselectchat: (id: string) => void;
-		onsettings: () => void;
 	} = $props();
+
+	let showSettings = $state(false);
+
+	// Airmail diagonal stripe decoration — reversed direction (\), with beige gaps
+	const stripeH = 20;
+	const stripeW = 40; // width of each colored stripe
+	const gap = 40; // beige gap (equal width to colored stripes)
+	const pitch = stripeW + gap; // 80px per stripe slot
+	const sidebarW = 256;
+	const startI = -Math.ceil(stripeH / pitch) - 1;
+	const endI = Math.ceil(sidebarW / pitch) + 1;
+	const stripes = Array.from({ length: endI - startI + 1 }, (_, idx) => {
+		const i = startI + idx;
+		const x = i * pitch - 22; // offset so leftmost stripe is clipped by left edge
+		// Reversed direction: top edge is shifted right by stripeH, bottom is at x
+		return {
+			points: `${x + stripeH},0 ${x + stripeH + stripeW},0 ${x + stripeW},${stripeH} ${x},${stripeH}`,
+			red: i % 2 === 0,
+		};
+	});
 </script>
 
 <aside class="sidebar">
+	<svg
+		width={sidebarW}
+		height={stripeH}
+		viewBox="0 0 {sidebarW} {stripeH}"
+		class="airmail-stripe"
+		aria-hidden="true"
+	>
+		<defs>
+			<clipPath id="stripe-clip">
+				<rect width={sidebarW} height={stripeH} />
+			</clipPath>
+		</defs>
+		<g clip-path="url(#stripe-clip)">
+			<rect width={sidebarW} height={stripeH} fill="var(--color-bg)" />
+			{#each stripes as stripe}
+				<polygon
+					points={stripe.points}
+					fill={stripe.red ? 'var(--color-accent)' : 'var(--color-text)'}
+				/>
+			{/each}
+		</g>
+	</svg>
 	<div class="header">
-		<svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+		<svg width="32" height="32" viewBox="0 0 18 18" fill="none" aria-hidden="true" style="transform: translateY(-2px)">
 			<rect x="1" y="3" width="16" height="12" rx="2" stroke="currentColor" stroke-width="1.5" />
 			<path d="M1 6l8 5 8-5" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
 		</svg>
-		<span class="logo-text">Courier AI</span>
+		<span class="logo-text">CourierAI</span>
 	</div>
 
 	<div class="actions">
@@ -58,7 +104,12 @@
 	</nav>
 
 	<div class="footer">
-		<button type="button" class="settings-btn" onclick={onsettings}>
+		<button
+			type="button"
+			class="settings-btn"
+			class:active={showSettings}
+			onclick={() => (showSettings = !showSettings)}
+		>
 			<svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
 				<circle cx="7.5" cy="7.5" r="2.5" stroke="currentColor" stroke-width="1.5" />
 				<path
@@ -73,20 +124,30 @@
 	</div>
 </aside>
 
+{#if showSettings}
+	<SettingsPopover bind:theme bind:fontSizeIndex onclose={() => (showSettings = false)} />
+{/if}
+
 <style>
 	.sidebar {
 		width: 256px;
 		flex-shrink: 0;
 		display: flex;
 		flex-direction: column;
-		background-color: var(--color-surface);
+		background-color: var(--color-bg);
 		border-right: 1px solid var(--color-border);
 		overflow: hidden;
+	}
+
+	.airmail-stripe {
+		display: block;
+		flex-shrink: 0;
 	}
 
 	.header {
 		display: flex;
 		align-items: center;
+		justify-content: center;
 		gap: 10px;
 		padding: 18px 16px;
 		color: var(--color-text);
@@ -95,8 +156,9 @@
 	}
 
 	.logo-text {
-		font-size: 16px;
+		font-size: 34px;
 		font-weight: 600;
+		font-family: Courier, monospace;
 		letter-spacing: -0.02em;
 	}
 
@@ -116,7 +178,7 @@
 		color: #fff;
 		border: none;
 		border-radius: 8px;
-		font-size: 13px;
+		font-size: 0.8125rem;
 		font-weight: 500;
 		cursor: pointer;
 		transition: background-color 0.15s;
@@ -147,8 +209,8 @@
 
 	.empty {
 		padding: 20px 8px;
-		font-size: 13px;
-		color: var(--color-text-muted);
+		font-size: 0.8125rem;
+		color: var(--color-text);
 		text-align: center;
 	}
 
@@ -175,7 +237,7 @@
 
 	.chat-title {
 		display: block;
-		font-size: 13px;
+		font-size: 0.8125rem;
 		color: var(--color-text);
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -187,7 +249,7 @@
 	}
 
 	.footer {
-		padding: 10px 12px;
+		padding: 13px 12px;
 		border-top: 1px solid var(--color-border);
 		flex-shrink: 0;
 	}
@@ -197,12 +259,13 @@
 		align-items: center;
 		gap: 8px;
 		width: 100%;
-		padding: 8px 10px;
+		height: calc(20px + 0.875rem * 1.5);
+		padding: 0 10px;
 		background: none;
 		border: none;
 		border-radius: 6px;
-		font-size: 13px;
-		color: var(--color-text-muted);
+		font-size: 0.8125rem;
+		color: var(--color-text);
 		cursor: pointer;
 		transition: background-color 0.1s, color 0.1s;
 	}
@@ -210,5 +273,10 @@
 	.settings-btn:hover {
 		background-color: var(--color-surface-raised);
 		color: var(--color-text);
+	}
+
+	.settings-btn.active {
+		background-color: var(--color-surface-raised);
+		color: var(--color-accent);
 	}
 </style>

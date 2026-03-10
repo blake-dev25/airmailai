@@ -43,7 +43,7 @@
 		if (!text) return;
 		onsend(text);
 		inputText = '';
-		if (textareaEl) textareaEl.style.height = 'auto';
+		if (textareaEl) textareaEl.style.height = '';
 	}
 
 	function autoResize(e: Event) {
@@ -156,7 +156,7 @@
 	/* System Prompt */
 	.system-section {
 		flex-shrink: 0;
-		background-color: var(--color-surface);
+		background-color: var(--color-bg);
 		border-bottom: 1px solid var(--color-border);
 	}
 
@@ -165,15 +165,17 @@
 		align-items: center;
 		gap: 8px;
 		width: 100%;
-		padding: 11px 16px;
+		height: 44px;
+		padding: 0 16px;
 		background: none;
 		border: none;
-		font-size: 13px;
+		font-size: 0.8125rem;
 		font-weight: 500;
-		color: var(--color-text-muted);
+		color: var(--color-text);
 		cursor: pointer;
 		text-align: left;
 		transition: color 0.1s;
+		box-sizing: border-box;
 	}
 
 	.system-header:hover {
@@ -207,12 +209,12 @@
 		min-height: 80px;
 		max-height: 180px;
 		padding: 10px 12px;
-		background-color: var(--color-surface-raised);
+		background-color: var(--color-bg);
 		border: 1px solid var(--color-border);
 		border-radius: 8px;
 		color: var(--color-text);
 		font-family: var(--font-sans);
-		font-size: 13px;
+		font-size: 0.8125rem;
 		line-height: 1.6;
 		resize: vertical;
 		box-sizing: border-box;
@@ -220,7 +222,7 @@
 	}
 
 	.system-textarea::placeholder {
-		color: var(--color-text-muted);
+		color: var(--color-text);
 	}
 
 	.system-textarea:focus {
@@ -239,16 +241,7 @@
 	}
 
 	.messages::-webkit-scrollbar {
-		width: 3px;
-	}
-
-	.messages::-webkit-scrollbar-track {
-		background: transparent;
-	}
-
-	.messages::-webkit-scrollbar-thumb {
-		background-color: var(--color-border);
-		border-radius: 3px;
+		display: none;
 	}
 
 	.empty-state {
@@ -259,18 +252,18 @@
 		flex: 1;
 		height: 100%;
 		gap: 10px;
-		color: var(--color-text-muted);
+		color: var(--color-text);
 	}
 
 	.empty-state p {
 		margin: 0;
-		font-size: 15px;
+		font-size: 0.9375rem;
 		font-weight: 500;
-		color: var(--color-text-muted);
+		color: var(--color-text);
 	}
 
 	.empty-state .sub {
-		font-size: 13px;
+		font-size: 0.8125rem;
 		font-weight: 400;
 		text-align: center;
 		max-width: 280px;
@@ -289,11 +282,11 @@
 		max-width: 70%;
 		padding: 10px 14px;
 		border-radius: 14px;
-		font-size: 14px;
+		font-size: 0.875rem;
 		line-height: 1.65;
 		white-space: pre-wrap;
 		word-break: break-word;
-		background-color: var(--color-surface-raised);
+		background-color: var(--color-bg);
 		color: var(--color-text);
 		border-bottom-left-radius: 4px;
 	}
@@ -310,23 +303,22 @@
 		display: flex;
 		align-items: flex-end;
 		gap: 8px;
-		padding: 12px 16px 16px;
+		padding: 12px 16px;
 		border-top: 1px solid var(--color-border);
-		background-color: var(--color-surface);
+		background-color: var(--color-bg);
 		flex-shrink: 0;
 	}
 
 	.input {
 		flex: 1;
-		min-height: 42px;
 		max-height: 200px;
 		padding: 10px 14px;
-		background-color: var(--color-surface-raised);
+		background-color: var(--color-bg);
 		border: 1px solid var(--color-border);
 		border-radius: 10px;
 		color: var(--color-text);
 		font-family: var(--font-sans);
-		font-size: 14px;
+		font-size: 0.875rem;
 		line-height: 1.5;
 		resize: none;
 		box-sizing: border-box;
@@ -334,7 +326,7 @@
 	}
 
 	.input::placeholder {
-		color: var(--color-text-muted);
+		color: var(--color-text);
 	}
 
 	.input:focus {
@@ -342,9 +334,13 @@
 		border-color: var(--color-accent);
 	}
 
+	.input::-webkit-scrollbar {
+		display: none;
+	}
+
 	.send-btn {
-		width: 42px;
-		height: 42px;
+		width: calc(20px + 0.875rem * 1.5);
+		height: calc(20px + 0.875rem * 1.5);
 		display: flex;
 		align-items: center;
 		justify-content: center;

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import ChatPanel from './lib/ChatPanel.svelte';
-	import { PROVIDERS } from './lib/constants';
+	import { FONT_SIZES, PROVIDERS } from './lib/constants';
 	import ModelConfig from './lib/ModelConfig.svelte';
 	import Sidebar from './lib/Sidebar.svelte';
 
@@ -15,6 +15,24 @@
 		messages: Message[];
 		createdAt: number;
 	}
+
+	// Theme
+	let theme = $state('airmail-warm');
+	$effect(() => {
+		document.documentElement.dataset.theme = theme;
+	});
+
+	// Font size — default based on screen width
+	function getDefaultFontSizeIndex(): number {
+		const w = window.screen.width;
+		if (w <= 1366) return 3; // 16px — small laptop
+		if (w <= 1920) return 4; // 18px — standard
+		return 4; // 18px — large/4K
+	}
+	let fontSizeIndex = $state(getDefaultFontSizeIndex());
+	$effect(() => {
+		document.documentElement.style.fontSize = `${FONT_SIZES[fontSizeIndex]}px`;
+	});
 
 	// Model config
 	const defaultModel = PROVIDERS[0].models[1]; // Sonnet as default
@@ -60,7 +78,7 @@
 			const assistantMsg: Message = {
 				role: 'assistant',
 				content:
-					'The Courier AI extension is not yet connected. Install the extension and configure your API keys to start chatting.',
+					'The CourierAI extension is not yet connected. Install the extension and configure your API keys to start chatting.',
 			};
 			chats = chats.map((c) =>
 				c.id === chatId ? { ...c, messages: [...c.messages, assistantMsg] } : c
@@ -73,9 +91,10 @@
 	<Sidebar
 		{chats}
 		{activeChatId}
+		bind:theme
+		bind:fontSizeIndex
 		onnewchat={newChat}
 		onselectchat={(id) => (activeChatId = id)}
-		onsettings={() => {}}
 	/>
 	<ChatPanel messages={activeMessages} modelName={activeModelName} bind:systemPrompt onsend={sendMessage} />
 	<ModelConfig bind:providerId bind:modelId bind:temperature bind:maxTokens />

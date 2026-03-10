@@ -5,28 +5,38 @@
 	--font-mono: ui-monospace, monospace;
 }
 
-/* Base theme (dark default) */
-:root {
-	--color-bg: #111113;
-	--color-surface: #1c1c1f;
-	--color-surface-raised: #28282d;
-	--color-border: #2e2e33;
-	--color-text: #ededef;
-	--color-text-muted: #8b8b94;
-	--color-accent: #7c6df7;
-	--color-accent-hover: #6b5ce6;
+/* Airmail Warm — #F0E1C3 (beige), #150F27 (navy), #C14227 (red) */
+:root,
+[data-theme="airmail-warm"] {
+	--color-bg: #f0e1c3;
+	--color-surface-raised: #e5d2a8;
+	--color-border: #d4bc87;
+	--color-text: #150f27;
+	--color-text-muted: #4d3f72;
+	--color-accent: #c14227;
+	--color-accent-hover: #a33820;
 }
 
-/* Light theme */
-[data-theme="light"] {
-	--color-bg: #f9f9fb;
-	--color-surface: #ffffff;
-	--color-surface-raised: #f0f0f5;
-	--color-border: #e2e2e8;
-	--color-text: #111113;
-	--color-text-muted: #5c5c66;
-	--color-accent: #6b5ce6;
-	--color-accent-hover: #5a4cd4;
+/* Airmail Light — #DFE0DA (sage), #282C5C (navy), #BD3C2F (red) */
+[data-theme="airmail-light"] {
+	--color-bg: #dfe0da;
+	--color-surface-raised: #d2d3cd;
+	--color-border: #bfc0b9;
+	--color-text: #282c5c;
+	--color-text-muted: #4e5290;
+	--color-accent: #bd3c2f;
+	--color-accent-hover: #a03327;
+}
+
+/* Airmail Dark — #3E3820 (dark khaki), #EAD9A8 (aged paper), #C94F2C (red) */
+[data-theme="airmail-dark"] {
+	--color-bg: #3e3820;
+	--color-surface-raised: #4e4a2c;
+	--color-border: #6b6440;
+	--color-text: #ead9a8;
+	--color-text-muted: #a09660;
+	--color-accent: #c94f2c;
+	--color-accent-hover: #ad4225;
 }
 
 body {

@@ -1,3 +1,11 @@
+export const FONT_SIZES = [10, 12, 14, 16, 18, 20, 22, 24] as const;
+
+export const THEMES: ReadonlyArray<{ id: string; name: string }> = [
+	{ id: 'airmail-warm', name: 'Airmail Warm' },
+	{ id: 'airmail-light', name: 'Airmail Light' },
+	{ id: 'airmail-dark', name: 'Airmail Dark' },
+];
+
 export interface ModelParams {
 	contextWindow: number;
 	maxOutputTokens: number;
@@ -19,7 +27,7 @@ export interface ProviderOption {
 	models: ModelOption[];
 }
 
-// DO NOT MODIFY IDS/NAMES
+// DO NOT MODIFY IDS/NAMES IN PROVIDERS
 export const PROVIDERS: ProviderOption[] = [
 	{
 		id: 'anthropic',

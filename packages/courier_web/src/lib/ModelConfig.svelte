@@ -14,6 +14,82 @@
 		maxTokens: number;
 	} = $props();
 
+	let badgeEl = $state<HTMLSpanElement | undefined>(undefined);
+	let badgeFocused = false;
+
+	$effect(() => {
+		if (badgeEl && !badgeFocused) {
+			badgeEl.textContent = temperature.toFixed(2);
+		}
+	});
+
+	function onBadgeFocus() {
+		badgeFocused = true;
+	}
+
+	function onBadgeBlur() {
+		badgeFocused = false;
+		const val = parseFloat(badgeEl?.textContent ?? '');
+		temperature = Number.isNaN(val)
+			? temperature
+			: Math.max(0, Math.min(currentModel.params.temperatureMax, val));
+		if (badgeEl) badgeEl.textContent = temperature.toFixed(2);
+	}
+
+	function onBadgeKeydown(e: KeyboardEvent) {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			(e.target as HTMLElement).blur();
+		}
+	}
+
+	let maxTokensBadgeEl = $state<HTMLSpanElement | undefined>(undefined);
+	let maxTokensBadgeFocused = false;
+
+	let maxTokensSnaps = $derived.by(() => {
+		const max = currentModel.params.maxOutputTokens;
+		const snaps: number[] = [1];
+		for (let v = 4096; v < max; v += 4096) snaps.push(v);
+		if (snaps[snaps.length - 1] !== max) snaps.push(max);
+		return snaps;
+	});
+
+	let maxTokensSliderIndex = $derived(
+		maxTokensSnaps.reduce(
+			(best, _, i) =>
+				Math.abs(maxTokensSnaps[i] - maxTokens) < Math.abs(maxTokensSnaps[best] - maxTokens)
+					? i
+					: best,
+			0,
+		),
+	);
+
+	$effect(() => {
+		if (maxTokensBadgeEl && !maxTokensBadgeFocused) {
+			maxTokensBadgeEl.textContent = String(maxTokens);
+		}
+	});
+
+	function onMaxTokensBadgeFocus() {
+		maxTokensBadgeFocused = true;
+	}
+
+	function onMaxTokensBadgeBlur() {
+		maxTokensBadgeFocused = false;
+		const val = parseInt(maxTokensBadgeEl?.textContent ?? '', 10);
+		maxTokens = Number.isNaN(val)
+			? maxTokens
+			: Math.max(1, Math.min(currentModel.params.maxOutputTokens, val));
+		if (maxTokensBadgeEl) maxTokensBadgeEl.textContent = String(maxTokens);
+	}
+
+	function onMaxTokensBadgeKeydown(e: KeyboardEvent) {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			(e.target as HTMLElement).blur();
+		}
+	}
+
 	let currentProvider = $derived(PROVIDERS.find((p) => p.id === providerId) ?? PROVIDERS[0]);
 	let currentModel = $derived(
 		currentProvider.models.find((m) => m.id === modelId) ?? currentProvider.models[0]
@@ -32,6 +108,7 @@
 		const params = currentModel.params;
 		untrack(() => {
 			if (maxTokens > params.maxOutputTokens) maxTokens = params.maxOutputTokens;
+			if (maxTokens < 1) maxTokens = 1;
 			if (temperature > params.temperatureMax) temperature = params.defaultTemperature;
 		});
 	});
@@ -75,7 +152,19 @@
 			<div class="field">
 				<div class="label-row">
 					<label for="temperature">Temperature</label>
-					<span class="value-badge">{temperature.toFixed(2)}</span>
+					<span
+						class="value-badge"
+						role="spinbutton"
+						contenteditable="true"
+						aria-valuenow={temperature}
+						aria-valuemin={0}
+						aria-valuemax={currentModel.params.temperatureMax}
+						bind:this={badgeEl}
+						onfocus={onBadgeFocus}
+						onblur={onBadgeBlur}
+						onkeydown={onBadgeKeydown}
+					>{temperature.toFixed(2)}</span
+				>
 				</div>
 				<input
 					id="temperature"
@@ -93,14 +182,31 @@
 		{/if}
 
 		<div class="field">
-			<label for="max-tokens">Max Tokens</label>
+			<div class="label-row">
+				<label for="max-tokens">Max Output Tokens</label>
+				<span
+					class="value-badge"
+					role="spinbutton"
+					contenteditable="true"
+					aria-valuenow={maxTokens}
+					aria-valuemin={1}
+					aria-valuemax={currentModel.params.maxOutputTokens}
+					bind:this={maxTokensBadgeEl}
+					onfocus={onMaxTokensBadgeFocus}
+					onblur={onMaxTokensBadgeBlur}
+					onkeydown={onMaxTokensBadgeKeydown}
+				>{maxTokens}</span>
+			</div>
 			<input
 				id="max-tokens"
-				type="number"
-				min="1"
-				max={currentModel.params.maxOutputTokens}
-				step="256"
-				bind:value={maxTokens}
+				type="range"
+				min="0"
+				max={maxTokensSnaps.length - 1}
+				step="1"
+				value={maxTokensSliderIndex}
+				oninput={(e) => {
+					maxTokens = maxTokensSnaps[+(e.currentTarget as HTMLInputElement).value];
+				}}
 			/>
 		</div>
 	</div>
@@ -111,7 +217,7 @@
 		</div>
 		<div class="details-body">
 			<div class="detail-row">
-				<span class="detail-label">Context Window</span>
+				<span class="detail-label">Max Input Tokens</span>
 				<span class="detail-value">{currentModel.params.contextWindow.toLocaleString()}</span>
 			</div>
 			<div class="detail-row">
@@ -120,6 +226,8 @@
 			</div>
 		</div>
 	</div>
+
+	<div class="made-by">Made with &lt;3 by @blake__dev and Claude</div>
 </aside>
 
 <style>
@@ -128,7 +236,7 @@
 		flex-shrink: 0;
 		display: flex;
 		flex-direction: column;
-		background-color: var(--color-surface);
+		background-color: var(--color-bg);
 		border-left: 1px solid var(--color-border);
 		overflow-y: auto;
 	}
@@ -147,18 +255,22 @@
 	}
 
 	.config-header {
-		padding: 18px 16px;
+		display: flex;
+		align-items: center;
+		height: 45px;
+		padding: 0 16px;
 		border-bottom: 1px solid var(--color-border);
 		flex-shrink: 0;
 	}
 
 	.config-header h2 {
 		margin: 0;
-		font-size: 11px;
+		font-size: 0.6875rem;
 		font-weight: 600;
-		color: var(--color-text-muted);
+		color: var(--color-text);
 		text-transform: uppercase;
 		letter-spacing: 0.1em;
+		line-height: 1;
 	}
 
 	.config-body {
@@ -175,7 +287,7 @@
 	}
 
 	label {
-		font-size: 13px;
+		font-size: 0.8125rem;
 		font-weight: 500;
 		color: var(--color-text);
 	}
@@ -187,13 +299,16 @@
 	}
 
 	.value-badge {
-		font-size: 12px;
+		font-size: 0.75rem;
 		font-weight: 600;
 		color: var(--color-accent);
 		font-variant-numeric: tabular-nums;
 		background-color: color-mix(in srgb, var(--color-accent) 12%, transparent);
 		padding: 2px 7px;
 		border-radius: 4px;
+		cursor: text;
+		outline: none;
+		min-width: 1ch;
 	}
 
 	/* Select */
@@ -205,12 +320,12 @@
 		width: 100%;
 		padding: 9px 32px 9px 10px;
 		appearance: none;
-		background-color: var(--color-surface-raised);
+		background-color: var(--color-bg);
 		border: 1px solid var(--color-border);
 		border-radius: 8px;
 		color: var(--color-text);
 		font-family: var(--font-sans);
-		font-size: 13px;
+		font-size: 0.8125rem;
 		cursor: pointer;
 		box-sizing: border-box;
 		transition: border-color 0.15s;
@@ -227,7 +342,7 @@
 		top: 50%;
 		transform: translateY(-50%);
 		pointer-events: none;
-		color: var(--color-text-muted);
+		color: var(--color-text);
 	}
 
 	/* Number input */
@@ -239,7 +354,7 @@
 		border-radius: 8px;
 		color: var(--color-text);
 		font-family: var(--font-sans);
-		font-size: 13px;
+		font-size: 0.8125rem;
 		box-sizing: border-box;
 		transition: border-color 0.15s;
 	}
@@ -291,8 +406,8 @@
 	.range-hints {
 		display: flex;
 		justify-content: space-between;
-		font-size: 11px;
-		color: var(--color-text-muted);
+		font-size: 0.6875rem;
+		color: var(--color-text);
 		margin-top: -4px;
 	}
 
@@ -309,9 +424,9 @@
 
 	.details-header h2 {
 		margin: 0;
-		font-size: 11px;
+		font-size: 0.6875rem;
 		font-weight: 600;
-		color: var(--color-text-muted);
+		color: var(--color-text);
 		text-transform: uppercase;
 		letter-spacing: 0.1em;
 	}
@@ -330,16 +445,25 @@
 	}
 
 	.detail-label {
-		font-size: 11px;
+		font-size: 0.6875rem;
 		font-weight: 500;
-		color: var(--color-text-muted);
+		color: var(--color-text);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 	}
 
 	.detail-value {
-		font-size: 13px;
+		font-size: 0.8125rem;
 		color: var(--color-text);
 		font-variant-numeric: tabular-nums;
+	}
+
+	.made-by {
+		padding: 12px 16px;
+		font-size: 0.6875rem;
+		color: var(--color-text);
+		opacity: 0.4;
+		text-align: center;
+		border-top: 1px solid var(--color-border);
 	}
 </style>
