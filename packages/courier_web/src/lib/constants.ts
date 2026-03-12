@@ -4,6 +4,10 @@ export const THEMES: ReadonlyArray<{ id: string; name: string }> = [
 	{ id: 'airmail-warm', name: 'Airmail Warm' },
 	{ id: 'airmail-light', name: 'Airmail Light' },
 	{ id: 'airmail-dark', name: 'Airmail Dark' },
+	{ id: 'solarized-light', name: 'Solarized Light' },
+	{ id: 'solarized-dark', name: 'Solarized Dark' },
+	{ id: 'retro-sci-fi-hud', name: 'Retro Sci-Fi HUD' },
+	{ id: 'digital-rain', name: 'Digital Rain' },
 ];
 
 export interface ModelParams {

@@ -9,11 +9,13 @@
 	let {
 		messages,
 		modelName,
+		isStreaming = false,
 		systemPrompt = $bindable(),
 		onsend,
 	}: {
 		messages: Message[];
 		modelName: string;
+		isStreaming?: boolean;
 		systemPrompt: string;
 		onsend: (content: string) => void;
 	} = $props();
@@ -24,8 +26,8 @@
 	let textareaEl = $state<HTMLTextAreaElement | null>(null);
 
 	$effect(() => {
-		// Depend on messages length so this re-runs when new messages arrive
-		void messages.length;
+		// Track last message content so this re-runs on each streaming chunk too
+		void messages[messages.length - 1]?.content;
 		tick().then(() => {
 			if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
 		});
@@ -40,7 +42,7 @@
 
 	function submit() {
 		const text = inputText.trim();
-		if (!text) return;
+		if (!text || isStreaming) return;
 		onsend(text);
 		inputText = '';
 		if (textareaEl) textareaEl.style.height = '';
@@ -129,7 +131,7 @@
 			onkeydown={handleKeydown}
 			oninput={autoResize}
 		></textarea>
-		<button type="button" class="send-btn" onclick={submit} disabled={!inputText.trim()} aria-label="Send message">
+		<button type="button" class="send-btn" onclick={submit} disabled={!inputText.trim() || isStreaming} aria-label="Send message">
 			<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
 				<path
 					d="M2 8h12M9 3l5 5-5 5"
@@ -292,8 +294,8 @@
 	}
 
 	.message.user .bubble {
-		background-color: var(--color-accent);
-		color: #fff;
+		background-color: var(--color-accent-2);
+		color: var(--color-user-bubble-text, var(--color-bg));
 		border-bottom-left-radius: 14px;
 		border-bottom-right-radius: 4px;
 	}
@@ -339,13 +341,13 @@
 	}
 
 	.send-btn {
-		width: calc(20px + 0.875rem * 1.5);
-		height: calc(20px + 0.875rem * 1.5);
+		width: calc(22px + 0.875rem * 1.5);
+		height: calc(22px + 0.875rem * 1.5);
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background-color: var(--color-accent);
-		color: #fff;
+		background-color: var(--color-accent-3, var(--color-accent));
+		color: var(--color-bg);
 		border: none;
 		border-radius: 10px;
 		cursor: pointer;
@@ -354,7 +356,7 @@
 	}
 
 	.send-btn:hover:not(:disabled) {
-		background-color: var(--color-accent-hover);
+		background-color: var(--color-accent-3-hover, var(--color-accent-hover));
 	}
 
 	.send-btn:disabled {

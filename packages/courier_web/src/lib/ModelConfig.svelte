@@ -155,6 +155,7 @@
 					<span
 						class="value-badge"
 						role="spinbutton"
+						tabindex="0"
 						contenteditable="true"
 						aria-valuenow={temperature}
 						aria-valuemin={0}
@@ -187,6 +188,7 @@
 				<span
 					class="value-badge"
 					role="spinbutton"
+					tabindex="0"
 					contenteditable="true"
 					aria-valuenow={maxTokens}
 					aria-valuemin={1}
@@ -301,9 +303,9 @@
 	.value-badge {
 		font-size: 0.75rem;
 		font-weight: 600;
-		color: var(--color-accent);
+		color: var(--color-accent-3, var(--color-accent));
 		font-variant-numeric: tabular-nums;
-		background-color: color-mix(in srgb, var(--color-accent) 12%, transparent);
+		background-color: color-mix(in srgb, var(--color-accent-3, var(--color-accent)) 12%, transparent);
 		padding: 2px 7px;
 		border-radius: 4px;
 		cursor: text;
@@ -333,7 +335,7 @@
 
 	select:focus {
 		outline: none;
-		border-color: var(--color-accent);
+		border-color: var(--color-accent-3, var(--color-accent));
 	}
 
 	.select-arrow {
@@ -343,25 +345,6 @@
 		transform: translateY(-50%);
 		pointer-events: none;
 		color: var(--color-text);
-	}
-
-	/* Number input */
-	input[type='number'] {
-		width: 100%;
-		padding: 9px 10px;
-		background-color: var(--color-surface-raised);
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		color: var(--color-text);
-		font-family: var(--font-sans);
-		font-size: 0.8125rem;
-		box-sizing: border-box;
-		transition: border-color 0.15s;
-	}
-
-	input[type='number']:focus {
-		outline: none;
-		border-color: var(--color-accent);
 	}
 
 	/* Range slider */
@@ -384,13 +367,13 @@
 		width: 16px;
 		height: 16px;
 		border-radius: 50%;
-		background-color: var(--color-accent);
+		background-color: var(--color-accent-3, var(--color-accent));
 		cursor: pointer;
 		transition: background-color 0.15s, transform 0.1s;
 	}
 
 	input[type='range']::-webkit-slider-thumb:hover {
-		background-color: var(--color-accent-hover);
+		background-color: var(--color-accent-3-hover, var(--color-accent-hover));
 		transform: scale(1.15);
 	}
 
@@ -399,7 +382,7 @@
 		height: 16px;
 		border: none;
 		border-radius: 50%;
-		background-color: var(--color-accent);
+		background-color: var(--color-accent-3, var(--color-accent));
 		cursor: pointer;
 	}
 

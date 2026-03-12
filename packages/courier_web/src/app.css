@@ -5,16 +5,17 @@
 	--font-mono: ui-monospace, monospace;
 }
 
-/* Airmail Warm — #F0E1C3 (beige), #150F27 (navy), #C14227 (red) */
+/* Airmail Warm — #F0E1C3 (beige), #26214D (navy), #C14227 (red) */
 :root,
 [data-theme="airmail-warm"] {
 	--color-bg: #f0e1c3;
 	--color-surface-raised: #e5d2a8;
 	--color-border: #d4bc87;
-	--color-text: #150f27;
+	--color-text: #26214d;
 	--color-text-muted: #4d3f72;
 	--color-accent: #c14227;
 	--color-accent-hover: #a33820;
+	--color-accent-2: #26214d;
 }
 
 /* Airmail Light — #DFE0DA (sage), #282C5C (navy), #BD3C2F (red) */
@@ -26,6 +27,7 @@
 	--color-text-muted: #4e5290;
 	--color-accent: #bd3c2f;
 	--color-accent-hover: #a03327;
+	--color-accent-2: #282c5c;
 }
 
 /* Airmail Dark — #3E3820 (dark khaki), #EAD9A8 (aged paper), #C94F2C (red) */
@@ -37,6 +39,57 @@
 	--color-text-muted: #a09660;
 	--color-accent: #c94f2c;
 	--color-accent-hover: #ad4225;
+	--color-accent-2: #ead9a8;
+}
+
+/* Solarized Light — Base3 bg, Base00 text, #DC322F red, #268BD2 blue */
+[data-theme="solarized-light"] {
+	--color-bg: #fdf6e3;
+	--color-surface-raised: #eee8d5;
+	--color-border: #c4bba6;
+	--color-text: #657b83;
+	--color-text-muted: #93a1a1;
+	--color-accent: #dc322f;
+	--color-accent-hover: #b8271f;
+	--color-accent-2: #268bd2;
+}
+
+/* Solarized Dark — Base02 bg, Base0 text, #DC322F red, #268BD2 blue */
+[data-theme="solarized-dark"] {
+	--color-bg: #073642;
+	--color-surface-raised: #0d4759;
+	--color-border: #1a5769;
+	--color-text: #839496;
+	--color-text-muted: #586e75;
+	--color-accent: #dc322f;
+	--color-accent-hover: #b8271f;
+	--color-accent-2: #268bd2;
+}
+
+/* Retro Sci-Fi HUD — #141D22 (deep dark teal), #DD513C (red-orange), #34A2DF (sky blue), #3DF2AD (mint) */
+[data-theme="retro-sci-fi-hud"] {
+	--color-bg: #141d22;
+	--color-surface-raised: #1c2a32;
+	--color-border: #2a3f4a;
+	--color-text: #a5fbff;
+	--color-text-muted: #5cb8c0;
+	--color-accent: #dd513c;
+	--color-accent-hover: #ba4331;
+	--color-accent-2: #34a2df;
+	--color-accent-3: #3df2ad;
+	--color-accent-3-hover: #28d492;
+}
+
+/* Digital Rain — #000000 (black), #00ff41 (neon green), #00b82e (darker green) */
+[data-theme="digital-rain"] {
+	--color-bg: #000000;
+	--color-surface-raised: #0d1a0d;
+	--color-border: #1a3d1a;
+	--color-text: #00ff41;
+	--color-text-muted: #008f11;
+	--color-accent: #00ff41;
+	--color-accent-hover: #00d936;
+	--color-accent-2: #00b82e;
 }
 
 body {

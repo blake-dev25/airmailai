@@ -1,6 +1,7 @@
 <script lang="ts">
 	import ChatPanel from './lib/ChatPanel.svelte';
 	import { FONT_SIZES, PROVIDERS } from './lib/constants';
+	import { sendToExtension } from './lib/extension';
 	import ModelConfig from './lib/ModelConfig.svelte';
 	import Sidebar from './lib/Sidebar.svelte';
 
@@ -45,6 +46,7 @@
 	// Chats
 	let chats = $state<Chat[]>([]);
 	let activeChatId = $state<string | null>(null);
+	let isStreaming = $state(false);
 	let activeMessages = $derived(chats.find((c) => c.id === activeChatId)?.messages ?? []);
 	let activeModelName = $derived(
 		PROVIDERS.find((p) => p.id === providerId)?.models.find((m) => m.id === modelId)?.name ?? modelId
@@ -57,6 +59,8 @@
 	}
 
 	function sendMessage(content: string) {
+		if (isStreaming) return;
+
 		// Auto-create a chat on first message
 		let chatId = activeChatId;
 		if (!chatId) {
@@ -68,22 +72,48 @@
 			activeChatId = chatId;
 		}
 
+		// Add user message, then empty assistant placeholder for streaming
 		const userMsg: Message = { role: 'user', content };
+		const assistantMsg: Message = { role: 'assistant', content: '' };
 		chats = chats.map((c) =>
-			c.id === chatId ? { ...c, messages: [...c.messages, userMsg] } : c
+			c.id === chatId ? { ...c, messages: [...c.messages, userMsg, assistantMsg] } : c
 		);
 
-		// TODO: connect to extension for actual API calls
-		setTimeout(() => {
-			const assistantMsg: Message = {
-				role: 'assistant',
-				content:
-					'The CourierAI extension is not yet connected. Install the extension and configure your API keys to start chatting.',
-			};
-			chats = chats.map((c) =>
-				c.id === chatId ? { ...c, messages: [...c.messages, assistantMsg] } : c
-			);
-		}, 400);
+		isStreaming = true;
+
+		// Build message history for the API (exclude the empty placeholder)
+		const history = chats.find((c) => c.id === chatId)!.messages.slice(0, -1);
+		const apiMessages = systemPrompt.trim()
+			? [{ role: 'system' as const, content: systemPrompt }, ...history]
+			: history;
+
+		sendToExtension(
+			{ provider: providerId, model: modelId, messages: apiMessages, params: { temperature, maxTokens } },
+			(chunk) => {
+				// Append chunk to the last message in the target chat
+				chats = chats.map((c) => {
+					if (c.id !== chatId) return c;
+					const msgs = [...c.messages];
+					msgs[msgs.length - 1] = {
+						...msgs[msgs.length - 1],
+						content: msgs[msgs.length - 1].content + chunk,
+					};
+					return { ...c, messages: msgs };
+				});
+			},
+			() => {
+				isStreaming = false;
+			},
+			(msg) => {
+				isStreaming = false;
+				chats = chats.map((c) => {
+					if (c.id !== chatId) return c;
+					const msgs = [...c.messages];
+					msgs[msgs.length - 1] = { role: 'assistant', content: `Error: ${msg}` };
+					return { ...c, messages: msgs };
+				});
+			},
+		);
 	}
 </script>
 
@@ -96,7 +126,7 @@
 		onnewchat={newChat}
 		onselectchat={(id) => (activeChatId = id)}
 	/>
-	<ChatPanel messages={activeMessages} modelName={activeModelName} bind:systemPrompt onsend={sendMessage} />
+	<ChatPanel messages={activeMessages} modelName={activeModelName} {isStreaming} bind:systemPrompt onsend={sendMessage} />
 	<ModelConfig bind:providerId bind:modelId bind:temperature bind:maxTokens />
 </div>
 

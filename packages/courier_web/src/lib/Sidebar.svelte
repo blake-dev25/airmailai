@@ -63,7 +63,7 @@
 			{#each stripes as stripe}
 				<polygon
 					points={stripe.points}
-					fill={stripe.red ? 'var(--color-accent)' : 'var(--color-text)'}
+					fill={stripe.red ? 'var(--color-accent)' : 'var(--color-accent-2)'}
 				/>
 			{/each}
 		</g>
@@ -77,6 +77,13 @@
 	</div>
 
 	<div class="actions">
+		<div class="search-box">
+			<svg class="search-icon" width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true">
+				<circle cx="5.5" cy="5.5" r="4" stroke="currentColor" stroke-width="1.5" />
+				<path d="M8.5 8.5l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+			</svg>
+			<input class="search-input" type="search" placeholder="Search" />
+		</div>
 		<button type="button" class="new-chat-btn" onclick={onnewchat}>
 			<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
 				<path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
@@ -165,6 +172,52 @@
 	.actions {
 		padding: 12px 12px 8px;
 		flex-shrink: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+
+	.search-box {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		padding: 7px 10px;
+		background-color: var(--color-bg);
+		border: 1px solid var(--color-border);
+		border-radius: 8px;
+		box-sizing: border-box;
+		opacity: 0.45;
+		transition: opacity 0.15s, border-color 0.15s;
+	}
+
+	.search-box:focus-within {
+		opacity: 1;
+		border-color: var(--color-text-muted);
+	}
+
+	.search-icon {
+		flex-shrink: 0;
+		color: var(--color-text);
+	}
+
+	.search-input {
+		flex: 1;
+		background: none;
+		border: none;
+		outline: none;
+		font-family: var(--font-sans);
+		font-size: 0.8125rem;
+		color: var(--color-text);
+		min-width: 0;
+	}
+
+	.search-input::placeholder {
+		color: var(--color-text);
+	}
+
+	.search-input::-webkit-search-cancel-button {
+		-webkit-appearance: none;
 	}
 
 	.new-chat-btn {
@@ -175,7 +228,7 @@
 		width: 100%;
 		padding: 9px 12px;
 		background-color: var(--color-accent);
-		color: #fff;
+		color: var(--color-bg);
 		border: none;
 		border-radius: 8px;
 		font-size: 0.8125rem;
