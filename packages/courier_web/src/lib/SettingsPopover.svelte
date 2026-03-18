@@ -5,10 +5,12 @@
 	let {
 		theme = $bindable(),
 		fontSizeIndex = $bindable(),
+		chatWidth = $bindable(),
 		onclose,
 	}: {
 		theme: string;
 		fontSizeIndex: number;
+		chatWidth: number;
 		onclose: () => void;
 	} = $props();
 
@@ -117,6 +119,14 @@
 				<div class="range-hints">
 					<span>Smaller</span>
 					<span>Larger</span>
+				</div>
+			</div>
+			<div class="row">
+				<label for="chat-width">Chat Width</label>
+				<input type="range" id="chat-width" min="33" max="100" step="1" bind:value={chatWidth} />
+				<div class="range-hints">
+					<span>Narrower</span>
+					<span>Wider</span>
 				</div>
 			</div>
 		{:else}

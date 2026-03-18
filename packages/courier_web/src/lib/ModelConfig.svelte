@@ -229,7 +229,7 @@
 		</div>
 	</div>
 
-	<div class="made-by">Made with &lt;3 by @blake__dev and Claude</div>
+	<div class="made-by">Made with &lt;3 by @blake__dev + Claude</div>
 </aside>
 
 <style>

@@ -1,9 +1,22 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import ChatPanel from './lib/ChatPanel.svelte';
 	import { FONT_SIZES, PROVIDERS } from './lib/constants';
-	import { sendToExtension } from './lib/extension';
+	import ExtensionPrompt from './lib/ExtensionPrompt.svelte';
+	import {
+		deleteChat,
+		loadChats,
+		loadSettings,
+		saveChat,
+		saveSettings,
+		sendToExtension,
+		waitForExtension,
+	} from './lib/extension';
 	import ModelConfig from './lib/ModelConfig.svelte';
 	import Sidebar from './lib/Sidebar.svelte';
+
+	const LOG = '[courier:web]';
+	console.log(LOG, 'page load', { screen: `${window.screen.width}x${window.screen.height}`, time: new Date().toISOString() });
 
 	interface Message {
 		role: 'user' | 'assistant';
@@ -15,6 +28,7 @@
 		title: string;
 		messages: Message[];
 		createdAt: number;
+		systemPrompt: string;
 	}
 
 	// Theme
@@ -35,6 +49,9 @@
 		document.documentElement.style.fontSize = `${FONT_SIZES[fontSizeIndex]}px`;
 	});
 
+	// Chat width — 33 to 100 (vw), default unconstrained
+	let chatWidth = $state(100);
+
 	// Model config
 	const defaultModel = PROVIDERS[0].models[1]; // Sonnet as default
 	let providerId = $state(PROVIDERS[0].id);
@@ -47,29 +64,102 @@
 	let chats = $state<Chat[]>([]);
 	let activeChatId = $state<string | null>(null);
 	let isStreaming = $state(false);
+	let streamError = $state<string | null>(null);
 	let activeMessages = $derived(chats.find((c) => c.id === activeChatId)?.messages ?? []);
 	let activeModelName = $derived(
 		PROVIDERS.find((p) => p.id === providerId)?.models.find((m) => m.id === modelId)?.name ?? modelId
 	);
 
+	// --- Storage ---
+
+	let settingsLoaded = $state(false);
+	let extensionDetected = $state<boolean | null>(null);
+
+	// Load settings + chats on mount, waiting for extension discovery
+	waitForExtension().then(async (detected) => {
+		extensionDetected = detected;
+		console.log(LOG, 'extension detected:', detected);
+		const [settings, storedChats] = await Promise.all([loadSettings(), loadChats()]);
+
+		console.log(LOG, 'settings loaded', settings);
+
+		if (settings.theme) theme = settings.theme;
+		if (settings.fontSizeIndex !== undefined) fontSizeIndex = settings.fontSizeIndex;
+		if (settings.chatWidth !== undefined) chatWidth = settings.chatWidth;
+		if (settings.providerId) providerId = settings.providerId;
+		if (settings.modelId) modelId = settings.modelId;
+		if (settings.temperature !== undefined) temperature = settings.temperature;
+		if (settings.maxTokens !== undefined) maxTokens = settings.maxTokens;
+
+		chats = storedChats.sort((a, b) => b.createdAt - a.createdAt);
+		console.log(LOG, 'chats loaded', `${chats.length} chats`);
+
+		settingsLoaded = true;
+	});
+
+	// Debounced save — fires 300ms after any settings change (but not during initial load)
+	$effect(() => {
+		const snapshot = { theme, fontSizeIndex, chatWidth, providerId, modelId, temperature, maxTokens };
+		if (!untrack(() => settingsLoaded)) return;
+		const timer = setTimeout(() => {
+			console.log(LOG, 'settings save (debounced)', snapshot);
+			saveSettings(snapshot);
+		}, 300);
+		return () => clearTimeout(timer);
+	});
+
+	// --- Chat actions ---
+
 	function newChat() {
 		const id = crypto.randomUUID();
-		chats = [{ id, title: 'New Chat', messages: [], createdAt: Date.now() }, ...chats];
+		console.log(LOG, 'new chat', id);
+		chats = [{ id, title: 'New Chat', messages: [], createdAt: Date.now(), systemPrompt: '' }, ...chats];
 		activeChatId = id;
+		systemPrompt = '';
+	}
+
+	function selectChat(id: string) {
+		console.log(LOG, 'select chat', id);
+		activeChatId = id;
+		systemPrompt = chats.find((c) => c.id === id)?.systemPrompt ?? '';
+	}
+
+	function removeChat(id: string) {
+		console.log(LOG, 'remove chat', id);
+		chats = chats.filter((c) => c.id !== id);
+		if (activeChatId === id) {
+			activeChatId = chats[0]?.id ?? null;
+			systemPrompt = chats[0]?.systemPrompt ?? '';
+		}
+		deleteChat(id).catch(console.error);
 	}
 
 	function sendMessage(content: string) {
 		if (isStreaming) return;
+		streamError = null;
+		console.log(LOG, 'send message', { provider: providerId, model: modelId, contentLength: content.length, existingChat: activeChatId });
 
 		// Auto-create a chat on first message
 		let chatId = activeChatId;
 		if (!chatId) {
 			chatId = crypto.randomUUID();
 			chats = [
-				{ id: chatId, title: content.slice(0, 40), messages: [], createdAt: Date.now() },
+				{
+					id: chatId,
+					title: content.slice(0, 40),
+					messages: [],
+					createdAt: Date.now(),
+					systemPrompt,
+				},
 				...chats,
 			];
 			activeChatId = chatId;
+		} else {
+			// Update systemPrompt and rename if this is the first message
+			chats = chats.map((c) => {
+				if (c.id !== chatId) return c;
+				return { ...c, systemPrompt, ...(c.messages.length === 0 ? { title: content.slice(0, 40) } : {}) };
+			});
 		}
 
 		// Add user message, then empty assistant placeholder for streaming
@@ -81,8 +171,14 @@
 
 		isStreaming = true;
 
+		// Save after adding user message (exclude empty assistant placeholder)
+		const chatSnapshot = chats.find((c) => c.id === chatId)!;
+		saveChat({ ...chatSnapshot, messages: chatSnapshot.messages.slice(0, -1) }).catch(
+			console.error
+		);
+
 		// Build message history for the API (exclude the empty placeholder)
-		const history = chats.find((c) => c.id === chatId)!.messages.slice(0, -1);
+		const history = chatSnapshot.messages.slice(0, -1);
 		const apiMessages = systemPrompt.trim()
 			? [{ role: 'system' as const, content: systemPrompt }, ...history]
 			: history;
@@ -103,19 +199,25 @@
 			},
 			() => {
 				isStreaming = false;
+				const done = chats.find((c) => c.id === chatId);
+				if (done) saveChat({ ...done }).catch(console.error);
 			},
 			(msg) => {
 				isStreaming = false;
-				chats = chats.map((c) => {
-					if (c.id !== chatId) return c;
-					const msgs = [...c.messages];
-					msgs[msgs.length - 1] = { role: 'assistant', content: `Error: ${msg}` };
-					return { ...c, messages: msgs };
-				});
+				streamError = msg;
+				// Pop the empty assistant placeholder — DB already has the correct state
+				// (user message was saved before streaming started)
+				chats = chats.map((c) =>
+					c.id === chatId ? { ...c, messages: c.messages.slice(0, -1) } : c
+				);
 			},
 		);
 	}
 </script>
+
+{#if extensionDetected === false}
+	<ExtensionPrompt />
+{/if}
 
 <div class="app">
 	<Sidebar
@@ -123,10 +225,12 @@
 		{activeChatId}
 		bind:theme
 		bind:fontSizeIndex
+		bind:chatWidth
 		onnewchat={newChat}
-		onselectchat={(id) => (activeChatId = id)}
+		onselectchat={selectChat}
+		ondeletechat={removeChat}
 	/>
-	<ChatPanel messages={activeMessages} modelName={activeModelName} {isStreaming} bind:systemPrompt onsend={sendMessage} />
+	<ChatPanel messages={activeMessages} modelName={activeModelName} {isStreaming} {streamError} {chatWidth} bind:systemPrompt onsend={sendMessage} />
 	<ModelConfig bind:providerId bind:modelId bind:temperature bind:maxTokens />
 </div>
 

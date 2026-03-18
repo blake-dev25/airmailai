@@ -13,15 +13,19 @@
 		activeChatId,
 		theme = $bindable(),
 		fontSizeIndex = $bindable(),
+		chatWidth = $bindable(),
 		onnewchat,
 		onselectchat,
+		ondeletechat,
 	}: {
 		chats: Chat[];
 		activeChatId: string | null;
 		theme: string;
 		fontSizeIndex: number;
+		chatWidth: number;
 		onnewchat: () => void;
 		onselectchat: (id: string) => void;
+		ondeletechat: (id: string) => void;
 	} = $props();
 
 	let showSettings = $state(false);
@@ -97,15 +101,26 @@
 			<p class="empty">No conversations yet</p>
 		{:else}
 			{#each chats as chat (chat.id)}
-				<button
-					type="button"
-					class="chat-item"
-					class:active={chat.id === activeChatId}
-					onclick={() => onselectchat(chat.id)}
-					title={chat.title}
-				>
-					<span class="chat-title">{chat.title}</span>
-				</button>
+				<div class="chat-row" class:active={chat.id === activeChatId}>
+					<button
+						type="button"
+						class="chat-item"
+						onclick={() => onselectchat(chat.id)}
+						title={chat.title}
+					>
+						<span class="chat-title">{chat.title}</span>
+					</button>
+					<button
+						type="button"
+						class="delete-btn"
+						aria-label="Delete chat"
+						onclick={() => ondeletechat(chat.id)}
+					>
+						<svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true">
+							<path d="M2 4h9M5 4V2.5h3V4M3.5 4l.5 7h5l.5-7" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+						</svg>
+					</button>
+				</div>
 			{/each}
 		{/if}
 	</nav>
@@ -132,7 +147,7 @@
 </aside>
 
 {#if showSettings}
-	<SettingsPopover bind:theme bind:fontSizeIndex onclose={() => (showSettings = false)} />
+	<SettingsPopover bind:theme bind:fontSizeIndex bind:chatWidth onclose={() => (showSettings = false)} />
 {/if}
 
 <style>
@@ -267,25 +282,31 @@
 		text-align: center;
 	}
 
+	.chat-row {
+		display: flex;
+		align-items: center;
+		border-radius: 6px;
+		margin-bottom: 1px;
+		transition: background-color 0.1s;
+	}
+
+	.chat-row:hover {
+		background-color: var(--color-surface-raised);
+	}
+
+	.chat-row.active {
+		background-color: var(--color-surface-raised);
+	}
+
 	.chat-item {
-		display: block;
-		width: 100%;
+		flex: 1;
+		min-width: 0;
 		padding: 8px 10px;
 		background: none;
 		border: none;
 		border-radius: 6px;
 		cursor: pointer;
 		text-align: left;
-		transition: background-color 0.1s;
-		margin-bottom: 1px;
-	}
-
-	.chat-item:hover {
-		background-color: var(--color-surface-raised);
-	}
-
-	.chat-item.active {
-		background-color: var(--color-surface-raised);
 	}
 
 	.chat-title {
@@ -297,8 +318,35 @@
 		white-space: nowrap;
 	}
 
-	.chat-item.active .chat-title {
+	.chat-row.active .chat-title {
 		color: var(--color-accent);
+	}
+
+	.delete-btn {
+		flex-shrink: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 20px;
+		height: 20px;
+		padding: 0;
+		margin-right: 6px;
+		background: none;
+		border: none;
+		border-radius: 4px;
+		cursor: pointer;
+		color: var(--color-text-muted);
+		opacity: 0;
+		transition: opacity 0.1s, color 0.1s, background-color 0.1s;
+	}
+
+	.chat-row:hover .delete-btn {
+		opacity: 1;
+	}
+
+	.delete-btn:hover {
+		color: var(--color-accent);
+		background-color: var(--color-surface-sunken, var(--color-bg));
 	}
 
 	.footer {

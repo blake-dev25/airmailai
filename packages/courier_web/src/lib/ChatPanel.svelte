@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
+	import MarkdownMessage from './MarkdownMessage.svelte';
 
 	interface Message {
 		role: 'user' | 'assistant';
@@ -10,12 +11,16 @@
 		messages,
 		modelName,
 		isStreaming = false,
+		chatWidth = 100,
+		streamError = null,
 		systemPrompt = $bindable(),
 		onsend,
 	}: {
 		messages: Message[];
 		modelName: string;
 		isStreaming?: boolean;
+		chatWidth?: number;
+		streamError?: string | null;
 		systemPrompt: string;
 		onsend: (content: string) => void;
 	} = $props();
@@ -93,7 +98,7 @@
 	</div>
 
 	<!-- Messages -->
-	<div class="messages" bind:this={messagesEl}>
+	<div class="messages" bind:this={messagesEl} style="width: 100%; max-width: {chatWidth}vw; margin-left: auto; margin-right: auto;">
 		{#if messages.length === 0}
 			<div class="empty-state">
 				<svg width="32" height="32" viewBox="0 0 32 32" fill="none" aria-hidden="true">
@@ -112,13 +117,24 @@
 				<p class="sub">Choose a provider and model on the right, then type below.</p>
 			</div>
 		{:else}
-			{#each messages as message (message)}
+			{#each messages as message, i (i)}
 				<div class="message" class:user={message.role === 'user'}>
-					<div class="bubble">{message.content}</div>
+					{#if message.role === 'user'}
+						<div class="bubble">{message.content}</div>
+					{:else}
+						<div class="bubble">
+							<MarkdownMessage content={message.content} />
+						</div>
+					{/if}
 				</div>
 			{/each}
 		{/if}
 	</div>
+
+	<!-- Stream error -->
+	{#if streamError}
+		<div class="stream-error" role="alert">{streamError}</div>
+	{/if}
 
 	<!-- Input -->
 	<div class="input-area">
@@ -198,7 +214,6 @@
 		height: 6px;
 		border-radius: 50%;
 		background-color: var(--color-accent);
-		margin-left: auto;
 		flex-shrink: 0;
 	}
 
@@ -288,14 +303,14 @@
 		line-height: 1.65;
 		white-space: pre-wrap;
 		word-break: break-word;
-		background-color: var(--color-bg);
+		background-color: var(--color-surface-sunken);
 		color: var(--color-text);
 		border-bottom-left-radius: 4px;
 	}
 
 	.message.user .bubble {
 		background-color: var(--color-accent-2);
-		color: var(--color-user-bubble-text, var(--color-bg));
+		color: var(--color-surface-sunken);
 		border-bottom-left-radius: 14px;
 		border-bottom-right-radius: 4px;
 	}
@@ -362,5 +377,14 @@
 	.send-btn:disabled {
 		opacity: 0.35;
 		cursor: not-allowed;
+	}
+
+	.stream-error {
+		flex-shrink: 0;
+		padding: 8px 16px;
+		font-size: 0.8125rem;
+		color: var(--color-accent);
+		border-top: 1px solid var(--color-border);
+		background-color: var(--color-bg);
 	}
 </style>

@@ -1,6 +1,6 @@
 # notes/docs
-*.txt
-*.md
+NOTES.txt
+CLAUDE.md
 
 # dependencies
 node_modules/

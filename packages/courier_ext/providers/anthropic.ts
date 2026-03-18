@@ -1,6 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { ChatMessage } from '@courier/shared';
 
+const LOG = '[courier:ext]';
+
 export async function streamAnthropic(
 	apiKey: string,
 	model: string,
@@ -17,6 +19,13 @@ export async function streamAnthropic(
 		(m) => m.role !== 'system'
 	) as Anthropic.MessageParam[];
 
+	console.log(LOG, 'anthropic: stream start', {
+		model,
+		chatMessages: chatMessages.length,
+		hasSystem: !!systemMsg,
+		params,
+	});
+
 	try {
 		const stream = client.messages.stream({
 			model,
@@ -26,17 +35,25 @@ export async function streamAnthropic(
 			messages: chatMessages,
 		});
 
+		let firstChunk = true;
 		for await (const event of stream) {
 			if (
 				event.type === 'content_block_delta' &&
 				event.delta.type === 'text_delta'
 			) {
+				if (firstChunk) {
+					console.log(LOG, 'anthropic: first chunk received');
+					firstChunk = false;
+				}
 				onChunk(event.delta.text);
 			}
 		}
 
+		console.log(LOG, 'anthropic: stream done');
 		onDone();
 	} catch (e) {
-		onError(e instanceof Error ? e.message : String(e));
+		const msg = e instanceof Error ? e.message : String(e);
+		console.error(LOG, 'anthropic: error', msg);
+		onError(msg);
 	}
 }
