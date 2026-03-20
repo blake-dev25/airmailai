@@ -7,11 +7,13 @@
 		modelId = $bindable(),
 		temperature = $bindable(),
 		maxTokens = $bindable(),
+		tokens = null,
 	}: {
 		providerId: string;
 		modelId: string;
 		temperature: number;
 		maxTokens: number;
+		tokens?: { input: number; output: number } | null;
 	} = $props();
 
 	let badgeEl = $state<HTMLSpanElement | undefined>(undefined);
@@ -219,8 +221,14 @@
 		</div>
 		<div class="details-body">
 			<div class="detail-row">
-				<span class="detail-label">Max Input Tokens</span>
-				<span class="detail-value">{currentModel.params.contextWindow.toLocaleString()}</span>
+				<span class="detail-label">Context Window</span>
+				<span class="detail-value">
+					{#if tokens}
+						{(tokens.input + tokens.output).toLocaleString()} / {currentModel.params.contextWindow.toLocaleString()}
+					{:else}
+						{currentModel.params.contextWindow.toLocaleString()}
+					{/if}
+				</span>
 			</div>
 			<div class="detail-row">
 				<span class="detail-label">Knowledge Cutoff</span>

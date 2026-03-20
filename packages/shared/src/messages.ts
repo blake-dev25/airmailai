@@ -13,7 +13,7 @@ export interface ExtensionRequest {
 
 export type ExtensionResponse =
 	| { type: 'chunk'; content: string }
-	| { type: 'done' }
+	| { type: 'done'; usage?: { inputTokens: number; outputTokens: number } }
 	| { type: 'error'; message: string };
 
 export interface UserSettings {
@@ -36,12 +36,19 @@ export const SETTINGS_KEYS: (keyof UserSettings)[] = [
 	'maxTokens',
 ];
 
+export interface ChatMeta {
+	id: string;
+	title: string;
+	createdAt: number;
+}
+
 export interface StoredChat {
 	id: string;
 	title: string;
 	createdAt: number;
 	systemPrompt: string;
 	messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+	tokens?: { input: number; output: number };
 }
 
 // Sent via chrome.runtime.sendMessage for one-off storage operations
@@ -52,11 +59,16 @@ export type StorageRequest =
 	| { type: 'load_settings' }
 	| { type: 'save_chat'; chat: StoredChat }
 	| { type: 'delete_chat'; chatId: string }
-	| { type: 'load_chats' };
+	| { type: 'load_chat_titles' }
+	| { type: 'load_chats' }
+	| { type: 'load_chats_by_ids'; ids: string[] }
+	| { type: 'load_chat'; chatId: string };
 
 export type StorageResponse =
 	| { type: 'saved' }
 	| { type: 'has_keys'; saved: Record<string, boolean> }
 	| { type: 'settings'; settings: Partial<UserSettings> }
+	| { type: 'chat_titles'; titles: ChatMeta[] }
 	| { type: 'chats'; chats: StoredChat[] }
+	| { type: 'chat'; chat: StoredChat | null }
 	| { type: 'error'; message: string };

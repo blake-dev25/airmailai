@@ -6,8 +6,17 @@ import type {
 	UserSettings,
 } from '@courier/shared';
 import { SETTINGS_KEYS } from '@courier/shared';
+import { DEBUG_API_LOGGING } from '../debug';
 import { streamAnthropic } from '../providers/anthropic';
-import { dbDeleteChat, dbLoadChats, dbSaveChat } from '../storage/db';
+import {
+	dbClearChats,
+	dbDeleteChat,
+	dbLoadChat,
+	dbLoadChats,
+	dbLoadChatsByIds,
+	dbLoadChatTitles,
+	dbSaveChat,
+} from '../storage/db';
 
 const LOG = '[courier:ext]';
 
@@ -56,16 +65,56 @@ async function handleStorage(
 			console.log(LOG, '→ storage response: saved');
 			return { type: 'saved' };
 		}
+		case 'load_chat_titles': {
+			const titles = await dbLoadChatTitles();
+			console.log(
+				LOG,
+				'→ storage response: chat_titles',
+				`${titles.length} titles`
+			);
+			return { type: 'chat_titles', titles };
+		}
 		case 'load_chats': {
 			const chats = await dbLoadChats();
 			console.log(LOG, '→ storage response: chats', `${chats.length} chats`);
 			return { type: 'chats', chats };
+		}
+		case 'load_chats_by_ids': {
+			const chats = await dbLoadChatsByIds(message.ids);
+			console.log(LOG, '→ storage response: chats', `${chats.length} chats`);
+			return { type: 'chats', chats };
+		}
+		case 'load_chat': {
+			const chat = await dbLoadChat(message.chatId);
+			console.log(
+				LOG,
+				'→ storage response: chat',
+				message.chatId,
+				chat ? 'found' : 'not found'
+			);
+			return { type: 'chat', chat };
 		}
 	}
 }
 
 export default defineBackground(() => {
 	console.log(LOG, 'background ready');
+
+	// Internal messages from the popup
+	chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+		if (message.type === 'admin_clear_chats') {
+			dbClearChats()
+				.then(() => sendResponse({ ok: true }))
+				.catch(() => sendResponse({ ok: false }));
+			return true;
+		}
+		if (message.type === 'admin_clear_all') {
+			Promise.all([dbClearChats(), chrome.storage.sync.clear()])
+				.then(() => sendResponse({ ok: true }))
+				.catch(() => sendResponse({ ok: false }));
+			return true;
+		}
+	});
 
 	// One-off storage operations (save/check API keys, settings, chat history)
 	chrome.runtime.onMessageExternal.addListener(
@@ -103,6 +152,15 @@ export default defineBackground(() => {
 				messages: request.messages.length,
 			});
 
+			if (DEBUG_API_LOGGING) {
+				console.log(LOG, '[debug] full request', {
+					provider: request.provider,
+					model: request.model,
+					params: request.params,
+					messages: request.messages,
+				});
+			}
+
 			switch (request.provider) {
 				case 'anthropic':
 					await streamAnthropic(
@@ -111,7 +169,7 @@ export default defineBackground(() => {
 						request.messages,
 						request.params ?? {},
 						(text) => send({ type: 'chunk', content: text }),
-						() => send({ type: 'done' }),
+						(usage) => send({ type: 'done', usage: usage ?? undefined }),
 						(msg) => send({ type: 'error', message: msg })
 					);
 					break;

@@ -11,21 +11,27 @@
 	let {
 		chats,
 		activeChatId,
+		hasMoreChats,
+		isLoadingMore,
 		theme = $bindable(),
 		fontSizeIndex = $bindable(),
 		chatWidth = $bindable(),
 		onnewchat,
 		onselectchat,
 		ondeletechat,
+		onloadmore,
 	}: {
 		chats: Chat[];
 		activeChatId: string | null;
+		hasMoreChats: boolean;
+		isLoadingMore: boolean;
 		theme: string;
 		fontSizeIndex: number;
 		chatWidth: number;
 		onnewchat: () => void;
 		onselectchat: (id: string) => void;
 		ondeletechat: (id: string) => void;
+		onloadmore: () => void;
 	} = $props();
 
 	let showSettings = $state(false);
@@ -97,6 +103,7 @@
 	</div>
 
 	<nav class="history" aria-label="Chat history">
+		<p class="section-label">Recent Chats</p>
 		{#if chats.length === 0}
 			<p class="empty">No conversations yet</p>
 		{:else}
@@ -122,6 +129,11 @@
 					</button>
 				</div>
 			{/each}
+			{#if hasMoreChats}
+				<button type="button" class="load-more-btn" onclick={onloadmore} disabled={isLoadingMore}>
+					{isLoadingMore ? 'Loading…' : 'Load More'}
+				</button>
+			{/if}
 		{/if}
 	</nav>
 
@@ -185,11 +197,12 @@
 	}
 
 	.actions {
-		padding: 12px 12px 8px;
+		padding: 12px 12px 12px;
 		flex-shrink: 0;
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.search-box {
@@ -275,11 +288,45 @@
 		border-radius: 3px;
 	}
 
+	.section-label {
+		padding: 10px 10px 4px;
+		font-size: 0.6875rem;
+		font-weight: 600;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--color-text-muted);
+	}
+
 	.empty {
-		padding: 20px 8px;
+		padding: 8px 8px 20px;
 		font-size: 0.8125rem;
 		color: var(--color-text);
 		text-align: center;
+	}
+
+	.load-more-btn {
+		display: block;
+		width: 100%;
+		padding: 8px 10px;
+		margin-top: 2px;
+		background: none;
+		border: none;
+		border-radius: 6px;
+		font-size: 0.8125rem;
+		color: var(--color-text-muted);
+		cursor: pointer;
+		text-align: center;
+		transition: background-color 0.1s, color 0.1s;
+	}
+
+	.load-more-btn:hover:not(:disabled) {
+		background-color: var(--color-surface-raised);
+		color: var(--color-text);
+	}
+
+	.load-more-btn:disabled {
+		cursor: default;
+		opacity: 0.5;
 	}
 
 	.chat-row {

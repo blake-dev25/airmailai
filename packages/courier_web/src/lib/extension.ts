@@ -1,4 +1,5 @@
 import type {
+	ChatMeta,
 	ExtensionRequest,
 	ExtensionResponse,
 	StorageRequest,
@@ -120,16 +121,34 @@ export async function deleteChat(chatId: string): Promise<void> {
 	await sendStorageMessage({ type: 'delete_chat', chatId });
 }
 
+export async function loadChatTitles(): Promise<ChatMeta[]> {
+	const response = await sendStorageMessage({ type: 'load_chat_titles' });
+	if (response.type === 'chat_titles') return response.titles;
+	return [];
+}
+
 export async function loadChats(): Promise<StoredChat[]> {
 	const response = await sendStorageMessage({ type: 'load_chats' });
 	if (response.type === 'chats') return response.chats;
 	return [];
 }
 
+export async function loadChatsByIds(ids: string[]): Promise<StoredChat[]> {
+	const response = await sendStorageMessage({ type: 'load_chats_by_ids', ids });
+	if (response.type === 'chats') return response.chats;
+	return [];
+}
+
+export async function loadChat(chatId: string): Promise<StoredChat | null> {
+	const response = await sendStorageMessage({ type: 'load_chat', chatId });
+	if (response.type === 'chat') return response.chat;
+	return null;
+}
+
 export function sendToExtension(
 	request: ExtensionRequest,
 	onChunk: (text: string) => void,
-	onDone: () => void,
+	onDone: (usage?: { inputTokens: number; outputTokens: number }) => void,
 	onError: (message: string) => void
 ): void {
 	if (!extensionId) {
@@ -163,7 +182,7 @@ export function sendToExtension(
 			case 'done':
 				done = true;
 				console.log(LOG, '← stream done');
-				onDone();
+				onDone(response.usage);
 				port.disconnect();
 				break;
 			case 'error':

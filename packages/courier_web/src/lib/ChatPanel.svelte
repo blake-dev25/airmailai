@@ -13,6 +13,7 @@
 		isStreaming = false,
 		chatWidth = 100,
 		streamError = null,
+		loading = false,
 		systemPrompt = $bindable(),
 		onsend,
 	}: {
@@ -21,6 +22,7 @@
 		isStreaming?: boolean;
 		chatWidth?: number;
 		streamError?: string | null;
+		loading?: boolean;
 		systemPrompt: string;
 		onsend: (content: string) => void;
 	} = $props();
@@ -99,7 +101,11 @@
 
 	<!-- Messages -->
 	<div class="messages" bind:this={messagesEl} style="width: 100%; max-width: {chatWidth}vw; margin-left: auto; margin-right: auto;">
-		{#if messages.length === 0}
+		{#if loading}
+			<div class="empty-state">
+				<p class="sub">Loading…</p>
+			</div>
+		{:else if messages.length === 0}
 			<div class="empty-state">
 				<svg width="32" height="32" viewBox="0 0 32 32" fill="none" aria-hidden="true">
 					<rect

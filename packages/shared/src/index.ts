@@ -1,5 +1,6 @@
 export type {
 	ChatMessage,
+	ChatMeta,
 	ExtensionRequest,
 	ExtensionResponse,
 	StorageRequest,

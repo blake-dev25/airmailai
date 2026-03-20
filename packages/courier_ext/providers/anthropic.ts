@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { ChatMessage } from '@courier/shared';
+import { DEBUG_API_LOGGING } from '../debug';
 
 const LOG = '[courier:ext]';
 
@@ -9,7 +10,7 @@ export async function streamAnthropic(
 	messages: ChatMessage[],
 	params: Record<string, unknown>,
 	onChunk: (text: string) => void,
-	onDone: () => void,
+	onDone: (usage: { inputTokens: number; outputTokens: number } | null) => void,
 	onError: (message: string) => void
 ): Promise<void> {
 	const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
@@ -50,7 +51,17 @@ export async function streamAnthropic(
 		}
 
 		console.log(LOG, 'anthropic: stream done');
-		onDone();
+		const finalMsg = await stream.finalMessage();
+		if (DEBUG_API_LOGGING) {
+			console.log(LOG, '[debug] full response', finalMsg);
+		}
+		const usage = finalMsg.usage
+			? {
+					inputTokens: finalMsg.usage.input_tokens,
+					outputTokens: finalMsg.usage.output_tokens,
+				}
+			: null;
+		onDone(usage);
 	} catch (e) {
 		const msg = e instanceof Error ? e.message : String(e);
 		console.error(LOG, 'anthropic: error', msg);
