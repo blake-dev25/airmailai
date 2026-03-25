@@ -79,10 +79,10 @@ export const PROVIDERS: ProviderOption[] = [
 		name: 'OpenAI',
 		models: [
 			{
-				id: 'gpt-5.2-pro',
-				name: 'GPT-5.2 pro',
+				id: 'gpt-5.4-pro',
+				name: 'GPT-5.4 pro',
 				params: {
-					contextWindow: 400000,
+					contextWindow: 1050000,
 					maxOutputTokens: 128000,
 					defaultMaxTokens: 8192,
 					temperatureMax: 2,
@@ -91,10 +91,10 @@ export const PROVIDERS: ProviderOption[] = [
 				},
 			},
 			{
-				id: 'gpt-5.2',
-				name: 'GPT-5.2',
+				id: 'gpt-5.4',
+				name: 'GPT-5.4',
 				params: {
-					contextWindow: 400000,
+					contextWindow: 1050000,
 					maxOutputTokens: 128000,
 					defaultMaxTokens: 8192,
 					temperatureMax: 2,
@@ -103,15 +103,15 @@ export const PROVIDERS: ProviderOption[] = [
 				},
 			},
 			{
-				id: 'gpt-4.1',
-				name: 'GPT-4.1',
+				id: 'gpt-5.4-mini',
+				name: 'GPT-5.4 mini',
 				params: {
-					contextWindow: 1047576,
-					maxOutputTokens: 32768,
+					contextWindow: 400000,
+					maxOutputTokens: 128000,
 					defaultMaxTokens: 8192,
 					temperatureMax: 2,
 					defaultTemperature: 1,
-					knowledgeCutoff: 'Jun 2024',
+					knowledgeCutoff: 'Aug 2025',
 				},
 			},
 		],

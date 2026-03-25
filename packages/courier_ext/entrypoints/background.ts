@@ -8,13 +8,14 @@ import type {
 import { SETTINGS_KEYS } from '@courier/shared';
 import { DEBUG_API_LOGGING } from '../debug';
 import { streamAnthropic } from '../providers/anthropic';
+import { streamOpenAI } from '../providers/openai';
 import {
 	dbClearChats,
 	dbDeleteChat,
 	dbLoadChat,
+	dbLoadChatMetas,
 	dbLoadChats,
 	dbLoadChatsByIds,
-	dbLoadChatTitles,
 	dbSaveChat,
 } from '../storage/db';
 
@@ -30,6 +31,12 @@ async function handleStorage(
 			await chrome.storage.sync.set({
 				[`apiKey_${message.provider}`]: message.apiKey,
 			});
+			console.log(LOG, '→ storage response: saved');
+			return { type: 'saved' };
+		}
+		case 'clear_key': {
+			console.log(LOG, 'storage: clearing API key for', message.provider);
+			await chrome.storage.sync.remove(`apiKey_${message.provider}`);
 			console.log(LOG, '→ storage response: saved');
 			return { type: 'saved' };
 		}
@@ -56,7 +63,7 @@ async function handleStorage(
 			return { type: 'settings', settings: result as Partial<UserSettings> };
 		}
 		case 'save_chat': {
-			await dbSaveChat(message.chat);
+			await dbSaveChat(message.chat, message.meta);
 			console.log(LOG, '→ storage response: saved');
 			return { type: 'saved' };
 		}
@@ -65,14 +72,14 @@ async function handleStorage(
 			console.log(LOG, '→ storage response: saved');
 			return { type: 'saved' };
 		}
-		case 'load_chat_titles': {
-			const titles = await dbLoadChatTitles();
+		case 'load_chat_metas': {
+			const metas = await dbLoadChatMetas();
 			console.log(
 				LOG,
-				'→ storage response: chat_titles',
-				`${titles.length} titles`
+				'→ storage response: chat_metas',
+				`${metas.length} metas`
 			);
-			return { type: 'chat_titles', titles };
+			return { type: 'chat_metas', metas };
 		}
 		case 'load_chats': {
 			const chats = await dbLoadChats();
@@ -164,6 +171,17 @@ export default defineBackground(() => {
 			switch (request.provider) {
 				case 'anthropic':
 					await streamAnthropic(
+						apiKey,
+						request.model,
+						request.messages,
+						request.params ?? {},
+						(text) => send({ type: 'chunk', content: text }),
+						(usage) => send({ type: 'done', usage: usage ?? undefined }),
+						(msg) => send({ type: 'error', message: msg })
+					);
+					break;
+				case 'openai':
+					await streamOpenAI(
 						apiKey,
 						request.model,
 						request.messages,

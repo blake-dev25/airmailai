@@ -93,6 +93,11 @@ export async function saveApiKey(
 	return response.type === 'saved';
 }
 
+export async function clearApiKey(provider: string): Promise<boolean> {
+	const response = await sendStorageMessage({ type: 'clear_key', provider });
+	return response.type === 'saved';
+}
+
 export async function checkApiKeys(
 	providers: string[]
 ): Promise<Record<string, boolean>> {
@@ -113,17 +118,20 @@ export async function loadSettings(): Promise<Partial<UserSettings>> {
 	return {};
 }
 
-export async function saveChat(chat: StoredChat): Promise<void> {
-	await sendStorageMessage({ type: 'save_chat', chat });
+export async function saveChat(
+	chat: StoredChat,
+	meta: ChatMeta
+): Promise<void> {
+	await sendStorageMessage({ type: 'save_chat', chat, meta });
 }
 
 export async function deleteChat(chatId: string): Promise<void> {
 	await sendStorageMessage({ type: 'delete_chat', chatId });
 }
 
-export async function loadChatTitles(): Promise<ChatMeta[]> {
-	const response = await sendStorageMessage({ type: 'load_chat_titles' });
-	if (response.type === 'chat_titles') return response.titles;
+export async function loadChatMetas(): Promise<ChatMeta[]> {
+	const response = await sendStorageMessage({ type: 'load_chat_metas' });
+	if (response.type === 'chat_metas') return response.metas;
 	return [];
 }
 

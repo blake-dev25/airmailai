@@ -1,7 +1,7 @@
 import type { ChatMeta, StoredChat } from '@courier/shared';
 
 const DB_NAME = 'courier_ai';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const LOG = '[courier:ext]';
 
 let _db: IDBDatabase | null = null;
@@ -14,7 +14,7 @@ function openDb(): Promise<IDBDatabase> {
 			for (const name of Array.from(db.objectStoreNames)) {
 				db.deleteObjectStore(name);
 			}
-			db.createObjectStore('chats', { keyPath: 'id' });
+			db.createObjectStore('chat_messages', { keyPath: 'id' });
 			db.createObjectStore('chat_meta', { keyPath: 'id' });
 		};
 		req.onsuccess = () => {
@@ -30,7 +30,10 @@ async function getDb(): Promise<IDBDatabase> {
 	return _db;
 }
 
-export async function dbSaveChat(chat: StoredChat): Promise<void> {
+export async function dbSaveChat(
+	chat: StoredChat,
+	meta: ChatMeta
+): Promise<void> {
 	console.log(
 		LOG,
 		'db: save chat',
@@ -39,10 +42,9 @@ export async function dbSaveChat(chat: StoredChat): Promise<void> {
 	);
 	const db = await getDb();
 	return new Promise((resolve, reject) => {
-		const tx = db.transaction(['chats', 'chat_meta'], 'readwrite');
-		tx.objectStore('chats').put(chat);
-		const { id, title, createdAt } = chat;
-		tx.objectStore('chat_meta').put({ id, title, createdAt });
+		const tx = db.transaction(['chat_messages', 'chat_meta'], 'readwrite');
+		tx.objectStore('chat_messages').put(chat);
+		tx.objectStore('chat_meta').put(meta);
 		tx.oncomplete = () => resolve();
 		tx.onerror = () => reject(tx.error);
 	});
@@ -52,8 +54,8 @@ export async function dbDeleteChat(chatId: string): Promise<void> {
 	console.log(LOG, 'db: delete chat', chatId);
 	const db = await getDb();
 	return new Promise((resolve, reject) => {
-		const tx = db.transaction(['chats', 'chat_meta'], 'readwrite');
-		tx.objectStore('chats').delete(chatId);
+		const tx = db.transaction(['chat_messages', 'chat_meta'], 'readwrite');
+		tx.objectStore('chat_messages').delete(chatId);
 		tx.objectStore('chat_meta').delete(chatId);
 		tx.oncomplete = () => resolve();
 		tx.onerror = () => reject(tx.error);
@@ -64,23 +66,23 @@ export async function dbClearChats(): Promise<void> {
 	console.log(LOG, 'db: clear chats');
 	const db = await getDb();
 	return new Promise((resolve, reject) => {
-		const tx = db.transaction(['chats', 'chat_meta'], 'readwrite');
-		tx.objectStore('chats').clear();
+		const tx = db.transaction(['chat_messages', 'chat_meta'], 'readwrite');
+		tx.objectStore('chat_messages').clear();
 		tx.objectStore('chat_meta').clear();
 		tx.oncomplete = () => resolve();
 		tx.onerror = () => reject(tx.error);
 	});
 }
 
-export async function dbLoadChatTitles(): Promise<ChatMeta[]> {
+export async function dbLoadChatMetas(): Promise<ChatMeta[]> {
 	const db = await getDb();
 	return new Promise((resolve, reject) => {
 		const tx = db.transaction('chat_meta', 'readonly');
 		const req = tx.objectStore('chat_meta').getAll();
 		req.onsuccess = () => {
-			const titles = req.result as ChatMeta[];
-			console.log(LOG, 'db: load chat titles', `${titles.length} chats`);
-			resolve(titles);
+			const metas = req.result as ChatMeta[];
+			console.log(LOG, 'db: load chat metas', `${metas.length} chats`);
+			resolve(metas);
 		};
 		req.onerror = () => reject(req.error);
 	});
@@ -89,8 +91,8 @@ export async function dbLoadChatTitles(): Promise<ChatMeta[]> {
 export async function dbLoadChats(): Promise<StoredChat[]> {
 	const db = await getDb();
 	return new Promise((resolve, reject) => {
-		const tx = db.transaction('chats', 'readonly');
-		const req = tx.objectStore('chats').getAll();
+		const tx = db.transaction('chat_messages', 'readonly');
+		const req = tx.objectStore('chat_messages').getAll();
 		req.onsuccess = () => {
 			const chats = req.result as StoredChat[];
 			console.log(LOG, 'db: load chats', `${chats.length} chats`);
@@ -104,8 +106,8 @@ export async function dbLoadChatsByIds(ids: string[]): Promise<StoredChat[]> {
 	if (ids.length === 0) return [];
 	const db = await getDb();
 	return new Promise((resolve, reject) => {
-		const tx = db.transaction('chats', 'readonly');
-		const store = tx.objectStore('chats');
+		const tx = db.transaction('chat_messages', 'readonly');
+		const store = tx.objectStore('chat_messages');
 		const results: StoredChat[] = [];
 		let pending = ids.length;
 		for (const id of ids) {
@@ -122,8 +124,8 @@ export async function dbLoadChatsByIds(ids: string[]): Promise<StoredChat[]> {
 export async function dbLoadChat(chatId: string): Promise<StoredChat | null> {
 	const db = await getDb();
 	return new Promise((resolve, reject) => {
-		const tx = db.transaction('chats', 'readonly');
-		const req = tx.objectStore('chats').get(chatId);
+		const tx = db.transaction('chat_messages', 'readonly');
+		const req = tx.objectStore('chat_messages').get(chatId);
 		req.onsuccess = () => {
 			const chat = req.result as StoredChat | undefined;
 			console.log(LOG, 'db: load chat', chatId, chat ? 'found' : 'not found');

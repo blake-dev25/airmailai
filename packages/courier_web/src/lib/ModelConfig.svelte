@@ -92,6 +92,12 @@
 		}
 	}
 
+	function abbreviateTokens(n: number): string {
+		if (n >= 1_000_000) return `${Math.floor(n / 1_000_000)}M`;
+		if (n >= 1_000) return `${Math.floor(n / 1_000)}k`;
+		return String(n);
+	}
+
 	let currentProvider = $derived(PROVIDERS.find((p) => p.id === providerId) ?? PROVIDERS[0]);
 	let currentModel = $derived(
 		currentProvider.models.find((m) => m.id === modelId) ?? currentProvider.models[0]
@@ -212,6 +218,10 @@
 					maxTokens = maxTokensSnaps[+(e.currentTarget as HTMLInputElement).value];
 				}}
 			/>
+			<div class="range-hints">
+				<span>1</span>
+				<span>{abbreviateTokens(currentModel.params.maxOutputTokens)}</span>
+			</div>
 		</div>
 	</div>
 

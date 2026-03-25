@@ -40,13 +40,15 @@ export interface ChatMeta {
 	id: string;
 	title: string;
 	createdAt: number;
+	providerId: string;
+	modelId: string;
+	temperature: number;
+	maxTokens: number;
+	systemPrompt: string;
 }
 
 export interface StoredChat {
 	id: string;
-	title: string;
-	createdAt: number;
-	systemPrompt: string;
 	messages: Array<{ role: 'user' | 'assistant'; content: string }>;
 	tokens?: { input: number; output: number };
 }
@@ -54,12 +56,13 @@ export interface StoredChat {
 // Sent via chrome.runtime.sendMessage for one-off storage operations
 export type StorageRequest =
 	| { type: 'save_key'; provider: string; apiKey: string }
+	| { type: 'clear_key'; provider: string }
 	| { type: 'has_keys'; providers: string[] }
 	| { type: 'save_settings'; settings: Partial<UserSettings> }
 	| { type: 'load_settings' }
-	| { type: 'save_chat'; chat: StoredChat }
+	| { type: 'save_chat'; chat: StoredChat; meta: ChatMeta }
 	| { type: 'delete_chat'; chatId: string }
-	| { type: 'load_chat_titles' }
+	| { type: 'load_chat_metas' }
 	| { type: 'load_chats' }
 	| { type: 'load_chats_by_ids'; ids: string[] }
 	| { type: 'load_chat'; chatId: string };
@@ -68,7 +71,7 @@ export type StorageResponse =
 	| { type: 'saved' }
 	| { type: 'has_keys'; saved: Record<string, boolean> }
 	| { type: 'settings'; settings: Partial<UserSettings> }
-	| { type: 'chat_titles'; titles: ChatMeta[] }
+	| { type: 'chat_metas'; metas: ChatMeta[] }
 	| { type: 'chats'; chats: StoredChat[] }
 	| { type: 'chat'; chat: StoredChat | null }
 	| { type: 'error'; message: string };

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { ChatMeta, StoredChat } from '@courier/shared';
 	import { untrack } from 'svelte';
 	import ChatPanel from './lib/ChatPanel.svelte';
 	import { FONT_SIZES, PROVIDERS } from './lib/constants';
@@ -6,8 +7,8 @@
 	import {
 		deleteChat,
 		loadChat,
+		loadChatMetas,
 		loadChatsByIds,
-		loadChatTitles,
 		loadSettings,
 		saveChat,
 		saveSettings,
@@ -31,6 +32,10 @@
 		messages: Message[];
 		createdAt: number;
 		systemPrompt: string;
+		providerId: string;
+		modelId: string;
+		temperature: number;
+		maxTokens: number;
 		tokens?: { input: number; output: number };
 	}
 
@@ -68,8 +73,8 @@
 	// Chats
 	let chats = $state<Chat[]>([]);
 	// All chat metas sorted newest-first — used to track total count for pagination
-	let allTitles = $state<{ id: string; title: string; createdAt: number }[]>([]);
-	let hasMoreChats = $derived(chats.length < allTitles.length);
+	let allMetas = $state<ChatMeta[]>([]);
+	let hasMoreChats = $derived(chats.length < allMetas.length);
 	let isLoadingMore = $state(false);
 	let activeChatId = $state<string | null>(null);
 	let isStreaming = $state(false);
@@ -93,7 +98,7 @@
 		extensionDetected = detected;
 		console.log(LOG, 'extension detected:', detected);
 
-		const [settings, titles] = await Promise.all([loadSettings(), loadChatTitles()]);
+		const [settings, metas] = await Promise.all([loadSettings(), loadChatMetas()]);
 
 		console.log(LOG, 'settings loaded', settings);
 		if (settings.theme) theme = settings.theme;
@@ -106,17 +111,23 @@
 
 		settingsLoaded = true;
 
-		const sorted = titles.sort((a, b) => b.createdAt - a.createdAt);
-		allTitles = sorted;
-		console.log(LOG, 'chat titles loaded', `${sorted.length} chats`);
+		const sorted = metas.sort((a, b) => b.createdAt - a.createdAt);
+		allMetas = sorted;
+		console.log(LOG, 'chat metas loaded', `${sorted.length} chats`);
 
 		// Load first page of full chats
 		const firstIds = sorted.slice(0, PAGE_SIZE).map((t) => t.id);
 		if (firstIds.length > 0) {
 			const fullChats = await loadChatsByIds(firstIds);
 			const byId = new Map(fullChats.map((c) => [c.id, c]));
+			const metaById = new Map(sorted.map((t) => [t.id, t]));
 			chats = firstIds
-				.map((id) => byId.get(id) ?? null)
+				.map((id) => {
+					const stored = byId.get(id);
+					const meta = metaById.get(id);
+					if (!stored || !meta) return null;
+					return { ...meta, messages: stored.messages, ...(stored.tokens ? { tokens: stored.tokens } : {}) };
+				})
 				.filter((c): c is Chat => c !== null);
 			for (const id of firstIds) loadedChatIds.add(id);
 			console.log(LOG, 'first page loaded', `${chats.length} chats`);
@@ -126,12 +137,18 @@
 	async function loadMoreChats() {
 		if (isLoadingMore || !hasMoreChats) return;
 		isLoadingMore = true;
-		// chats.length == number loaded so far == offset into allTitles
-		const nextIds = allTitles.slice(chats.length, chats.length + PAGE_SIZE).map((t) => t.id);
+		// chats.length == number loaded so far == offset into allMetas
+		const nextIds = allMetas.slice(chats.length, chats.length + PAGE_SIZE).map((t) => t.id);
 		const fullChats = await loadChatsByIds(nextIds);
 		const byId = new Map(fullChats.map((c) => [c.id, c]));
+		const metaById = new Map(allMetas.map((t) => [t.id, t]));
 		const newChats = nextIds
-			.map((id) => byId.get(id) ?? null)
+			.map((id) => {
+				const stored = byId.get(id);
+				const meta = metaById.get(id);
+				if (!stored || !meta) return null;
+				return { ...meta, messages: stored.messages, ...(stored.tokens ? { tokens: stored.tokens } : {}) };
+			})
 			.filter((c): c is Chat => c !== null);
 		chats = [...chats, ...newChats];
 		for (const id of nextIds) loadedChatIds.add(id);
@@ -150,37 +167,49 @@
 		return () => clearTimeout(timer);
 	});
 
+	function chatToStored(chat: Chat, messages = chat.messages): StoredChat {
+		return { id: chat.id, messages, ...(chat.tokens ? { tokens: chat.tokens } : {}) };
+	}
+	function chatToMeta(chat: Chat): ChatMeta {
+		return { id: chat.id, title: chat.title, createdAt: chat.createdAt, providerId: chat.providerId, modelId: chat.modelId, temperature: chat.temperature, maxTokens: chat.maxTokens, systemPrompt: chat.systemPrompt };
+	}
+
 	// --- Chat actions ---
 
 	function newChat() {
 		const id = crypto.randomUUID();
 		const now = Date.now();
 		console.log(LOG, 'new chat', id);
-		chats = [{ id, title: 'New Chat', messages: [], createdAt: now, systemPrompt: '' }, ...chats];
-		allTitles = [{ id, title: 'New Chat', createdAt: now }, ...allTitles];
+		chats = [{ id, title: 'New Chat', messages: [], createdAt: now, systemPrompt, providerId, modelId, temperature, maxTokens }, ...chats];
+		allMetas = [{ id, title: 'New Chat', createdAt: now, providerId, modelId, temperature, maxTokens, systemPrompt }, ...allMetas];
 		loadedChatIds.add(id);
 		activeChatId = id;
-		systemPrompt = '';
 	}
 
 	async function selectChat(id: string) {
 		console.log(LOG, 'select chat', id);
 		activeChatId = id;
 
-		if (loadedChatIds.has(id)) {
-			systemPrompt = chats.find((c) => c.id === id)?.systemPrompt ?? '';
-			return;
+		// Restore model config + system prompt from saved meta
+		const meta = allMetas.find((t) => t.id === id);
+		if (meta) {
+			providerId = meta.providerId;
+			modelId = meta.modelId;
+			temperature = meta.temperature;
+			maxTokens = meta.maxTokens;
+			systemPrompt = meta.systemPrompt;
 		}
+
+		if (loadedChatIds.has(id)) return;
 
 		// Background load hasn't finished yet — fetch this chat on demand
 		chatLoading = true;
 		const full = await loadChat(id);
 		chatLoading = false;
 
-		if (full) {
+		if (full && activeChatId === id) {
 			loadedChatIds.add(full.id);
-			chats = chats.map((c) => (c.id === id ? full : c));
-			if (activeChatId === id) systemPrompt = full.systemPrompt;
+			chats = chats.map((c) => (c.id === id ? { ...c, messages: full.messages, tokens: full.tokens } : c));
 		}
 	}
 
@@ -188,10 +217,10 @@
 		console.log(LOG, 'remove chat', id);
 		loadedChatIds.delete(id);
 		chats = chats.filter((c) => c.id !== id);
-		allTitles = allTitles.filter((t) => t.id !== id);
+		allMetas = allMetas.filter((t) => t.id !== id);
 		if (activeChatId === id) {
-			activeChatId = chats[0]?.id ?? null;
-			systemPrompt = chats[0]?.systemPrompt ?? '';
+			activeChatId = null;
+			systemPrompt = '';
 		}
 		deleteChat(id).catch(console.error);
 	}
@@ -207,15 +236,20 @@
 			chatId = crypto.randomUUID();
 			const now = Date.now();
 			const title = content.slice(0, 40);
-			chats = [{ id: chatId, title, messages: [], createdAt: now, systemPrompt }, ...chats];
-			allTitles = [{ id: chatId, title, createdAt: now }, ...allTitles];
+			chats = [{ id: chatId, title, messages: [], createdAt: now, systemPrompt, providerId, modelId, temperature, maxTokens }, ...chats];
+			allMetas = [{ id: chatId, title, createdAt: now, providerId, modelId, temperature, maxTokens, systemPrompt }, ...allMetas];
 			loadedChatIds.add(chatId);
 			activeChatId = chatId;
 		} else {
-			// Update systemPrompt and rename if this is the first message
+			// Update config and rename if this is the first message
+			const isFirst = (chats.find((c) => c.id === chatId)?.messages.length ?? 0) === 0;
 			chats = chats.map((c) => {
 				if (c.id !== chatId) return c;
-				return { ...c, systemPrompt, ...(c.messages.length === 0 ? { title: content.slice(0, 40) } : {}) };
+				return { ...c, systemPrompt, providerId, modelId, temperature, maxTokens, ...(isFirst ? { title: content.slice(0, 40) } : {}) };
+			});
+			allMetas = allMetas.map((t) => {
+				if (t.id !== chatId) return t;
+				return { ...t, providerId, modelId, temperature, maxTokens, systemPrompt, ...(isFirst ? { title: content.slice(0, 40) } : {}) };
 			});
 		}
 
@@ -230,9 +264,7 @@
 
 		// Save after adding user message (exclude empty assistant placeholder)
 		const chatSnapshot = chats.find((c) => c.id === chatId)!;
-		saveChat({ ...chatSnapshot, messages: chatSnapshot.messages.slice(0, -1) }).catch(
-			console.error
-		);
+		saveChat(chatToStored(chatSnapshot, chatSnapshot.messages.slice(0, -1)), chatToMeta(chatSnapshot)).catch(console.error);
 
 		// Build message history for the API (exclude the empty placeholder)
 		const history = chatSnapshot.messages.slice(0, -1);
@@ -261,11 +293,11 @@
 					return usage ? { ...c, tokens: { input: usage.inputTokens, output: usage.outputTokens } } : c;
 				});
 				const done = chats.find((c) => c.id === chatId);
-				if (done) saveChat({ ...done }).catch(console.error);
+				if (done) saveChat(chatToStored(done), chatToMeta(done)).catch(console.error);
 			},
 			(msg) => {
 				isStreaming = false;
-				streamError = msg;
+				streamError = `API Error: ${msg}`;
 				// Pop the empty assistant placeholder — DB already has the correct state
 				// (user message was saved before streaming started)
 				chats = chats.map((c) =>

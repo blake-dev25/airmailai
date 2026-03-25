@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { PROVIDERS, THEMES } from './constants';
-	import { checkApiKeys, saveApiKey } from './extension';
+	import { checkApiKeys, clearApiKey, saveApiKey } from './extension';
 
 	let {
 		theme = $bindable(),
@@ -41,6 +41,11 @@
 			savedKeys[providerId] = true;
 		}
 	}
+
+	async function handleClear(providerId: string) {
+		const ok = await clearApiKey(providerId);
+		if (ok) savedKeys[providerId] = false;
+	}
 </script>
 
 <div class="backdrop" onclick={onclose} aria-hidden="true"></div>
@@ -59,36 +64,20 @@
 	</div>
 
 	<div class="content">
-		{#if activeTab === 'keys'}
+		<div class="tab-panel" class:active={activeTab === 'keys'} aria-hidden={activeTab !== 'keys'}>
 			<table class="keys-table">
 				<thead>
 					<tr>
 						<th>Provider</th>
-						<th>API Key</th>
 						<th>Saved</th>
+						<th>API Key</th>
+						<th>Options</th>
 					</tr>
 				</thead>
 				<tbody>
 					{#each PROVIDERS as provider (provider.id)}
 						<tr>
 							<td class="provider-name">{provider.name}</td>
-							<td class="key-cell">
-								<input
-									class="key-input"
-									type="password"
-									placeholder="Paste key…"
-									bind:value={keyInputs[provider.id]}
-									onkeydown={(e) => { if (e.key === 'Enter') handleSave(provider.id); }}
-								/>
-								<button
-									type="button"
-									class="save-btn"
-									disabled={!keyInputs[provider.id].trim()}
-									onclick={() => handleSave(provider.id)}
-								>
-									Save
-								</button>
-							</td>
 							<td class="saved-cell">
 								{#if savedKeys[provider.id]}
 									<svg width="15" height="15" viewBox="0 0 15 15" fill="none" role="img" aria-label="Saved" class="icon-check">
@@ -100,11 +89,42 @@
 									</svg>
 								{/if}
 							</td>
+							<td class="key-cell">
+								<input
+									class="key-input"
+									type="password"
+									placeholder="Paste key…"
+									bind:value={keyInputs[provider.id]}
+									onkeydown={(e) => { if (e.key === 'Enter') handleSave(provider.id); }}
+								/>
+							</td>
+							<td class="options-cell">
+								<div class="options-btns">
+									<button
+										type="button"
+										class="action-btn save-btn"
+										disabled={!keyInputs[provider.id].trim()}
+										onclick={() => handleSave(provider.id)}
+									>
+										Save
+									</button>
+									<button
+										type="button"
+										class="action-btn clear-btn"
+										disabled={!savedKeys[provider.id]}
+										onclick={() => handleClear(provider.id)}
+									>
+										Clear
+									</button>
+								</div>
+							</td>
 						</tr>
 					{/each}
 				</tbody>
 			</table>
-		{:else if activeTab === 'ui'}
+		</div>
+
+		<div class="tab-panel" class:active={activeTab === 'ui'} aria-hidden={activeTab !== 'ui'}>
 			<div class="row theme-row">
 				<label for="theme-select">Theme</label>
 				<select id="theme-select" bind:value={theme}>
@@ -129,10 +149,11 @@
 					<span>Wider</span>
 				</div>
 			</div>
-		{:else}
-			<p class="todo">TODO — About content coming soon.</p>
-		{/if}
+		</div>
 
+		<div class="tab-panel" class:active={activeTab === 'about'} aria-hidden={activeTab !== 'about'}>
+			<p class="todo">TODO — About content coming soon.</p>
+		</div>
 	</div>
 </div>
 
@@ -192,9 +213,20 @@
 		padding: 20px;
 		overflow-y: auto;
 		flex: 1;
+		display: grid;
+	}
+
+	/* All panels occupy the same grid cell — height = tallest panel */
+	.tab-panel {
+		grid-area: 1 / 1;
 		display: flex;
 		flex-direction: column;
 		gap: 20px;
+		visibility: hidden;
+	}
+
+	.tab-panel.active {
+		visibility: visible;
 	}
 
 	.row {
@@ -281,6 +313,7 @@
 	/* API Keys table */
 	.keys-table {
 		width: 100%;
+		table-layout: auto;
 		border-collapse: collapse;
 		font-size: 0.8125rem;
 	}
@@ -293,8 +326,8 @@
 		border-bottom: 1px solid var(--color-border);
 	}
 
-	.keys-table th:last-child,
-	.keys-table td:last-child {
+	.keys-table th:nth-child(2),
+	.keys-table td:nth-child(2) {
 		text-align: center;
 	}
 
@@ -310,22 +343,27 @@
 	}
 
 	.provider-name {
-		white-space: nowrap;
 		font-weight: 500;
-		width: 100px;
+		white-space: nowrap;
 	}
 
 	.key-cell {
+		width: 100%;
+	}
+
+	.options-cell {
+		white-space: nowrap;
+	}
+
+	.options-btns {
 		display: flex;
 		gap: 6px;
 		align-items: center;
 	}
 
-	.save-btn {
+	.action-btn {
 		flex-shrink: 0;
 		padding: 5px 10px;
-		background-color: var(--color-accent);
-		color: var(--color-bg);
 		border: none;
 		border-radius: 6px;
 		font-size: 0.75rem;
@@ -335,18 +373,32 @@
 		white-space: nowrap;
 	}
 
-	.save-btn:hover:not(:disabled) {
-		background-color: var(--color-accent-hover);
-	}
-
-	.save-btn:disabled {
+	.action-btn:disabled {
 		opacity: 0.35;
 		cursor: not-allowed;
 	}
 
+	.save-btn {
+		background-color: var(--color-accent);
+		color: var(--color-bg);
+	}
+
+	.save-btn:hover:not(:disabled) {
+		background-color: var(--color-accent-hover);
+	}
+
+	.clear-btn {
+		background-color: var(--color-surface-raised);
+		color: var(--color-text);
+		border: 1px solid var(--color-border);
+	}
+
+	.clear-btn:hover:not(:disabled) {
+		background-color: var(--color-surface-sunken);
+	}
+
 	.key-input {
-		flex: 1;
-		min-width: 0;
+		width: 100%;
 		padding: 6px 10px;
 		background-color: var(--color-surface-raised);
 		border: 1px solid var(--color-border);
@@ -369,7 +421,12 @@
 	}
 
 	.saved-cell {
-		width: 48px;
+		text-align: center;
+	}
+
+	.saved-cell svg {
+		display: block;
+		margin: 0 auto;
 	}
 
 	.icon-check {
