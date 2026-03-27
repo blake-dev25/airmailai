@@ -16,6 +16,7 @@
 		theme = $bindable(),
 		fontSizeIndex = $bindable(),
 		chatWidth = $bindable(),
+		smoothText = $bindable(),
 		onnewchat,
 		onselectchat,
 		ondeletechat,
@@ -28,6 +29,7 @@
 		theme: string;
 		fontSizeIndex: number;
 		chatWidth: number;
+		smoothText: boolean;
 		onnewchat: () => void;
 		onselectchat: (id: string) => void;
 		ondeletechat: (id: string) => void;
@@ -159,7 +161,7 @@
 </aside>
 
 {#if showSettings}
-	<SettingsPopover bind:theme bind:fontSizeIndex bind:chatWidth onclose={() => (showSettings = false)} />
+	<SettingsPopover bind:theme bind:fontSizeIndex bind:chatWidth bind:smoothText onclose={() => (showSettings = false)} />
 {/if}
 
 <style>

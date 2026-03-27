@@ -6,11 +6,13 @@
 		theme = $bindable(),
 		fontSizeIndex = $bindable(),
 		chatWidth = $bindable(),
+		smoothText = $bindable(),
 		onclose,
 	}: {
 		theme: string;
 		fontSizeIndex: number;
 		chatWidth: number;
+		smoothText: boolean;
 		onclose: () => void;
 	} = $props();
 
@@ -148,6 +150,20 @@
 					<span>Narrower</span>
 					<span>Wider</span>
 				</div>
+			</div>
+			<div class="row toggle-row">
+				<div class="label-with-info">
+					<label for="smooth-text">Smooth Text Loading</label>
+					<span class="info-icon" aria-label="About smooth text loading">
+						<svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true">
+							<circle cx="6.5" cy="6.5" r="5.75" stroke="currentColor" stroke-width="1.25" />
+							<path d="M6.5 5.5v4" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" />
+							<circle cx="6.5" cy="3.75" r="0.65" fill="currentColor" />
+						</svg>
+						<span class="info-tooltip">When enabled, writes AI messages to the chat character by character for a smooth text effect like provider UIs. When disabled, prints text as it's received from the API.</span>
+					</span>
+				</div>
+				<input type="checkbox" id="smooth-text" bind:checked={smoothText} />
 			</div>
 		</div>
 
@@ -308,6 +324,63 @@
 		font-size: 0.6875rem;
 		color: var(--color-text);
 		margin-top: -4px;
+	}
+
+	.toggle-row {
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.label-with-info {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+	}
+
+	.info-icon {
+		position: relative;
+		display: flex;
+		align-items: center;
+		color: var(--color-text-muted);
+		cursor: default;
+		opacity: 0.6;
+	}
+
+	.info-icon:hover {
+		opacity: 1;
+	}
+
+	.info-tooltip {
+		display: none;
+		position: absolute;
+		bottom: calc(100% + 6px);
+		left: 50%;
+		translate: -50% 0;
+		width: 220px;
+		padding: 8px 10px;
+		background-color: var(--color-surface-raised);
+		border: 1px solid var(--color-border);
+		border-radius: 7px;
+		font-size: 0.75rem;
+		line-height: 1.5;
+		color: var(--color-text);
+		font-weight: 400;
+		box-shadow: 0 4px 16px oklch(0% 0 0 / 15%);
+		pointer-events: none;
+		z-index: 10;
+	}
+
+	.info-icon:hover .info-tooltip {
+		display: block;
+	}
+
+	input[type='checkbox'] {
+		width: 16px;
+		height: 16px;
+		cursor: pointer;
+		accent-color: var(--color-accent);
+		flex-shrink: 0;
 	}
 
 	/* API Keys table */

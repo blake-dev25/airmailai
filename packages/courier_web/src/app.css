@@ -2,114 +2,114 @@
 @plugin "@tailwindcss/typography";
 
 @theme {
-	--font-sans: system-ui, sans-serif;
-	--font-mono: ui-monospace, monospace;
+  --font-sans: system-ui, sans-serif;
+  --font-mono: ui-monospace, monospace;
 }
 
 /* Airmail Warm — #F0E1C3 (beige), #26214D (navy), #C14227 (red) */
 :root,
 [data-theme="airmail-warm"] {
-	--color-bg: #f0e1c3;
-	--color-surface-raised: #e5d2a8;
-	--color-surface-sunken: #f7eedd;
-	--color-border: #d4bc87;
-	--color-text: #26214d;
-	--color-text-muted: #4d3f72;
-	--color-accent: #c14227;
-	--color-accent-hover: #a33820;
-	--color-accent-2: #26214d;
+  --color-bg: #f0e1c3;
+  --color-surface-raised: #e5d2a8;
+  --color-surface-sunken: #f7eedd;
+  --color-border: #d4bc87;
+  --color-text: #26214d;
+  --color-text-muted: #4d3f72;
+  --color-accent: #c14227;
+  --color-accent-hover: #a33820;
+  --color-accent-2: #26214d;
 }
 
 /* Airmail Light — #DFE0DA (sage), #282C5C (navy), #BD3C2F (red) */
 [data-theme="airmail-light"] {
-	--color-bg: #dfe0da;
-	--color-surface-raised: #d2d3cd;
-	--color-surface-sunken: #eaebe6;
-	--color-border: #bfc0b9;
-	--color-text: #282c5c;
-	--color-text-muted: #4e5290;
-	--color-accent: #bd3c2f;
-	--color-accent-hover: #a03327;
-	--color-accent-2: #282c5c;
+  --color-bg: #dfe0da;
+  --color-surface-raised: #d2d3cd;
+  --color-surface-sunken: #eaebe6;
+  --color-border: #bfc0b9;
+  --color-text: #282c5c;
+  --color-text-muted: #4e5290;
+  --color-accent: #bd3c2f;
+  --color-accent-hover: #a03327;
+  --color-accent-2: #282c5c;
 }
 
 /* Solarized Light — Base3 bg, Base00 text, #DC322F red, #268BD2 blue */
 [data-theme="solarized-light"] {
-	--color-bg: #fdf6e3;
-	--color-surface-raised: #eee8d5;
-	--color-surface-sunken: #fffdf6;
-	--color-border: #c4bba6;
-	--color-text: #657b83;
-	--color-text-muted: #93a1a1;
-	--color-accent: #dc322f;
-	--color-accent-hover: #b8271f;
-	--color-accent-2: #268bd2;
+  --color-bg: #fdf6e3;
+  --color-surface-raised: #eee8d5;
+  --color-surface-sunken: #fffdf6;
+  --color-border: #c4bba6;
+  --color-text: #657b83;
+  --color-text-muted: #93a1a1;
+  --color-accent: #dc322f;
+  --color-accent-hover: #b8271f;
+  --color-accent-2: #268bd2;
 }
 
 /* Solarized Dark — Base02 bg, Base0 text, #DC322F red, #268BD2 blue */
 [data-theme="solarized-dark"] {
-	--color-bg: #073642;
-	--color-surface-raised: #0d4759;
-	--color-surface-sunken: #0e4a5e;
-	--color-border: #1a5769;
-	--color-text: #839496;
-	--color-text-muted: #586e75;
-	--color-accent: #dc322f;
-	--color-accent-hover: #b8271f;
-	--color-accent-2: #268bd2;
+  --color-bg: #073642;
+  --color-surface-raised: #0d4759;
+  --color-surface-sunken: #0e4a5e;
+  --color-border: #1a5769;
+  --color-text: #839496;
+  --color-text-muted: #586e75;
+  --color-accent: #dc322f;
+  --color-accent-hover: #b8271f;
+  --color-accent-2: #268bd2;
 }
 
 /* Retro Sci-Fi HUD — #141D22 (deep dark teal), #DD513C (red-orange), #34A2DF (sky blue), #3DF2AD (mint) */
 [data-theme="retro-sci-fi-hud"] {
-	--color-bg: #141d22;
-	--color-surface-raised: #1c2a32;
-	--color-surface-sunken: #1f3040;
-	--color-border: #2a3f4a;
-	--color-text: #a5fbff;
-	--color-text-muted: #5cb8c0;
-	--color-accent: #dd513c;
-	--color-accent-hover: #ba4331;
-	--color-accent-2: #34a2df;
-	--color-accent-3: #3df2ad;
-	--color-accent-3-hover: #28d492;
+  --color-bg: #141d22;
+  --color-surface-raised: #1c2a32;
+  --color-surface-sunken: #1f3040;
+  --color-border: #2a3f4a;
+  --color-text: #a5fbff;
+  --color-text-muted: #5cb8c0;
+  --color-accent: #dd513c;
+  --color-accent-hover: #ba4331;
+  --color-accent-2: #34a2df;
+  --color-accent-3: #3df2ad;
+  --color-accent-3-hover: #28d492;
 }
 
 /* Digital Rain — #000000 (black), #00ff41 (neon green), #00b82e (darker green) */
 [data-theme="digital-rain"] {
-	--color-bg: #000000;
-	--color-surface-raised: #0d1a0d;
-	--color-surface-sunken: #0d150d;
-	--color-border: #1a3d1a;
-	--color-text: #00ff41;
-	--color-text-muted: #008f11;
-	--color-accent: #00ff41;
-	--color-accent-hover: #00d936;
-	--color-accent-2: #00b82e;
+  --color-bg: #000000;
+  --color-surface-raised: #0d1a0d;
+  --color-surface-sunken: #0d150d;
+  --color-border: #1a3d1a;
+  --color-text: #00ff41;
+  --color-text-muted: #008f11;
+  --color-accent: #00ff41;
+  --color-accent-hover: #00d936;
+  --color-accent-2: #00b82e;
 }
 
 /* Map prose colors to our theme tokens so all color themes work */
 .prose {
-	white-space: normal; /* reset: parent .bubble has white-space: pre-wrap which would break rendering */
-	--tw-prose-body: var(--color-text);
-	--tw-prose-headings: var(--color-text);
-	--tw-prose-bold: var(--color-text);
-	--tw-prose-links: var(--color-accent);
-	--tw-prose-code: var(--color-text);
-	--tw-prose-pre-code: var(--color-text);
-	--tw-prose-pre-bg: var(--color-surface-sunken);
-	--tw-prose-quotes: var(--color-text-muted);
-	--tw-prose-quote-borders: var(--color-accent);
-	--tw-prose-bullets: var(--color-text-muted);
-	--tw-prose-counters: var(--color-text-muted);
-	--tw-prose-hr: var(--color-border);
-	--tw-prose-th-borders: var(--color-border);
-	--tw-prose-td-borders: var(--color-border);
-	--tw-prose-captions: var(--color-text-muted);
+  white-space: normal; /* reset: parent .bubble has white-space: pre-wrap which would break rendering */
+  --tw-prose-body: var(--color-text);
+  --tw-prose-headings: var(--color-text);
+  --tw-prose-bold: var(--color-text);
+  --tw-prose-links: var(--color-accent);
+  --tw-prose-code: var(--color-text);
+  --tw-prose-pre-code: var(--color-text);
+  --tw-prose-pre-bg: var(--color-surface-sunken);
+  --tw-prose-quotes: var(--color-text-muted);
+  --tw-prose-quote-borders: var(--color-accent);
+  --tw-prose-bullets: var(--color-text-muted);
+  --tw-prose-counters: var(--color-text-muted);
+  --tw-prose-hr: var(--color-border);
+  --tw-prose-th-borders: var(--color-border);
+  --tw-prose-td-borders: var(--color-border);
+  --tw-prose-captions: var(--color-text-muted);
 }
 
 body {
-	background-color: var(--color-bg);
-	color: var(--color-text);
-	font-family: var(--font-sans);
-	-webkit-font-smoothing: antialiased;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
 }

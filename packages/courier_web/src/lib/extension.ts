@@ -1,11 +1,11 @@
 import type {
-	ChatMeta,
-	ExtensionRequest,
-	ExtensionResponse,
-	StorageRequest,
-	StorageResponse,
-	StoredChat,
-	UserSettings,
+  ChatMeta,
+  ExtensionRequest,
+  ExtensionResponse,
+  StorageRequest,
+  StorageResponse,
+  StoredChat,
+  UserSettings,
 } from '@courier/shared';
 
 const LOG = '[courier:web]';
@@ -14,203 +14,207 @@ let extensionId: string | null = null;
 
 // Listen for content script to broadcast the extension ID
 window.addEventListener('message', (e: MessageEvent) => {
-	if (e.data?.type === 'COURIER_EXT_READY' && typeof e.data.id === 'string') {
-		extensionId = e.data.id;
-		console.log(LOG, 'extension ID received', extensionId);
-	}
+  if (e.data?.type === 'COURIER_EXT_READY' && typeof e.data.id === 'string') {
+    extensionId = e.data.id;
+    console.log(LOG, 'extension ID received', extensionId);
+  }
 });
 
 // Ping in case this module loads after the content script already fired
 window.postMessage({ type: 'COURIER_EXT_PING' }, '*');
 
 export function isExtensionReady(): boolean {
-	return extensionId !== null;
+  return extensionId !== null;
 }
 
 // Resolves true when the extension is detected, false on timeout
 export function waitForExtension(timeoutMs = 2000): Promise<boolean> {
-	if (extensionId) return Promise.resolve(true);
-	return new Promise((resolve) => {
-		const timer = setTimeout(() => {
-			window.removeEventListener('message', handler);
-			resolve(false);
-		}, timeoutMs);
-		function handler(e: MessageEvent) {
-			if (
-				e.data?.type === 'COURIER_EXT_READY' &&
-				typeof e.data.id === 'string'
-			) {
-				clearTimeout(timer);
-				window.removeEventListener('message', handler);
-				resolve(true);
-			}
-		}
-		window.addEventListener('message', handler);
-	});
+  if (extensionId) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      window.removeEventListener('message', handler);
+      resolve(false);
+    }, timeoutMs);
+    function handler(e: MessageEvent) {
+      if (
+        e.data?.type === 'COURIER_EXT_READY' &&
+        typeof e.data.id === 'string'
+      ) {
+        clearTimeout(timer);
+        window.removeEventListener('message', handler);
+        resolve(true);
+      }
+    }
+    window.addEventListener('message', handler);
+  });
 }
 
 async function sendStorageMessage(
-	request: StorageRequest
+  request: StorageRequest
 ): Promise<StorageResponse> {
-	if (!extensionId) {
-		console.error(
-			LOG,
-			'storage: extension not detected, cannot send',
-			request.type
-		);
-		return { type: 'error', message: 'Extension not detected.' };
-	}
-	console.log(LOG, '→ storage', request.type);
-	return new Promise((resolve) => {
-		chrome.runtime.sendMessage(
-			extensionId as string,
-			request,
-			(response: StorageResponse) => {
-				const result = response ?? {
-					type: 'error',
-					message: 'No response from extension.',
-				};
-				if (result.type === 'error') {
-					console.error(LOG, '← storage error', result.message);
-				} else {
-					console.log(LOG, '← storage', result.type);
-				}
-				resolve(result);
-			}
-		);
-	});
+  if (!extensionId) {
+    console.error(
+      LOG,
+      'storage: extension not detected, cannot send',
+      request.type
+    );
+    return { type: 'error', message: 'Extension not detected.' };
+  }
+  console.log(LOG, '→ storage', request.type);
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      extensionId as string,
+      request,
+      (response: StorageResponse) => {
+        const result = response ?? {
+          type: 'error',
+          message: 'No response from extension.',
+        };
+        if (result.type === 'error') {
+          console.error(LOG, '← storage error', result.message);
+        } else {
+          console.log(LOG, '← storage', result.type);
+        }
+        resolve(result);
+      }
+    );
+  });
 }
 
 export async function saveApiKey(
-	provider: string,
-	apiKey: string
+  provider: string,
+  apiKey: string
 ): Promise<boolean> {
-	const response = await sendStorageMessage({
-		type: 'save_key',
-		provider,
-		apiKey,
-	});
-	return response.type === 'saved';
+  const response = await sendStorageMessage({
+    type: 'save_key',
+    provider,
+    apiKey,
+  });
+  return response.type === 'saved';
 }
 
 export async function clearApiKey(provider: string): Promise<boolean> {
-	const response = await sendStorageMessage({ type: 'clear_key', provider });
-	return response.type === 'saved';
+  const response = await sendStorageMessage({ type: 'clear_key', provider });
+  return response.type === 'saved';
 }
 
 export async function checkApiKeys(
-	providers: string[]
+  providers: string[]
 ): Promise<Record<string, boolean>> {
-	const response = await sendStorageMessage({ type: 'has_keys', providers });
-	if (response.type === 'has_keys') return response.saved;
-	return Object.fromEntries(providers.map((p) => [p, false]));
+  const response = await sendStorageMessage({ type: 'has_keys', providers });
+  if (response.type === 'has_keys') return response.saved;
+  return Object.fromEntries(providers.map((p) => [p, false]));
 }
 
 export async function saveSettings(
-	settings: Partial<UserSettings>
+  settings: Partial<UserSettings>
 ): Promise<void> {
-	await sendStorageMessage({ type: 'save_settings', settings });
+  await sendStorageMessage({ type: 'save_settings', settings });
 }
 
 export async function loadSettings(): Promise<Partial<UserSettings>> {
-	const response = await sendStorageMessage({ type: 'load_settings' });
-	if (response.type === 'settings') return response.settings;
-	return {};
+  const response = await sendStorageMessage({ type: 'load_settings' });
+  if (response.type === 'settings') return response.settings;
+  return {};
 }
 
 export async function saveChat(
-	chat: StoredChat,
-	meta: ChatMeta
+  chat: StoredChat,
+  meta: ChatMeta
 ): Promise<void> {
-	await sendStorageMessage({ type: 'save_chat', chat, meta });
+  await sendStorageMessage({ type: 'save_chat', chat, meta });
 }
 
 export async function deleteChat(chatId: string): Promise<void> {
-	await sendStorageMessage({ type: 'delete_chat', chatId });
+  await sendStorageMessage({ type: 'delete_chat', chatId });
 }
 
 export async function loadChatMetas(): Promise<ChatMeta[]> {
-	const response = await sendStorageMessage({ type: 'load_chat_metas' });
-	if (response.type === 'chat_metas') return response.metas;
-	return [];
+  const response = await sendStorageMessage({ type: 'load_chat_metas' });
+  if (response.type === 'chat_metas') return response.metas;
+  return [];
 }
 
 export async function loadChats(): Promise<StoredChat[]> {
-	const response = await sendStorageMessage({ type: 'load_chats' });
-	if (response.type === 'chats') return response.chats;
-	return [];
+  const response = await sendStorageMessage({ type: 'load_chats' });
+  if (response.type === 'chats') return response.chats;
+  return [];
 }
 
 export async function loadChatsByIds(ids: string[]): Promise<StoredChat[]> {
-	const response = await sendStorageMessage({ type: 'load_chats_by_ids', ids });
-	if (response.type === 'chats') return response.chats;
-	return [];
+  const response = await sendStorageMessage({ type: 'load_chats_by_ids', ids });
+  if (response.type === 'chats') return response.chats;
+  return [];
 }
 
 export async function loadChat(chatId: string): Promise<StoredChat | null> {
-	const response = await sendStorageMessage({ type: 'load_chat', chatId });
-	if (response.type === 'chat') return response.chat;
-	return null;
+  const response = await sendStorageMessage({ type: 'load_chat', chatId });
+  if (response.type === 'chat') return response.chat;
+  return null;
 }
 
 export function sendToExtension(
-	request: ExtensionRequest,
-	onChunk: (text: string) => void,
-	onDone: (usage?: { inputTokens: number; outputTokens: number }) => void,
-	onError: (message: string) => void
+  request: ExtensionRequest,
+  onChunk: (text: string) => void,
+  onDone: (usage?: { inputTokens: number; outputTokens: number }) => void,
+  onError: (message: string) => void,
+  onThinkingChunk?: (text: string) => void
 ): void {
-	if (!extensionId) {
-		console.error(LOG, 'chat: extension not detected');
-		onError(
-			'CourierAI extension not detected. Install it and refresh to start chatting.'
-		);
-		return;
-	}
+  if (!extensionId) {
+    console.error(LOG, 'chat: extension not detected');
+    onError(
+      'CourierAI extension not detected. Install it and refresh to start chatting.'
+    );
+    return;
+  }
 
-	console.log(LOG, '→ chat request', {
-		provider: request.provider,
-		model: request.model,
-		messages: request.messages.length,
-		params: request.params,
-	});
+  console.log(LOG, '→ chat request', {
+    provider: request.provider,
+    model: request.model,
+    messages: request.messages.length,
+    params: request.params,
+  });
 
-	let done = false;
-	let firstChunk = true;
-	const port = chrome.runtime.connect(extensionId);
+  let done = false;
+  let firstChunk = true;
+  const port = chrome.runtime.connect(extensionId);
 
-	port.onMessage.addListener((response: ExtensionResponse) => {
-		switch (response.type) {
-			case 'chunk':
-				if (firstChunk) {
-					console.log(LOG, '← first chunk received');
-					firstChunk = false;
-				}
-				onChunk(response.content);
-				break;
-			case 'done':
-				done = true;
-				console.log(LOG, '← stream done');
-				onDone(response.usage);
-				port.disconnect();
-				break;
-			case 'error':
-				done = true;
-				console.error(LOG, '← stream error', response.message);
-				onError(response.message);
-				port.disconnect();
-				break;
-		}
-	});
+  port.onMessage.addListener((response: ExtensionResponse) => {
+    switch (response.type) {
+      case 'chunk':
+        if (firstChunk) {
+          console.log(LOG, '← first chunk received');
+          firstChunk = false;
+        }
+        onChunk(response.content);
+        break;
+      case 'thinking_chunk':
+        onThinkingChunk?.(response.content);
+        break;
+      case 'done':
+        done = true;
+        console.log(LOG, '← stream done');
+        onDone(response.usage);
+        port.disconnect();
+        break;
+      case 'error':
+        done = true;
+        console.error(LOG, '← stream error', response.message);
+        onError(response.message);
+        port.disconnect();
+        break;
+    }
+  });
 
-	port.onDisconnect.addListener(() => {
-		if (!done) {
-			const msg =
-				chrome.runtime.lastError?.message ??
-				'Extension disconnected unexpectedly.';
-			console.error(LOG, '✗ unexpected port disconnect', msg);
-			onError(msg);
-		}
-	});
+  port.onDisconnect.addListener(() => {
+    if (!done) {
+      const msg =
+        chrome.runtime.lastError?.message ??
+        'Extension disconnected unexpectedly.';
+      console.error(LOG, '✗ unexpected port disconnect', msg);
+      onError(msg);
+    }
+  });
 
-	port.postMessage(request);
+  port.postMessage(request);
 }

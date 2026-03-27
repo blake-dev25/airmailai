@@ -4,14 +4,14 @@ import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-	logLevel: 'warn',
-	plugins: [tailwindcss(), svelte()],
-	build: {
-		rollupOptions: {
-			input: {
-				main: resolve(__dirname, 'index.html'),
-				app: resolve(__dirname, 'app/index.html'),
-			},
-		},
-	},
+  logLevel: 'warn',
+  plugins: [tailwindcss(), svelte()],
+  build: {
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'index.html'),
+        app: resolve(__dirname, 'app/index.html'),
+      },
+    },
+  },
 });

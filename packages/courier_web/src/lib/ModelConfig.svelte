@@ -7,12 +7,14 @@
 		modelId = $bindable(),
 		temperature = $bindable(),
 		maxTokens = $bindable(),
+		thinkingLevel = $bindable(),
 		tokens = null,
 	}: {
 		providerId: string;
 		modelId: string;
 		temperature: number;
 		maxTokens: number;
+		thinkingLevel: string;
 		tokens?: { input: number; output: number } | null;
 	} = $props();
 
@@ -102,22 +104,50 @@
 	let currentModel = $derived(
 		currentProvider.models.find((m) => m.id === modelId) ?? currentProvider.models[0]
 	);
+	let thinkingConfig = $derived(currentModel.params.thinking);
+	let thinkingIndex = $derived(
+		thinkingConfig ? Math.max(0, thinkingConfig.levels.indexOf(thinkingLevel as never)) : 0
+	);
 
-	// When provider changes, reset model if the current one isn't in the new provider's list
-	$effect(() => {
+	function levelLabel(level: string): string {
+		if (level === 'medium') return 'Med';
+		if (level === 'xhigh') return 'XHigh';
+		return level.charAt(0).toUpperCase() + level.slice(1);
+	}
+
+	function onProviderChange(e: Event) {
+		providerId = (e.currentTarget as HTMLSelectElement).value;
 		const provider = PROVIDERS.find((p) => p.id === providerId);
-		if (provider && !provider.models.find((m) => m.id === modelId)) {
+		if (provider) {
 			modelId = provider.models[0].id;
+			maxTokens = provider.models[0].params.defaultMaxTokens;
+			temperature = provider.models[0].params.defaultTemperature;
+			thinkingLevel = provider.models[0].params.thinking?.defaultLevel ?? 'none';
 		}
-	});
+	}
 
-	// Clamp temperature and maxTokens to the selected model's limits
+	function onModelChange(e: Event) {
+		modelId = (e.currentTarget as HTMLSelectElement).value;
+		const model = currentProvider.models.find((m) => m.id === modelId);
+		if (model) {
+			maxTokens = model.params.defaultMaxTokens;
+			temperature = model.params.defaultTemperature;
+			thinkingLevel = model.params.thinking?.defaultLevel ?? 'none';
+		}
+	}
+
+	// Safety clamp for externally set values (e.g. loading a chat saved with an old model limit)
 	$effect(() => {
 		const params = currentModel.params;
 		untrack(() => {
 			if (maxTokens > params.maxOutputTokens) maxTokens = params.maxOutputTokens;
 			if (maxTokens < 1) maxTokens = 1;
 			if (temperature > params.temperatureMax) temperature = params.defaultTemperature;
+			// If the loaded thinkingLevel isn't valid for this model, fall back to default
+			if (params.thinking && !params.thinking.levels.includes(thinkingLevel as never)) {
+				thinkingLevel = params.thinking.defaultLevel;
+			}
+			if (!params.thinking) thinkingLevel = 'none';
 		});
 	});
 </script>
@@ -131,7 +161,7 @@
 		<div class="field">
 			<label for="provider">Provider</label>
 			<div class="select-wrap">
-				<select id="provider" bind:value={providerId}>
+				<select id="provider" value={providerId} onchange={onProviderChange}>
 					{#each PROVIDERS as provider}
 						<option value={provider.id}>{provider.name}</option>
 					{/each}
@@ -145,7 +175,7 @@
 		<div class="field">
 			<label for="model">Model</label>
 			<div class="select-wrap">
-				<select id="model" bind:value={modelId}>
+				<select id="model" value={modelId} onchange={onModelChange}>
 					{#each currentProvider.models as model}
 						<option value={model.id}>{model.name}</option>
 					{/each}
@@ -186,6 +216,30 @@
 				<div class="range-hints">
 					<span>Precise</span>
 					<span>Creative</span>
+				</div>
+			</div>
+		{/if}
+
+		{#if thinkingConfig}
+			<div class="field">
+				<div class="label-row">
+					<label for="thinking">Thinking</label>
+					<span class="value-badge">{levelLabel(thinkingLevel)}</span>
+				</div>
+				<input
+					id="thinking"
+					type="range"
+					min="0"
+					max={thinkingConfig.levels.length - 1}
+					step="1"
+					value={thinkingIndex}
+					oninput={(e) => {
+						thinkingLevel = thinkingConfig!.levels[+(e.currentTarget as HTMLInputElement).value];
+					}}
+				/>
+				<div class="range-hints">
+					<span>None</span>
+					<span>{levelLabel(thinkingConfig.levels[thinkingConfig.levels.length - 1])}</span>
 				</div>
 			</div>
 		{/if}

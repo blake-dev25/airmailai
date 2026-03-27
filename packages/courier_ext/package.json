@@ -1,19 +1,19 @@
 {
-	"name": "courier_ext",
-	"version": "0.0.1",
-	"private": true,
-	"scripts": {
-		"dev": "wxt",
-		"build": "wxt build",
-		"zip": "wxt zip"
-	},
-	"dependencies": {
-		"@anthropic-ai/sdk": "^0.55.0",
-		"@courier/shared": "workspace:*",
-		"openai": "^6.32.0"
-	},
-	"devDependencies": {
-		"typescript": "^5.0.0",
-		"wxt": "latest"
-	}
+  "name": "courier_ext",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build",
+    "zip": "wxt zip"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.80.0",
+    "@courier/shared": "workspace:*",
+    "openai": "^6.32.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "wxt": "latest"
+  }
 }

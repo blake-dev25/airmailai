@@ -24,6 +24,7 @@
 	interface Message {
 		role: 'user' | 'assistant';
 		content: string;
+		thinking?: string;
 	}
 
 	interface Chat {
@@ -36,6 +37,7 @@
 		modelId: string;
 		temperature: number;
 		maxTokens: number;
+		thinkingLevel: string;
 		tokens?: { input: number; output: number };
 	}
 
@@ -61,6 +63,8 @@
 
 	// Chat width — 33 to 100 (vw), default unconstrained
 	let chatWidth = $state(100);
+	// Smooth text loading — animate streaming text with rAF drain
+	let smoothText = $state(true);
 
 	// Model config
 	const defaultModel = PROVIDERS[0].models[1]; // Sonnet as default
@@ -68,6 +72,7 @@
 	let modelId = $state(defaultModel.id);
 	let temperature = $state(defaultModel.params.defaultTemperature);
 	let maxTokens = $state(defaultModel.params.defaultMaxTokens);
+	let thinkingLevel = $state<string>(defaultModel.params.thinking?.defaultLevel ?? 'none');
 	let systemPrompt = $state('');
 
 	// Chats
@@ -104,10 +109,12 @@
 		if (settings.theme) theme = settings.theme;
 		if (settings.fontSizeIndex !== undefined) fontSizeIndex = settings.fontSizeIndex;
 		if (settings.chatWidth !== undefined) chatWidth = settings.chatWidth;
+		if (settings.smoothText !== undefined) smoothText = settings.smoothText;
 		if (settings.providerId) providerId = settings.providerId;
 		if (settings.modelId) modelId = settings.modelId;
 		if (settings.temperature !== undefined) temperature = settings.temperature;
 		if (settings.maxTokens !== undefined) maxTokens = settings.maxTokens;
+		if (settings.thinkingLevel !== undefined) thinkingLevel = settings.thinkingLevel;
 
 		settingsLoaded = true;
 
@@ -158,7 +165,7 @@
 
 	// Debounced save — fires 300ms after any settings change (but not during initial load)
 	$effect(() => {
-		const snapshot = { theme, fontSizeIndex, chatWidth, providerId, modelId, temperature, maxTokens };
+		const snapshot = { theme, fontSizeIndex, chatWidth, smoothText, providerId, modelId, temperature, maxTokens, thinkingLevel };
 		if (!untrack(() => settingsLoaded)) return;
 		const timer = setTimeout(() => {
 			console.log(LOG, 'settings save (debounced)', snapshot);
@@ -171,7 +178,7 @@
 		return { id: chat.id, messages, ...(chat.tokens ? { tokens: chat.tokens } : {}) };
 	}
 	function chatToMeta(chat: Chat): ChatMeta {
-		return { id: chat.id, title: chat.title, createdAt: chat.createdAt, providerId: chat.providerId, modelId: chat.modelId, temperature: chat.temperature, maxTokens: chat.maxTokens, systemPrompt: chat.systemPrompt };
+		return { id: chat.id, title: chat.title, createdAt: chat.createdAt, providerId: chat.providerId, modelId: chat.modelId, temperature: chat.temperature, maxTokens: chat.maxTokens, thinkingLevel: chat.thinkingLevel, systemPrompt: chat.systemPrompt };
 	}
 
 	// --- Chat actions ---
@@ -180,8 +187,8 @@
 		const id = crypto.randomUUID();
 		const now = Date.now();
 		console.log(LOG, 'new chat', id);
-		chats = [{ id, title: 'New Chat', messages: [], createdAt: now, systemPrompt, providerId, modelId, temperature, maxTokens }, ...chats];
-		allMetas = [{ id, title: 'New Chat', createdAt: now, providerId, modelId, temperature, maxTokens, systemPrompt }, ...allMetas];
+		chats = [{ id, title: 'New Chat', messages: [], createdAt: now, systemPrompt, providerId, modelId, temperature, maxTokens, thinkingLevel }, ...chats];
+		allMetas = [{ id, title: 'New Chat', createdAt: now, providerId, modelId, temperature, maxTokens, thinkingLevel, systemPrompt }, ...allMetas];
 		loadedChatIds.add(id);
 		activeChatId = id;
 	}
@@ -197,6 +204,7 @@
 			modelId = meta.modelId;
 			temperature = meta.temperature;
 			maxTokens = meta.maxTokens;
+			thinkingLevel = meta.thinkingLevel;
 			systemPrompt = meta.systemPrompt;
 		}
 
@@ -236,8 +244,8 @@
 			chatId = crypto.randomUUID();
 			const now = Date.now();
 			const title = content.slice(0, 40);
-			chats = [{ id: chatId, title, messages: [], createdAt: now, systemPrompt, providerId, modelId, temperature, maxTokens }, ...chats];
-			allMetas = [{ id: chatId, title, createdAt: now, providerId, modelId, temperature, maxTokens, systemPrompt }, ...allMetas];
+			chats = [{ id: chatId, title, messages: [], createdAt: now, systemPrompt, providerId, modelId, temperature, maxTokens, thinkingLevel }, ...chats];
+			allMetas = [{ id: chatId, title, createdAt: now, providerId, modelId, temperature, maxTokens, thinkingLevel, systemPrompt }, ...allMetas];
 			loadedChatIds.add(chatId);
 			activeChatId = chatId;
 		} else {
@@ -245,11 +253,11 @@
 			const isFirst = (chats.find((c) => c.id === chatId)?.messages.length ?? 0) === 0;
 			chats = chats.map((c) => {
 				if (c.id !== chatId) return c;
-				return { ...c, systemPrompt, providerId, modelId, temperature, maxTokens, ...(isFirst ? { title: content.slice(0, 40) } : {}) };
+				return { ...c, systemPrompt, providerId, modelId, temperature, maxTokens, thinkingLevel, ...(isFirst ? { title: content.slice(0, 40) } : {}) };
 			});
 			allMetas = allMetas.map((t) => {
 				if (t.id !== chatId) return t;
-				return { ...t, providerId, modelId, temperature, maxTokens, systemPrompt, ...(isFirst ? { title: content.slice(0, 40) } : {}) };
+				return { ...t, providerId, modelId, temperature, maxTokens, thinkingLevel, systemPrompt, ...(isFirst ? { title: content.slice(0, 40) } : {}) };
 			});
 		}
 
@@ -266,14 +274,14 @@
 		const chatSnapshot = chats.find((c) => c.id === chatId)!;
 		saveChat(chatToStored(chatSnapshot, chatSnapshot.messages.slice(0, -1)), chatToMeta(chatSnapshot)).catch(console.error);
 
-		// Build message history for the API (exclude the empty placeholder)
-		const history = chatSnapshot.messages.slice(0, -1);
+		// Build message history for the API (exclude the empty placeholder, strip thinking)
+		const history = chatSnapshot.messages.slice(0, -1).map(({ role, content }) => ({ role, content }));
 		const apiMessages = systemPrompt.trim()
 			? [{ role: 'system' as const, content: systemPrompt }, ...history]
 			: history;
 
 		sendToExtension(
-			{ provider: providerId, model: modelId, messages: apiMessages, params: { temperature, maxTokens } },
+			{ provider: providerId, model: modelId, messages: apiMessages, params: { temperature, maxTokens, thinkingLevel } },
 			(chunk) => {
 				// Append chunk to the last message in the target chat
 				chats = chats.map((c) => {
@@ -304,6 +312,18 @@
 					c.id === chatId ? { ...c, messages: c.messages.slice(0, -1) } : c
 				);
 			},
+			(thinkingChunk) => {
+				chats = chats.map((c) => {
+					if (c.id !== chatId) return c;
+					const msgs = [...c.messages];
+					const last = msgs[msgs.length - 1];
+					msgs[msgs.length - 1] = {
+						...last,
+						thinking: (last.thinking ?? '') + thinkingChunk,
+					};
+					return { ...c, messages: msgs };
+				});
+			},
 		);
 	}
 </script>
@@ -321,13 +341,14 @@
 		bind:theme
 		bind:fontSizeIndex
 		bind:chatWidth
+		bind:smoothText
 		onnewchat={newChat}
 		onselectchat={selectChat}
 		ondeletechat={removeChat}
 		onloadmore={loadMoreChats}
 	/>
-	<ChatPanel messages={activeMessages} modelName={activeModelName} {isStreaming} {streamError} {chatWidth} loading={chatLoading} bind:systemPrompt onsend={sendMessage} />
-	<ModelConfig bind:providerId bind:modelId bind:temperature bind:maxTokens tokens={activeTokens} />
+	<ChatPanel messages={activeMessages} modelName={activeModelName} {isStreaming} {streamError} {chatWidth} {smoothText} loading={chatLoading} bind:systemPrompt onsend={sendMessage} />
+	<ModelConfig bind:providerId bind:modelId bind:temperature bind:maxTokens bind:thinkingLevel tokens={activeTokens} />
 </div>
 
 <style>

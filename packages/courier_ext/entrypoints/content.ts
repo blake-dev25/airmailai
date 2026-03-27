@@ -3,24 +3,24 @@
 const LOG = '[courier:ext]';
 
 export default defineContentScript({
-	matches: ['https://courier-ai.com/*', 'http://localhost:*/*'],
-	runAt: 'document_idle',
-	main() {
-		const announce = () => {
-			console.log(LOG, 'content: announcing extension ID', chrome.runtime.id);
-			window.postMessage(
-				{ type: 'COURIER_EXT_READY', id: chrome.runtime.id },
-				'*'
-			);
-		};
+  matches: ['https://courier-ai.com/*', 'http://localhost:*/*'],
+  runAt: 'document_idle',
+  main() {
+    const announce = () => {
+      console.log(LOG, 'content: announcing extension ID', chrome.runtime.id);
+      window.postMessage(
+        { type: 'COURIER_EXT_READY', id: chrome.runtime.id },
+        '*'
+      );
+    };
 
-		announce();
+    announce();
 
-		window.addEventListener('message', (e) => {
-			if (e.data?.type === 'COURIER_EXT_PING') {
-				console.log(LOG, 'content: ping received, re-announcing');
-				announce();
-			}
-		});
-	},
+    window.addEventListener('message', (e) => {
+      if (e.data?.type === 'COURIER_EXT_PING') {
+        console.log(LOG, 'content: ping received, re-announcing');
+        announce();
+      }
+    });
+  },
 });

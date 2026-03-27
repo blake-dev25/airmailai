@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import MarkdownMessage from './MarkdownMessage.svelte';
 
 	interface Message {
 		role: 'user' | 'assistant';
 		content: string;
+		thinking?: string;
 	}
 
 	let {
@@ -14,6 +15,7 @@
 		chatWidth = 100,
 		streamError = null,
 		loading = false,
+		smoothText = true,
 		systemPrompt = $bindable(),
 		onsend,
 	}: {
@@ -23,21 +25,92 @@
 		chatWidth?: number;
 		streamError?: string | null;
 		loading?: boolean;
+		smoothText?: boolean;
 		systemPrompt: string;
 		onsend: (content: string) => void;
 	} = $props();
 
 	let systemExpanded = $state(false);
+	let expandedThinking = $state(new Set<number>());
 	let inputText = $state('');
 	let messagesEl = $state<HTMLElement | null>(null);
 	let textareaEl = $state<HTMLTextAreaElement | null>(null);
 
+	const DRAIN_CHARS_PER_SEC = 60;
+
+	let displayContent = $state('');
+	let rafTarget = '';
+	let rafId: number | null = null;
+	let rafLastTime = 0;
+	let rafAccum = 0;
+
+	function rafTick(now: DOMHighResTimeStamp) {
+		if (displayContent.length > rafTarget.length) {
+			displayContent = rafTarget;
+			rafId = null;
+			rafLastTime = 0;
+			rafAccum = 0;
+			return;
+		}
+		if (displayContent.length < rafTarget.length) {
+			if (rafLastTime > 0) {
+				rafAccum += (now - rafLastTime) / 1000 * DRAIN_CHARS_PER_SEC;
+				const step = Math.floor(rafAccum);
+				rafAccum -= step;
+				if (step > 0) {
+					displayContent = rafTarget.slice(0, Math.min(rafTarget.length, displayContent.length + step));
+				}
+			}
+			rafLastTime = now;
+			rafId = requestAnimationFrame(rafTick);
+		} else {
+			rafId = null;
+			rafLastTime = 0;
+			rafAccum = 0;
+		}
+	}
+
 	$effect(() => {
-		// Track last message content so this re-runs on each streaming chunk too
-		void messages[messages.length - 1]?.content;
+		void displayContent;
 		tick().then(() => {
 			if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
 		});
+	});
+
+	$effect(() => {
+		const raw = messages[messages.length - 1]?.content ?? '';
+
+		if (!smoothText) {
+			if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+			rafLastTime = 0;
+			rafAccum = 0;
+			displayContent = raw;
+			rafTarget = raw;
+			return;
+		}
+
+		// Content grew from a non-empty target — streaming continuation, keep draining.
+		const grew = raw.length >= rafTarget.length && raw.startsWith(rafTarget) && rafTarget.length > 0;
+		// rafTarget is empty — only drain if a stream is actively running (first chunk).
+		const firstChunk = rafTarget.length === 0 && untrack(() => isStreaming);
+
+		if (grew || firstChunk) {
+			rafTarget = raw;
+			if (rafId === null && displayContent.length < rafTarget.length) {
+				rafId = requestAnimationFrame(rafTick);
+			}
+		} else {
+			// Content changed to something else (chat switch, error reset, page load) — flush.
+			if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+			rafLastTime = 0;
+			rafAccum = 0;
+			displayContent = raw;
+			rafTarget = raw;
+		}
+
+		return () => {
+			if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+		};
 	});
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -128,8 +201,48 @@
 					{#if message.role === 'user'}
 						<div class="bubble">{message.content}</div>
 					{:else}
-						<div class="bubble">
-							<MarkdownMessage content={message.content} />
+						{@const msgContent = (i === messages.length - 1 && message.role === 'assistant' && (isStreaming || displayContent !== message.content)) ? displayContent : message.content}
+						<div class="assistant-group">
+							{#if message.thinking}
+								<div class="thinking-block">
+									<button
+										type="button"
+										class="thinking-toggle"
+										onclick={() => {
+											const next = new Set(expandedThinking);
+											if (next.has(i)) next.delete(i);
+											else next.add(i);
+											expandedThinking = next;
+										}}
+									>
+										{#if isStreaming && i === messages.length - 1 && !message.content}
+											<svg class="spinner" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+												<circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.5" stroke-dasharray="18 8" stroke-linecap="round" />
+											</svg>
+										{/if}
+										<span>Thinking</span>
+										<svg
+											class="thinking-chevron"
+											class:expanded={expandedThinking.has(i)}
+											width="12"
+											height="12"
+											viewBox="0 0 12 12"
+											fill="none"
+											aria-hidden="true"
+										>
+											<path d="M4.5 2.5l3.5 3.5-3.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+										</svg>
+									</button>
+									{#if expandedThinking.has(i)}
+										<div class="thinking-content">{message.thinking}</div>
+									{/if}
+								</div>
+							{/if}
+							{#if msgContent}
+								<div class="bubble">
+									<MarkdownMessage content={msgContent} />
+								</div>
+							{/if}
 						</div>
 					{/if}
 				</div>
@@ -319,6 +432,78 @@
 		color: var(--color-surface-sunken);
 		border-bottom-left-radius: 14px;
 		border-bottom-right-radius: 4px;
+	}
+
+	.assistant-group .bubble {
+		max-width: 100%;
+	}
+
+	/* Assistant message group (thinking + bubble stacked) */
+	.assistant-group {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		max-width: 70%;
+	}
+
+	/* Thinking block */
+	.thinking-block {
+		border: 1px solid var(--color-border);
+		border-radius: 8px;
+		overflow: hidden;
+	}
+
+	.thinking-toggle {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		width: 100%;
+		padding: 6px 10px;
+		background: none;
+		border: none;
+		color: var(--color-text);
+		font-family: var(--font-sans);
+		font-size: 0.75rem;
+		font-weight: 500;
+		opacity: 0.6;
+		cursor: pointer;
+		text-align: left;
+		transition: opacity 0.15s;
+	}
+
+	.thinking-toggle:hover {
+		opacity: 1;
+	}
+
+	.thinking-chevron {
+		flex-shrink: 0;
+		transition: transform 0.2s ease;
+	}
+
+	.thinking-chevron.expanded {
+		transform: rotate(90deg);
+	}
+
+	@keyframes spin {
+		to { transform: rotate(360deg); }
+	}
+
+	.spinner {
+		flex-shrink: 0;
+		animation: spin 0.8s linear infinite;
+		transform-box: fill-box;
+		transform-origin: center;
+	}
+
+	.thinking-content {
+		padding: 8px 10px 10px;
+		border-top: 1px solid var(--color-border);
+		font-size: 0.75rem;
+		line-height: 1.6;
+		color: var(--color-text);
+		opacity: 0.7;
+		white-space: pre-wrap;
+		word-break: break-word;
 	}
 
 	/* Input */
