@@ -35,6 +35,7 @@
 	let inputText = $state('');
 	let messagesEl = $state<HTMLElement | null>(null);
 	let textareaEl = $state<HTMLTextAreaElement | null>(null);
+	let isAtBottom = $state(true);
 
 	const DRAIN_CHARS_PER_SEC = 60;
 
@@ -73,7 +74,7 @@
 	$effect(() => {
 		void displayContent;
 		tick().then(() => {
-			if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
+			if (messagesEl && untrack(() => isAtBottom)) messagesEl.scrollTop = messagesEl.scrollHeight;
 		});
 	});
 
@@ -106,12 +107,25 @@
 			rafAccum = 0;
 			displayContent = raw;
 			rafTarget = raw;
+			isAtBottom = true;
 		}
 
 		return () => {
 			if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
 		};
 	});
+
+	function handleMessagesScroll() {
+		if (!messagesEl) return;
+		const { scrollTop, scrollHeight, clientHeight } = messagesEl;
+		isAtBottom = scrollHeight - scrollTop - clientHeight < 80;
+	}
+
+	function scrollToBottom() {
+		if (!messagesEl) return;
+		isAtBottom = true;
+		messagesEl.scrollTop = messagesEl.scrollHeight;
+	}
 
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Enter' && !e.shiftKey) {
@@ -123,6 +137,7 @@
 	function submit() {
 		const text = inputText.trim();
 		if (!text || isStreaming) return;
+		isAtBottom = true;
 		onsend(text);
 		inputText = '';
 		if (textareaEl) textareaEl.style.height = '';
@@ -173,7 +188,9 @@
 	</div>
 
 	<!-- Messages -->
-	<div class="messages" bind:this={messagesEl} style="width: 100%; max-width: {chatWidth}vw; margin-left: auto; margin-right: auto;">
+	<div class="messages-wrapper">
+	<div class="messages" bind:this={messagesEl} onscroll={handleMessagesScroll}>
+	<div class="messages-inner" style="max-width: {chatWidth}vw;">
 		{#if loading}
 			<div class="empty-state">
 				<p class="sub">Loading…</p>
@@ -248,6 +265,15 @@
 				</div>
 			{/each}
 		{/if}
+	</div>
+	</div>
+	{#if !isAtBottom}
+		<button type="button" class="scroll-bottom-btn" onclick={scrollToBottom} aria-label="Scroll to bottom">
+			<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+				<path d="M3 5l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+			</svg>
+		</button>
+	{/if}
 	</div>
 
 	<!-- Stream error -->
@@ -367,18 +393,69 @@
 	}
 
 	/* Messages */
-	.messages {
+	.messages-wrapper {
 		flex: 1;
+		position: relative;
+		min-height: 0;
+	}
+
+	.scroll-bottom-btn {
+		position: absolute;
+		bottom: 16px;
+		left: 50%;
+		transform: translateX(-50%);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 30px;
+		height: 30px;
+		background-color: var(--color-surface-sunken);
+		border: 1px solid var(--color-border);
+		border-radius: 50%;
+		color: var(--color-text);
+		cursor: pointer;
+		z-index: 5;
+		transition: background-color 0.15s;
+		animation: fadeUp 0.15s ease;
+	}
+
+	.scroll-bottom-btn:hover {
+		background-color: var(--color-border);
+	}
+
+	@keyframes fadeUp {
+		from { opacity: 0; transform: translateX(-50%) translateY(6px); }
+		to { opacity: 1; transform: translateX(-50%) translateY(0); }
+	}
+
+	.messages {
+		height: 100%;
 		overflow-y: auto;
+	}
+
+	.messages-inner {
+		margin: 0 auto;
 		padding: 28px 20px;
 		display: flex;
 		flex-direction: column;
 		gap: 16px;
+		min-height: 100%;
+		box-sizing: border-box;
 	}
 
 	.messages::-webkit-scrollbar {
-		display: none;
+		width: 3px;
 	}
+
+	.messages::-webkit-scrollbar-track {
+		background: transparent;
+	}
+
+	.messages::-webkit-scrollbar-thumb {
+		background-color: var(--color-border);
+		border-radius: 3px;
+	}
+
 
 	.empty-state {
 		display: flex;

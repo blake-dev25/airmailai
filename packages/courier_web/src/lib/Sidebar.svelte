@@ -13,6 +13,8 @@
 		activeChatId,
 		hasMoreChats,
 		isLoadingMore,
+		streamingChatIds,
+		chatErrors,
 		theme = $bindable(),
 		fontSizeIndex = $bindable(),
 		chatWidth = $bindable(),
@@ -26,6 +28,8 @@
 		activeChatId: string | null;
 		hasMoreChats: boolean;
 		isLoadingMore: boolean;
+		streamingChatIds: string[];
+		chatErrors: Record<string, string>;
 		theme: string;
 		fontSizeIndex: number;
 		chatWidth: number;
@@ -37,6 +41,7 @@
 	} = $props();
 
 	let showSettings = $state(false);
+	let historyHovered = $state(false);
 
 	// Airmail diagonal stripe decoration — reversed direction (\), with beige gaps
 	const stripeH = 20;
@@ -104,7 +109,7 @@
 		</button>
 	</div>
 
-	<nav class="history" aria-label="Chat history">
+	<nav class="history" class:hovered={historyHovered} aria-label="Chat history" onmouseenter={() => historyHovered = true} onmouseleave={() => historyHovered = false}>
 		<p class="section-label">Recent Chats</p>
 		{#if chats.length === 0}
 			<p class="empty">No conversations yet</p>
@@ -119,6 +124,15 @@
 					>
 						<span class="chat-title">{chat.title}</span>
 					</button>
+					{#if streamingChatIds.includes(chat.id) && chat.id !== activeChatId}
+						<span class="chat-status" aria-label="Streaming">
+							<svg class="spinner" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+								<circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.5" stroke-dasharray="18 8" stroke-linecap="round" />
+							</svg>
+						</span>
+					{:else if chatErrors[chat.id]}
+						<span class="chat-status chat-status--error" aria-label="Error">!</span>
+					{/if}
 					<button
 						type="button"
 						class="delete-btn"
@@ -273,6 +287,7 @@
 
 	.history {
 		flex: 1;
+		min-height: 0;
 		overflow-y: auto;
 		padding: 4px 8px;
 	}
@@ -286,8 +301,12 @@
 	}
 
 	.history::-webkit-scrollbar-thumb {
-		background-color: var(--color-border);
+		background-color: transparent;
 		border-radius: 3px;
+	}
+
+	.history.hovered::-webkit-scrollbar-thumb {
+		background-color: var(--color-border);
 	}
 
 	.section-label {
@@ -396,6 +415,33 @@
 	.delete-btn:hover {
 		color: var(--color-accent);
 		background-color: var(--color-surface-sunken, var(--color-bg));
+	}
+
+	.chat-status {
+		flex-shrink: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 20px;
+		height: 20px;
+		margin-right: 2px;
+		font-size: 0.75rem;
+		font-weight: 700;
+		color: var(--color-text-muted);
+	}
+
+	.chat-status--error {
+		color: var(--color-accent);
+	}
+
+	@keyframes spin {
+		to { transform: rotate(360deg); }
+	}
+
+	.spinner {
+		animation: spin 0.8s linear infinite;
+		transform-box: fill-box;
+		transform-origin: center;
 	}
 
 	.footer {

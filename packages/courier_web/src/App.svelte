@@ -82,8 +82,10 @@
 	let hasMoreChats = $derived(chats.length < allMetas.length);
 	let isLoadingMore = $state(false);
 	let activeChatId = $state<string | null>(null);
-	let isStreaming = $state(false);
-	let streamError = $state<string | null>(null);
+	let streamingChatIds = $state<string[]>([]);
+	let chatErrors = $state<Record<string, string>>({});
+	let isActiveStreaming = $derived(streamingChatIds.includes(activeChatId ?? ''));
+	let activeStreamError = $derived(chatErrors[activeChatId ?? ''] ?? null);
 	let activeMessages = $derived(chats.find((c) => c.id === activeChatId)?.messages ?? []);
 	let activeModelName = $derived(
 		PROVIDERS.find((p) => p.id === providerId)?.models.find((m) => m.id === modelId)?.name ?? modelId
@@ -230,12 +232,16 @@
 			activeChatId = null;
 			systemPrompt = '';
 		}
+		streamingChatIds = streamingChatIds.filter((sid) => sid !== id);
+		if (chatErrors[id]) {
+			const { [id]: _, ...rest } = chatErrors;
+			chatErrors = rest;
+		}
 		deleteChat(id).catch(console.error);
 	}
 
 	function sendMessage(content: string) {
-		if (isStreaming) return;
-		streamError = null;
+		if (activeChatId && streamingChatIds.includes(activeChatId)) return;
 		console.log(LOG, 'send message', { provider: providerId, model: modelId, contentLength: content.length, existingChat: activeChatId });
 
 		// Auto-create a chat on first message
@@ -268,7 +274,12 @@
 			c.id === chatId ? { ...c, messages: [...c.messages, userMsg, assistantMsg] } : c
 		);
 
-		isStreaming = true;
+		streamingChatIds = [...streamingChatIds, chatId];
+		// Clear any prior error for this chat
+		if (chatErrors[chatId]) {
+			const { [chatId]: _, ...rest } = chatErrors;
+			chatErrors = rest;
+		}
 
 		// Save after adding user message (exclude empty assistant placeholder)
 		const chatSnapshot = chats.find((c) => c.id === chatId)!;
@@ -295,7 +306,7 @@
 				});
 			},
 			(usage) => {
-				isStreaming = false;
+				streamingChatIds = streamingChatIds.filter((id) => id !== chatId);
 				chats = chats.map((c) => {
 					if (c.id !== chatId) return c;
 					return usage ? { ...c, tokens: { input: usage.inputTokens, output: usage.outputTokens } } : c;
@@ -304,8 +315,8 @@
 				if (done) saveChat(chatToStored(done), chatToMeta(done)).catch(console.error);
 			},
 			(msg) => {
-				isStreaming = false;
-				streamError = `API Error: ${msg}`;
+				streamingChatIds = streamingChatIds.filter((id) => id !== chatId);
+				chatErrors = { ...chatErrors, [chatId]: `API Error: ${msg}` };
 				// Pop the empty assistant placeholder — DB already has the correct state
 				// (user message was saved before streaming started)
 				chats = chats.map((c) =>
@@ -338,6 +349,8 @@
 		{activeChatId}
 		{hasMoreChats}
 		{isLoadingMore}
+		{streamingChatIds}
+		{chatErrors}
 		bind:theme
 		bind:fontSizeIndex
 		bind:chatWidth
@@ -347,7 +360,7 @@
 		ondeletechat={removeChat}
 		onloadmore={loadMoreChats}
 	/>
-	<ChatPanel messages={activeMessages} modelName={activeModelName} {isStreaming} {streamError} {chatWidth} {smoothText} loading={chatLoading} bind:systemPrompt onsend={sendMessage} />
+	<ChatPanel messages={activeMessages} modelName={activeModelName} isStreaming={isActiveStreaming} streamError={activeStreamError} {chatWidth} {smoothText} loading={chatLoading} bind:systemPrompt onsend={sendMessage} />
 	<ModelConfig bind:providerId bind:modelId bind:temperature bind:maxTokens bind:thinkingLevel tokens={activeTokens} />
 </div>
 
