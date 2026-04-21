@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { ChatMeta, StoredChat } from '@courier/shared';
+	import type { Attachment, ChatMeta, StoredChat } from '@courier/shared';
 	import { untrack } from 'svelte';
 	import ChatPanel from './lib/ChatPanel.svelte';
 	import { FONT_SIZES, PROVIDERS } from './lib/constants';
@@ -25,6 +25,7 @@
 		role: 'user' | 'assistant';
 		content: string;
 		thinking?: string;
+		attachments?: Attachment[];
 	}
 
 	interface Chat {
@@ -100,6 +101,8 @@
 
 	// Tracks which chat IDs have full messages loaded in memory
 	const loadedChatIds = new Set<string>();
+	// Disconnect functions for active streams — call to abort a stream early
+	const streamDisconnects = new Map<string, () => void>();
 
 	waitForExtension().then(async (detected) => {
 		extensionDetected = detected;
@@ -225,6 +228,8 @@
 
 	function removeChat(id: string) {
 		console.log(LOG, 'remove chat', id);
+		streamDisconnects.get(id)?.();
+		streamDisconnects.delete(id);
 		loadedChatIds.delete(id);
 		chats = chats.filter((c) => c.id !== id);
 		allMetas = allMetas.filter((t) => t.id !== id);
@@ -240,9 +245,9 @@
 		deleteChat(id).catch(console.error);
 	}
 
-	function sendMessage(content: string) {
+	function sendMessage(content: string, attachments?: Attachment[]) {
 		if (activeChatId && streamingChatIds.includes(activeChatId)) return;
-		console.log(LOG, 'send message', { provider: providerId, model: modelId, contentLength: content.length, existingChat: activeChatId });
+		console.log(LOG, 'send message', { provider: providerId, model: modelId, contentLength: content.length, attachmentCount: attachments?.length ?? 0, existingChat: activeChatId });
 
 		// Auto-create a chat on first message
 		let chatId = activeChatId;
@@ -268,7 +273,7 @@
 		}
 
 		// Add user message, then empty assistant placeholder for streaming
-		const userMsg: Message = { role: 'user', content };
+		const userMsg: Message = { role: 'user', content, ...(attachments?.length ? { attachments } : {}) };
 		const assistantMsg: Message = { role: 'assistant', content: '' };
 		chats = chats.map((c) =>
 			c.id === chatId ? { ...c, messages: [...c.messages, userMsg, assistantMsg] } : c
@@ -281,17 +286,15 @@
 			chatErrors = rest;
 		}
 
-		// Save after adding user message (exclude empty assistant placeholder)
 		const chatSnapshot = chats.find((c) => c.id === chatId)!;
-		saveChat(chatToStored(chatSnapshot, chatSnapshot.messages.slice(0, -1)), chatToMeta(chatSnapshot)).catch(console.error);
 
 		// Build message history for the API (exclude the empty placeholder, strip thinking)
-		const history = chatSnapshot.messages.slice(0, -1).map(({ role, content }) => ({ role, content }));
+		const history = chatSnapshot.messages.slice(0, -1).map(({ role, content, attachments }) => ({ role, content, ...(attachments ? { attachments } : {}) }));
 		const apiMessages = systemPrompt.trim()
 			? [{ role: 'system' as const, content: systemPrompt }, ...history]
 			: history;
 
-		sendToExtension(
+		const disconnect = sendToExtension(
 			{ provider: providerId, model: modelId, messages: apiMessages, params: { temperature, maxTokens, thinkingLevel } },
 			(chunk) => {
 				// Append chunk to the last message in the target chat
@@ -306,6 +309,7 @@
 				});
 			},
 			(usage) => {
+				streamDisconnects.delete(chatId as string);
 				streamingChatIds = streamingChatIds.filter((id) => id !== chatId);
 				chats = chats.map((c) => {
 					if (c.id !== chatId) return c;
@@ -315,13 +319,17 @@
 				if (done) saveChat(chatToStored(done), chatToMeta(done)).catch(console.error);
 			},
 			(msg) => {
+				streamDisconnects.delete(chatId as string);
 				streamingChatIds = streamingChatIds.filter((id) => id !== chatId);
-				chatErrors = { ...chatErrors, [chatId]: `API Error: ${msg}` };
-				// Pop the empty assistant placeholder — DB already has the correct state
-				// (user message was saved before streaming started)
-				chats = chats.map((c) =>
-					c.id === chatId ? { ...c, messages: c.messages.slice(0, -1) } : c
-				);
+				chatErrors = { ...chatErrors, [chatId as string]: `API Error: ${msg}` };
+				// Discard the placeholder only if no content arrived — keep partial content otherwise
+				chats = chats.map((c) => {
+					if (c.id !== chatId) return c;
+					const last = c.messages[c.messages.length - 1];
+					return last?.content ? c : { ...c, messages: c.messages.slice(0, -1) };
+				});
+				const errored = chats.find((c) => c.id === chatId);
+				if (errored) saveChat(chatToStored(errored), chatToMeta(errored)).catch(console.error);
 			},
 			(thinkingChunk) => {
 				chats = chats.map((c) => {
@@ -336,6 +344,7 @@
 				});
 			},
 		);
+		streamDisconnects.set(chatId as string, disconnect);
 	}
 </script>
 

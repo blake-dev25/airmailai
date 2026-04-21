@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { Attachment } from '@courier/shared';
 	import { tick, untrack } from 'svelte';
 	import MarkdownMessage from './MarkdownMessage.svelte';
 
@@ -6,6 +7,7 @@
 		role: 'user' | 'assistant';
 		content: string;
 		thinking?: string;
+		attachments?: Attachment[];
 	}
 
 	let {
@@ -27,7 +29,7 @@
 		loading?: boolean;
 		smoothText?: boolean;
 		systemPrompt: string;
-		onsend: (content: string) => void;
+		onsend: (content: string, attachments?: Attachment[]) => void;
 	} = $props();
 
 	let systemExpanded = $state(false);
@@ -35,7 +37,11 @@
 	let inputText = $state('');
 	let messagesEl = $state<HTMLElement | null>(null);
 	let textareaEl = $state<HTMLTextAreaElement | null>(null);
+	let fileInputEl = $state<HTMLInputElement | null>(null);
 	let isAtBottom = $state(true);
+	let pendingAttachments = $state<Attachment[]>([]);
+
+	const MAX_ATTACHMENTS = 20;
 
 	const DRAIN_CHARS_PER_SEC = 60;
 
@@ -136,11 +142,38 @@
 
 	function submit() {
 		const text = inputText.trim();
-		if (!text || isStreaming) return;
+		if ((!text && !pendingAttachments.length) || isStreaming) return;
 		isAtBottom = true;
-		onsend(text);
+		const atts = pendingAttachments;
+		pendingAttachments = [];
+		onsend(text, atts.length ? atts : undefined);
 		inputText = '';
 		if (textareaEl) textareaEl.style.height = '';
+	}
+
+	function openFilePicker() {
+		fileInputEl?.click();
+	}
+
+	function handleFileChange(e: Event) {
+		const files = Array.from((e.target as HTMLInputElement).files ?? []);
+		if (!fileInputEl) return;
+		fileInputEl.value = '';
+		if (!files.length) return;
+
+		const slots = MAX_ATTACHMENTS - pendingAttachments.length;
+		const toAdd = files.slice(0, slots);
+
+		for (const file of toAdd) {
+			const reader = new FileReader();
+			reader.onload = () => {
+				const dataUrl = reader.result as string;
+				const comma = dataUrl.indexOf(',');
+				const data = dataUrl.slice(comma + 1);
+				pendingAttachments = [...pendingAttachments, { name: file.name, mediaType: file.type, data }];
+			};
+			reader.readAsDataURL(file);
+		}
 	}
 
 	function autoResize(e: Event) {
@@ -216,10 +249,28 @@
 			{#each messages as message, i (i)}
 				<div class="message" class:user={message.role === 'user'}>
 					{#if message.role === 'user'}
-						<div class="bubble">{message.content}</div>
+						<div class="user-group">
+							{#if message.attachments?.length}
+								<div class="attachment-chips">
+									{#each message.attachments as att}
+										<span class="attachment-chip">{att.name}</span>
+									{/each}
+								</div>
+							{/if}
+							{#if message.content}
+								<div class="bubble">{message.content}</div>
+							{/if}
+						</div>
 					{:else}
 						{@const msgContent = (i === messages.length - 1 && message.role === 'assistant' && (isStreaming || displayContent !== message.content)) ? displayContent : message.content}
 						<div class="assistant-group">
+							{#if isStreaming && i === messages.length - 1 && !message.content && !message.thinking}
+								<div class="waiting-spinner">
+									<svg class="spinner" width="16" height="16" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+										<circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.5" stroke-dasharray="18 8" stroke-linecap="round" />
+									</svg>
+								</div>
+							{/if}
 							{#if message.thinking}
 								<div class="thinking-block">
 									<button
@@ -282,27 +333,60 @@
 	{/if}
 
 	<!-- Input -->
-	<div class="input-area">
-		<textarea
-			class="input"
-			placeholder="Message {modelName}…"
-			rows="1"
-			bind:value={inputText}
-			bind:this={textareaEl}
-			onkeydown={handleKeydown}
-			oninput={autoResize}
-		></textarea>
-		<button type="button" class="send-btn" onclick={submit} disabled={!inputText.trim() || isStreaming} aria-label="Send message">
-			<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-				<path
-					d="M2 8h12M9 3l5 5-5 5"
-					stroke="currentColor"
-					stroke-width="1.75"
-					stroke-linecap="round"
-					stroke-linejoin="round"
-				/>
-			</svg>
-		</button>
+	<div class="input-wrapper">
+		{#if pendingAttachments.length}
+			<div class="file-tab-row">
+				{#each pendingAttachments as att, i}
+					<div class="file-tab">
+						<svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+							<path d="M2 1.5h5.5L10 4v6.5H2V1.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+							<path d="M7.5 1.5V4H10" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+						</svg>
+						<span class="file-tab-name">{att.name}</span>
+						<button type="button" class="file-tab-remove" onclick={() => pendingAttachments = pendingAttachments.filter((_, j) => j !== i)} aria-label="Remove attachment">
+							<svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+								<path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+							</svg>
+						</button>
+					</div>
+				{/each}
+			</div>
+		{/if}
+		<div class="input-area">
+			<input
+				type="file"
+				accept=".pdf,image/*"
+				multiple
+				class="file-input"
+				bind:this={fileInputEl}
+				onchange={handleFileChange}
+			/>
+			<button type="button" class="attach-btn" onclick={openFilePicker} disabled={isStreaming || pendingAttachments.length >= MAX_ATTACHMENTS} aria-label="Attach file">
+				<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+					<path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+				</svg>
+			</button>
+			<textarea
+				class="input"
+				placeholder="Message {modelName}…"
+				rows="1"
+				bind:value={inputText}
+				bind:this={textareaEl}
+				onkeydown={handleKeydown}
+				oninput={autoResize}
+			></textarea>
+			<button type="button" class="send-btn" onclick={submit} disabled={(!inputText.trim() && !pendingAttachments.length) || isStreaming} aria-label="Send message">
+				<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+					<path
+						d="M2 8h12M9 3l5 5-5 5"
+						stroke="currentColor"
+						stroke-width="1.75"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					/>
+				</svg>
+			</button>
+		</div>
 	</div>
 </div>
 
@@ -504,7 +588,8 @@
 		border-bottom-left-radius: 4px;
 	}
 
-	.message.user .bubble {
+	.user-group .bubble {
+		max-width: 100%;
 		background-color: var(--color-accent-2);
 		color: var(--color-surface-sunken);
 		border-bottom-left-radius: 14px;
@@ -583,15 +668,135 @@
 		word-break: break-word;
 	}
 
+	.waiting-spinner {
+		display: flex;
+		align-items: center;
+		padding: 10px 14px;
+		color: var(--color-text-muted);
+	}
+
+	/* User group (attachment chips + bubble) */
+	.user-group {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		gap: 6px;
+		max-width: 70%;
+	}
+
+	.attachment-chips {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		justify-content: flex-end;
+	}
+
+	.attachment-chip {
+		display: inline-flex;
+		align-items: center;
+		padding: 4px 10px;
+		background-color: var(--color-accent-2);
+		color: var(--color-surface-sunken);
+		border-radius: 8px;
+		font-size: 0.75rem;
+		font-weight: 500;
+		max-width: 240px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	/* Input wrapper (file tab + input row) */
+	.input-wrapper {
+		flex-shrink: 0;
+		border-top: 1px solid var(--color-border);
+		background-color: var(--color-bg);
+	}
+
+	/* File tab */
+	.file-tab-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+		padding: 8px 16px 0;
+	}
+
+	.file-tab {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 5px 8px 5px 10px;
+		background-color: var(--color-surface-sunken);
+		border: 1px solid var(--color-border);
+		border-radius: 8px;
+		font-size: 0.75rem;
+		color: var(--color-text);
+		max-width: 240px;
+	}
+
+	.file-tab-name {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		max-width: 180px;
+	}
+
+	.file-tab-remove {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 16px;
+		height: 16px;
+		background: none;
+		border: none;
+		padding: 0;
+		color: var(--color-text);
+		opacity: 0.5;
+		cursor: pointer;
+		flex-shrink: 0;
+		transition: opacity 0.15s;
+	}
+
+	.file-tab-remove:hover {
+		opacity: 1;
+	}
+
 	/* Input */
 	.input-area {
 		display: flex;
 		align-items: flex-end;
 		gap: 8px;
 		padding: 12px 16px;
-		border-top: 1px solid var(--color-border);
 		background-color: var(--color-bg);
 		flex-shrink: 0;
+	}
+
+	.file-input {
+		display: none;
+	}
+
+	.attach-btn {
+		width: calc(22px + 0.875rem * 1.5);
+		height: calc(22px + 0.875rem * 1.5);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background-color: var(--color-surface-sunken);
+		color: var(--color-text);
+		border: 1px solid var(--color-border);
+		border-radius: 10px;
+		cursor: pointer;
+		flex-shrink: 0;
+		transition: background-color 0.15s, opacity 0.15s;
+	}
+
+	.attach-btn:hover:not(:disabled) {
+		background-color: var(--color-border);
+	}
+
+	.attach-btn:disabled {
+		opacity: 0.35;
+		cursor: not-allowed;
 	}
 
 	.input {

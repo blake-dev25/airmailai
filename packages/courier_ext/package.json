@@ -8,12 +8,12 @@
     "zip": "wxt zip"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.80.0",
+    "@anthropic-ai/sdk": "^0.90.0",
     "@courier/shared": "workspace:*",
-    "openai": "^6.32.0"
+    "openai": "^6.34.0"
   },
   "devDependencies": {
-    "typescript": "^5.0.0",
+    "typescript": "^6.0.3",
     "wxt": "latest"
   }
 }

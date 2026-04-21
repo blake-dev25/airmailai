@@ -10,6 +10,6 @@
     "dev:ext": "bun run check && NO_COLOR=1 bun run --filter courier_ext build"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.4"
+    "@biomejs/biome": "^2.4.12"
   }
 }

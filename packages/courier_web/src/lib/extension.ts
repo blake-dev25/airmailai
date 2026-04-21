@@ -135,12 +135,6 @@ export async function loadChatMetas(): Promise<ChatMeta[]> {
   return [];
 }
 
-export async function loadChats(): Promise<StoredChat[]> {
-  const response = await sendStorageMessage({ type: 'load_chats' });
-  if (response.type === 'chats') return response.chats;
-  return [];
-}
-
 export async function loadChatsByIds(ids: string[]): Promise<StoredChat[]> {
   const response = await sendStorageMessage({ type: 'load_chats_by_ids', ids });
   if (response.type === 'chats') return response.chats;
@@ -159,13 +153,13 @@ export function sendToExtension(
   onDone: (usage?: { inputTokens: number; outputTokens: number }) => void,
   onError: (message: string) => void,
   onThinkingChunk?: (text: string) => void
-): void {
+): () => void {
   if (!extensionId) {
     console.error(LOG, 'chat: extension not detected');
     onError(
       'CourierAI extension not detected. Install it and refresh to start chatting.'
     );
-    return;
+    return () => {};
   }
 
   console.log(LOG, '→ chat request', {
@@ -217,4 +211,8 @@ export function sendToExtension(
   });
 
   port.postMessage(request);
+
+  return () => {
+    if (!done) port.disconnect();
+  };
 }

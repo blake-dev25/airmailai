@@ -1,12 +1,45 @@
 <script lang="ts">
-	import { renderMarkdown } from './markdown.js';
+	import { initMarkdown, isHighlighterReady, renderMarkdown } from './markdown.js';
 
 	let { content }: { content: string } = $props();
 
-	let html = $derived(renderMarkdown(content));
+	let highlighterReady = $state(isHighlighterReady());
+
+	$effect(() => {
+		if (!highlighterReady) {
+			initMarkdown().then(() => { highlighterReady = true; });
+		}
+	});
+
+	let html = $derived.by(() => {
+		highlighterReady; // track as dependency so derived re-runs when highlighter loads
+		return renderMarkdown(content);
+	});
+	let container: HTMLDivElement;
+
+	$effect(() => {
+		html; // re-run when html changes
+		if (!container) return;
+
+		function handleClick(e: MouseEvent) {
+			const btn = (e.target as Element).closest('.code-copy') as HTMLButtonElement | null;
+			if (!btn) return;
+			const pre = btn.closest('.code-block')?.querySelector('pre');
+			if (!pre) return;
+			navigator.clipboard.writeText(pre.textContent ?? '').then(() => {
+				btn.textContent = 'Copied!';
+				setTimeout(() => {
+					btn.textContent = 'Copy';
+				}, 2000);
+			});
+		}
+
+		container.addEventListener('click', handleClick);
+		return () => container.removeEventListener('click', handleClick);
+	});
 </script>
 
-<div class="prose prose-sm max-w-none">
+<div class="prose prose-sm max-w-none" bind:this={container}>
 	<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 	{@html html}
 </div>
@@ -19,13 +52,38 @@
 		margin-bottom: 0.5em;
 	}
 
+	:global(.prose .code-header) {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding-bottom: 2px;
+	}
+
 	:global(.prose .code-lang) {
 		display: inline-block;
 		font-family: var(--font-mono);
 		font-size: 0.7rem;
 		font-style: normal;
 		color: var(--color-text-muted);
-		padding: 0 2px 4px;
+		padding: 0 2px;
+	}
+
+	:global(.prose .code-copy) {
+		background: none;
+		border: 1px solid var(--color-border);
+		border-radius: 4px;
+		color: var(--color-text-muted);
+		cursor: pointer;
+		font-family: var(--font-mono);
+		font-size: 0.7rem;
+		line-height: 1;
+		padding: 2px 7px;
+		transition: color 0.1s, border-color 0.1s;
+	}
+
+	:global(.prose .code-copy:hover) {
+		border-color: var(--color-text-muted);
+		color: var(--color-text);
 	}
 
 	/* Shiki outputs <pre> with inline background — give it our surface token as fallback */

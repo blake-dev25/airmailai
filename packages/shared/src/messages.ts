@@ -1,6 +1,13 @@
+export interface Attachment {
+  name: string;
+  mediaType: string;
+  data: string; // base64
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
+  attachments?: Attachment[];
 }
 
 // Sent over a port (chrome.runtime.connect) for streaming chat
@@ -59,6 +66,7 @@ export interface StoredChat {
     role: 'user' | 'assistant';
     content: string;
     thinking?: string;
+    attachments?: Attachment[];
   }>;
   tokens?: { input: number; output: number };
 }

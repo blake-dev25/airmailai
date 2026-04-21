@@ -30,6 +30,10 @@ const LANGUAGES = [
 let highlighter: Highlighter | null = null;
 let initPromise: Promise<void> | null = null;
 
+export function isHighlighterReady(): boolean {
+  return highlighter !== null;
+}
+
 export function initMarkdown(): Promise<void> {
   if (highlighter) return Promise.resolve();
   if (!initPromise) {
@@ -86,8 +90,9 @@ marked.use({
           lang: language,
           theme: THEME,
         });
-        const label = lang ? `<span class="code-lang">${lang}</span>` : '';
-        return `<div class="code-block">${label}${highlighted}</div>`;
+        const langLabel = lang ? `<span class="code-lang">${lang}</span>` : '';
+        const copyBtn = `<button type="button" class="code-copy" aria-label="Copy code">Copy</button>`;
+        return `<div class="code-block"><div class="code-header">${langLabel}${copyBtn}</div>${highlighted}</div>`;
       }
       // Fallback while highlighter is still loading
       const escaped = text

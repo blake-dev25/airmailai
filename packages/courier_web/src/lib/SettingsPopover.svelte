@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { PROVIDERS, THEMES } from './constants';
-	import { checkApiKeys, clearApiKey, saveApiKey } from './extension';
+	import { checkApiKeys, clearApiKey, saveApiKey, waitForExtension } from './extension';
 
 	let {
 		theme = $bindable(),
@@ -29,8 +29,10 @@
 	);
 
 	$effect(() => {
-		checkApiKeys(PROVIDERS.map((p) => p.id)).then((result) => {
-			savedKeys = result;
+		waitForExtension().then(() => {
+			checkApiKeys(PROVIDERS.map((p) => p.id)).then((result) => {
+				savedKeys = result;
+			});
 		});
 	});
 

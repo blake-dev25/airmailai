@@ -3,7 +3,7 @@
 const LOG = '[courier:ext]';
 
 export default defineContentScript({
-  matches: ['https://courier-ai.com/*', 'http://localhost:*/*'],
+  matches: ['http://localhost:*/*'],
   runAt: 'document_idle',
   main() {
     const announce = () => {

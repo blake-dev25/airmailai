@@ -52,8 +52,14 @@ async function handleStorage(
       return { type: 'has_keys', saved };
     }
     case 'save_settings': {
-      console.log(LOG, 'storage: saving settings', message.settings);
-      await chrome.storage.sync.set(message.settings);
+      const filtered = Object.fromEntries(
+        SETTINGS_KEYS.filter((k) => k in message.settings).map((k) => [
+          k,
+          message.settings[k],
+        ])
+      );
+      console.log(LOG, 'storage: saving settings', filtered);
+      await chrome.storage.sync.set(filtered);
       console.log(LOG, '→ storage response: saved');
       return { type: 'saved' };
     }
@@ -134,6 +140,11 @@ export default defineBackground(() => {
   // Streaming chat over a port
   chrome.runtime.onConnectExternal.addListener((port) => {
     console.log(LOG, 'port connected');
+    const controller = new AbortController();
+    port.onDisconnect.addListener(() => {
+      console.log(LOG, 'port disconnected, aborting stream');
+      controller.abort();
+    });
 
     port.onMessage.addListener(async (request: ExtensionRequest) => {
       const send = (response: ExtensionResponse) => port.postMessage(response);
@@ -178,7 +189,8 @@ export default defineBackground(() => {
             (text) => send({ type: 'chunk', content: text }),
             (usage) => send({ type: 'done', usage: usage ?? undefined }),
             (msg) => send({ type: 'error', message: msg }),
-            (text) => send({ type: 'thinking_chunk', content: text })
+            (text) => send({ type: 'thinking_chunk', content: text }),
+            controller.signal
           );
           break;
         case 'openai':
@@ -190,7 +202,8 @@ export default defineBackground(() => {
             (text) => send({ type: 'chunk', content: text }),
             (usage) => send({ type: 'done', usage: usage ?? undefined }),
             (msg) => send({ type: 'error', message: msg }),
-            (text) => send({ type: 'thinking_chunk', content: text })
+            (text) => send({ type: 'thinking_chunk', content: text }),
+            controller.signal
           );
           break;
         default:

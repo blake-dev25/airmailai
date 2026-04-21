@@ -1,4 +1,5 @@
 export type {
+  Attachment,
   ChatMessage,
   ChatMeta,
   ExtensionRequest,
