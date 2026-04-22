@@ -10,8 +10,8 @@
         "prettier-plugin-svelte": "^3.5.1",
       },
     },
-    "packages/courier_ext": {
-      "name": "courier_ext",
+    "packages/courierai_ext": {
+      "name": "courierai_ext",
       "version": "0.0.1",
       "dependencies": {
         "@anthropic-ai/sdk": "^0.90.0",
@@ -24,8 +24,8 @@
         "wxt": "latest",
       },
     },
-    "packages/courier_web": {
-      "name": "courier_web",
+    "packages/courierai_web": {
+      "name": "courierai_web",
       "version": "0.0.0",
       "dependencies": {
         "@courier/shared": "workspace:*",
@@ -478,9 +478,9 @@
 
     "core-util-is": ["core-util-is@1.0.3", "", {}, "sha512-ZQBvi1DcpJ4GDqanjucZ2Hj3wEO5pZDS89BWbkcrvdxksJorwUDDZamX9ldFkp9aw2lmBDLgkObEA4DWNJ9FYQ=="],
 
-    "courier_ext": ["courier_ext@workspace:packages/courier_ext"],
+    "courierai_ext": ["courierai_ext@workspace:packages/courierai_ext"],
 
-    "courier_web": ["courier_web@workspace:packages/courier_web"],
+    "courierai_web": ["courierai_web@workspace:packages/courierai_web"],
 
     "css-select": ["css-select@5.2.2", "", { "dependencies": { "boolbase": "^1.0.0", "css-what": "^6.1.0", "domhandler": "^5.0.2", "domutils": "^3.0.1", "nth-check": "^2.0.1" } }, "sha512-TizTzUddG/xYLA3NXodFM0fSbNizXjOKhqiQQwvhlspadZokn1KDy0NZFS0wuEubIYAV5/c1/lAr0TaaFXEXzw=="],
 
