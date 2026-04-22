@@ -1,139 +1,161 @@
 <script lang="ts">
-	import { initMarkdown, isHighlighterReady, renderMarkdown } from './markdown.js';
+    import {
+        initMarkdown,
+        isHighlighterReady,
+        renderMarkdown,
+    } from './markdown.js';
 
-	let { content }: { content: string } = $props();
+    let { content }: { content: string } = $props();
 
-	let highlighterReady = $state(isHighlighterReady());
+    let highlighterReady = $state(isHighlighterReady());
 
-	$effect(() => {
-		if (!highlighterReady) {
-			initMarkdown().then(() => { highlighterReady = true; });
-		}
-	});
+    $effect(() => {
+        if (!highlighterReady) {
+            initMarkdown().then(() => {
+                highlighterReady = true;
+            });
+        }
+    });
 
-	let html = $derived.by(() => {
-		highlighterReady; // track as dependency so derived re-runs when highlighter loads
-		return renderMarkdown(content);
-	});
-	let container: HTMLDivElement;
+    let html = $derived.by(() => {
+        highlighterReady; // track as dependency so derived re-runs when highlighter loads
+        return renderMarkdown(content);
+    });
+    let container: HTMLDivElement;
 
-	$effect(() => {
-		html; // re-run when html changes
-		if (!container) return;
+    $effect(() => {
+        html; // re-run when html changes
+        if (!container) return;
 
-		function handleClick(e: MouseEvent) {
-			const btn = (e.target as Element).closest('.code-copy') as HTMLButtonElement | null;
-			if (!btn) return;
-			const pre = btn.closest('.code-block')?.querySelector('pre');
-			if (!pre) return;
-			navigator.clipboard.writeText(pre.textContent ?? '').then(() => {
-				btn.textContent = 'Copied!';
-				setTimeout(() => {
-					btn.textContent = 'Copy';
-				}, 2000);
-			});
-		}
+        function handleClick(e: MouseEvent) {
+            const btn = (e.target as Element).closest(
+                '.code-copy',
+            ) as HTMLButtonElement | null;
+            if (!btn) return;
+            const pre = btn.closest('.code-block')?.querySelector('pre');
+            if (!pre) return;
+            navigator.clipboard.writeText(pre.textContent ?? '').then(() => {
+                btn.textContent = 'Copied!';
+                setTimeout(() => {
+                    btn.textContent = 'Copy';
+                }, 2000);
+            });
+        }
 
-		container.addEventListener('click', handleClick);
-		return () => container.removeEventListener('click', handleClick);
-	});
+        container.addEventListener('click', handleClick);
+        return () => container.removeEventListener('click', handleClick);
+    });
 </script>
 
 <div class="prose prose-sm max-w-none" bind:this={container}>
-	<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-	{@html html}
+    <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+    {@html html}
 </div>
 
 <style>
-	/* Code block wrapper — holds the language label + Shiki <pre> */
-	:global(.prose .code-block) {
-		position: relative;
-		margin-top: 0.5em;
-		margin-bottom: 0.5em;
-	}
+    /* Code block wrapper — holds the language label + Shiki <pre> */
+    :global(.prose .code-block) {
+        position: relative;
+        margin-top: 0.5em;
+        margin-bottom: 0.5em;
+    }
 
-	:global(.prose .code-header) {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding-bottom: 2px;
-	}
+    :global(.prose .code-header) {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding-bottom: 2px;
+    }
 
-	:global(.prose .code-lang) {
-		display: inline-block;
-		font-family: var(--font-mono);
-		font-size: 0.7rem;
-		font-style: normal;
-		color: var(--color-text-muted);
-		padding: 0 2px;
-	}
+    :global(.prose .code-lang) {
+        display: inline-block;
+        font-family: var(--font-mono);
+        font-size: 0.7rem;
+        font-style: normal;
+        color: var(--color-text-muted);
+        padding: 0 2px;
+    }
 
-	:global(.prose .code-copy) {
-		background: none;
-		border: 1px solid var(--color-border);
-		border-radius: 4px;
-		color: var(--color-text-muted);
-		cursor: pointer;
-		font-family: var(--font-mono);
-		font-size: 0.7rem;
-		line-height: 1;
-		padding: 2px 7px;
-		transition: color 0.1s, border-color 0.1s;
-	}
+    :global(.prose .code-copy) {
+        background: none;
+        border: 1px solid var(--color-border);
+        border-radius: 4px;
+        color: var(--color-text-muted);
+        cursor: pointer;
+        font-family: var(--font-mono);
+        font-size: 0.7rem;
+        line-height: 1;
+        padding: 2px 7px;
+        transition:
+            color 0.1s,
+            border-color 0.1s;
+    }
 
-	:global(.prose .code-copy:hover) {
-		border-color: var(--color-text-muted);
-		color: var(--color-text);
-	}
+    :global(.prose .code-copy:hover) {
+        border-color: var(--color-text-muted);
+        color: var(--color-text);
+    }
 
-	/* Shiki outputs <pre> with inline background — give it our surface token as fallback */
-	:global(.prose pre) {
-		background-color: var(--color-surface-sunken);
-		border: 1px solid var(--color-border);
-		margin-top: 0;
-		margin-bottom: 0;
-	}
+    /* Shiki outputs <pre> with inline background — give it our surface token as fallback */
+    :global(.prose pre) {
+        background-color: var(--color-surface-sunken);
+        border: 1px solid var(--color-border);
+        margin-top: 0;
+        margin-bottom: 0;
+    }
 
-	/* Inline code */
-	:global(.prose code:not(pre code)) {
-		background-color: var(--color-surface-sunken);
-		border: 1px solid var(--color-border);
-		border-radius: 4px;
-		padding: 1px 5px;
-		font-size: 0.8125em;
-	}
+    /* Inline code */
+    :global(.prose code:not(pre code)) {
+        background-color: var(--color-surface-sunken);
+        border: 1px solid var(--color-border);
+        border-radius: 4px;
+        padding: 1px 5px;
+        font-size: 0.8125em;
+    }
 
-	/* Remove the backtick pseudo-content typography adds */
-	:global(.prose code:not(pre code))::before,
-	:global(.prose code:not(pre code))::after {
-		content: none;
-	}
+    /* Remove the backtick pseudo-content typography adds */
+    :global(.prose code:not(pre code))::before,
+    :global(.prose code:not(pre code))::after {
+        content: none;
+    }
 
-	:global(.prose blockquote) {
-		border-left-color: var(--color-accent);
-		color: var(--color-text-muted);
-	}
+    :global(.prose blockquote) {
+        border-left-color: var(--color-accent);
+        color: var(--color-text-muted);
+    }
 
-	:global(.prose a) { color: var(--color-accent); }
-	:global(.prose hr) { border-color: var(--color-border); }
+    :global(.prose a) {
+        color: var(--color-accent);
+    }
+    :global(.prose hr) {
+        border-color: var(--color-border);
+    }
 
-	:global(.prose thead) { border-bottom-color: var(--color-border); }
-	:global(.prose tbody tr) { border-bottom-color: var(--color-border); }
+    :global(.prose thead) {
+        border-bottom-color: var(--color-border);
+    }
+    :global(.prose tbody tr) {
+        border-bottom-color: var(--color-border);
+    }
 
-	/* Extended markdown */
-	:global(.prose mark) {
-		background-color: color-mix(in srgb, var(--color-accent) 25%, transparent);
-		color: inherit;
-		border-radius: 2px;
-		padding: 0 2px;
-	}
+    /* Extended markdown */
+    :global(.prose mark) {
+        background-color: color-mix(
+            in srgb,
+            var(--color-accent) 25%,
+            transparent
+        );
+        color: inherit;
+        border-radius: 2px;
+        padding: 0 2px;
+    }
 
-	/* Footnotes section generated by marked-footnote */
-	:global(.prose .footnotes) {
-		margin-top: 1em;
-		padding-top: 0.5em;
-		border-top: 1px solid var(--color-border);
-		font-size: 0.8em;
-		color: var(--color-text-muted);
-	}
+    /* Footnotes section generated by marked-footnote */
+    :global(.prose .footnotes) {
+        margin-top: 1em;
+        padding-top: 0.5em;
+        border-top: 1px solid var(--color-border);
+        font-size: 0.8em;
+        color: var(--color-text-muted);
+    }
 </style>

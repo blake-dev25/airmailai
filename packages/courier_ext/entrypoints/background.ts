@@ -8,6 +8,7 @@ import type {
 import { SETTINGS_KEYS } from '@courier/shared';
 import { DEBUG_API_LOGGING } from '../debug';
 import { streamAnthropic } from '../providers/anthropic';
+import { streamGoogle } from '../providers/google';
 import { streamOpenAI } from '../providers/openai';
 import {
   dbClearChats,
@@ -195,6 +196,19 @@ export default defineBackground(() => {
           break;
         case 'openai':
           await streamOpenAI(
+            apiKey,
+            request.model,
+            request.messages,
+            request.params ?? {},
+            (text) => send({ type: 'chunk', content: text }),
+            (usage) => send({ type: 'done', usage: usage ?? undefined }),
+            (msg) => send({ type: 'error', message: msg }),
+            (text) => send({ type: 'thinking_chunk', content: text }),
+            controller.signal
+          );
+          break;
+        case 'google':
+          await streamGoogle(
             apiKey,
             request.model,
             request.messages,

@@ -186,6 +186,10 @@ export const PROVIDERS: ProviderOption[] = [
           temperatureMax: 2,
           defaultTemperature: 1,
           knowledgeCutoff: 'Jan 2025',
+          thinking: {
+            levels: ['none', 'low', 'high'] as ThinkingLevel[],
+            defaultLevel: 'high' as ThinkingLevel,
+          },
         },
       },
       {
@@ -198,6 +202,10 @@ export const PROVIDERS: ProviderOption[] = [
           temperatureMax: 2,
           defaultTemperature: 1,
           knowledgeCutoff: 'Jan 2025',
+          thinking: {
+            levels: ['none', 'low', 'medium', 'high'] as ThinkingLevel[],
+            defaultLevel: 'high' as ThinkingLevel,
+          },
         },
       },
       {
@@ -210,6 +218,11 @@ export const PROVIDERS: ProviderOption[] = [
           temperatureMax: 2,
           defaultTemperature: 1,
           knowledgeCutoff: 'Jan 2025',
+          thinking: {
+            // 2.5-pro can't disable thinking (min budget 128); 'low' maps to 512
+            levels: ['low', 'medium', 'high', 'max'] as ThinkingLevel[],
+            defaultLevel: 'medium' as ThinkingLevel,
+          },
         },
       },
     ],
