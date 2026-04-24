@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Last updated:** April 23, 2026
+**Last updated:** April 24, 2026
 
 ## The short version
 
@@ -10,8 +10,10 @@ the providers you choose (Anthropic, OpenAI, Google, and others).
 
 **We do not operate a backend. We do not see your chats. We do not see
 your API keys.** Your API keys and chat history live in your browser
-storage. Your messages go directly from your browser to the LLM
-provider you selected, using the API key you provided.
+storage. Your messages go from your browser — by way of the CourierAI
+extension, which handles the HTTPS request on the browser's behalf —
+directly to the LLM provider you selected, using the API key you
+provided. No intermediate server operated by us is involved.
 
 The only personal data we touch is your IP address, which our CDN
 (Amazon CloudFront) necessarily processes in transit to route requests,

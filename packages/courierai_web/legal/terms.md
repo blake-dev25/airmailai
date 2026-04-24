@@ -1,6 +1,6 @@
 # Terms of Service
 
-**Last updated:** April 23, 2026
+**Last updated:** April 24, 2026
 
 ## 1. Acceptance
 
@@ -23,9 +23,14 @@ third-party Large Language Model ("LLM") APIs using your own API keys.
 The Service does not operate its own LLM backend and does not run any
 server that processes your messages. When you send a message, it is
 sent from your browser - by way of the CourierAI extension, which
-handles the HTTP request on the browser's behalf - directly to the LLM
+handles the HTTPS request on the browser's behalf - directly to the LLM
 provider you selected, using credentials you supplied. No intermediate
 server operated by CourierAI is involved.
+
+CourierAI is currently an unincorporated project maintained by its
+contributors. If operations are transferred to a legal entity in the
+future, these Terms will be updated and that entity will assume the
+rights and obligations set out here.
 
 ## 3. Your API keys and your costs
 
@@ -168,8 +173,11 @@ your violation of any law or third-party right.
 You may stop using the Service at any time by uninstalling the
 extension and no longer visiting the website.
 
-We may suspend or terminate your access to the Service at any time,
-with or without cause and with or without notice.
+We may discontinue the Service, remove it from distribution channels
+(for example, the Chrome Web Store), or withdraw support at any time,
+with or without notice. Because the Service runs entirely in your
+browser, we have no ability to terminate an individual user's installed
+copy.
 
 Sections 3, 4, 5, 8, 9, 10, 11, 13, and 14 survive termination.
 
@@ -229,7 +237,9 @@ there.
 ## 15. Changes to these Terms
 
 We may update these Terms from time to time. The updated version will
-be published at the same URL with a new "Last updated" date. Your
+be published at the same URL with a new "Last updated" date. Material
+changes will also be surfaced in the website itself the next time you
+open it, so you don't have to check this page to find out. Your
 continued use of the Service after changes take effect constitutes
 acceptance of the updated Terms.
 
