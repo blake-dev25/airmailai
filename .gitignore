@@ -27,3 +27,7 @@ Thumbs.db
 # editors/etc
 .vscode/
 .claude/
+
+# deploy scratch
+.deploy-tmp/
+scripts/deploy-web.ts

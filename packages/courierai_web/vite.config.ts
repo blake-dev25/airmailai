@@ -14,6 +14,7 @@ function readVersion(): string {
 
 export default defineConfig({
     logLevel: 'warn',
+    publicDir: 'static',
     define: {
         __APP_VERSION__: JSON.stringify(readVersion()),
     },
@@ -23,6 +24,7 @@ export default defineConfig({
             input: {
                 main: resolve(__dirname, 'index.html'),
                 app: resolve(__dirname, 'app/index.html'),
+                faq: resolve(__dirname, 'faq/index.html'),
             },
         },
     },
