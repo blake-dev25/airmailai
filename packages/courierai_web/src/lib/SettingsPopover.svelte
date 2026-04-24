@@ -12,16 +12,18 @@
         fontSizeIndex = $bindable(),
         chatWidth = $bindable(),
         smoothText = $bindable(),
+        submitKeystroke = $bindable(),
         onclose,
     }: {
         theme: string;
         fontSizeIndex: number;
         chatWidth: number;
         smoothText: boolean;
+        submitKeystroke: 'enter' | 'ctrl+enter';
         onclose: () => void;
     } = $props();
 
-    let activeTab = $state<'keys' | 'ui' | 'about'>('keys');
+    let activeTab = $state<'keys' | 'ui' | 'changelog'>('keys');
 
     // Input values (cleared after saving — we never display stored keys)
     let keyInputs = $state<Record<string, string>>(
@@ -77,10 +79,10 @@
         </button>
         <button
             type="button"
-            class:active={activeTab === 'about'}
-            onclick={() => (activeTab = 'about')}
+            class:active={activeTab === 'changelog'}
+            onclick={() => (activeTab = 'changelog')}
         >
-            About
+            Changelog
         </button>
     </div>
 
@@ -200,7 +202,7 @@
                     type="range"
                     id="font-size"
                     min="0"
-                    max="7"
+                    max="5"
                     step="1"
                     bind:value={fontSizeIndex}
                 />
@@ -223,6 +225,13 @@
                     <span>Narrower</span>
                     <span>Wider</span>
                 </div>
+            </div>
+            <div class="row theme-row">
+                <label for="submit-keystroke">Submit Keystroke</label>
+                <select id="submit-keystroke" bind:value={submitKeystroke}>
+                    <option value="enter">Enter</option>
+                    <option value="ctrl+enter">Control+Enter</option>
+                </select>
             </div>
             <div class="row toggle-row">
                 <div class="label-with-info">
@@ -276,10 +285,11 @@
 
         <div
             class="tab-panel"
-            class:active={activeTab === 'about'}
-            aria-hidden={activeTab !== 'about'}
+            class:active={activeTab === 'changelog'}
+            aria-hidden={activeTab !== 'changelog'}
         >
-            <p class="todo">TODO — About content coming soon.</p>
+            <h3 class="version-heading">v{__APP_VERSION__}</h3>
+            <p class="todo">TODO - add changelog</p>
         </div>
     </div>
 </div>
@@ -625,6 +635,14 @@
 
     .icon-x {
         color: var(--color-text-muted);
+    }
+
+    .version-heading {
+        font-size: 0.875rem;
+        font-weight: 600;
+        color: var(--color-text);
+        margin: 0;
+        padding: 4px 0;
     }
 
     .todo {

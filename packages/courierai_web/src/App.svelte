@@ -42,7 +42,15 @@
         temperature: number;
         maxTokens: number;
         thinkingLevel: string;
+        adaptiveThinking: boolean;
         tokens?: { input: number; output: number };
+    }
+
+    interface SearchResult {
+        id: string;
+        title: string;
+        snippet: string;
+        matchIndex: number | null;
     }
 
     const PAGE_SIZE = 40;
@@ -56,9 +64,9 @@
     // Font size — default based on screen width
     function getDefaultFontSizeIndex(): number {
         const w = window.screen.width;
-        if (w <= 1366) return 3; // 16px — small laptop
-        if (w <= 1920) return 4; // 18px — standard
-        return 4; // 18px — large/4K
+        if (w <= 1366) return 1; // 16px — small laptop
+        if (w <= 1920) return 2; // 18px — standard
+        return 2; // 18px — large/4K
     }
     let fontSizeIndex = $state(getDefaultFontSizeIndex());
     $effect(() => {
@@ -69,15 +77,20 @@
     let chatWidth = $state(100);
     // Smooth text loading — animate streaming text with rAF drain
     let smoothText = $state(true);
+    // Submit keystroke — 'enter' or 'ctrl+enter'
+    let submitKeystroke = $state<'enter' | 'ctrl+enter'>('enter');
 
     // Model config
     const defaultModel = PROVIDERS[0].models[1]; // Sonnet as default
     let providerId = $state(PROVIDERS[0].id);
     let modelId = $state(defaultModel.id);
-    let temperature = $state(defaultModel.params.defaultTemperature);
+    let temperature = $state<number>(defaultModel.params.defaultTemperature ?? 1);
     let maxTokens = $state(defaultModel.params.defaultMaxTokens);
     let thinkingLevel = $state<string>(
         defaultModel.params.thinking?.defaultLevel ?? 'none',
+    );
+    let adaptiveThinking = $state<boolean>(
+        defaultModel.params.thinking?.adaptive !== undefined,
     );
     let systemPrompt = $state('');
 
@@ -90,6 +103,9 @@
     let activeChatId = $state<string | null>(null);
     let streamingChatIds = $state<string[]>([]);
     let chatErrors = $state<Record<string, string>>({});
+    let searchResults = $state<SearchResult[] | null>(null);
+    let searchQuery = $state('');
+    let highlightMessageIndex = $state<number | null>(null);
     let isActiveStreaming = $derived(
         streamingChatIds.includes(activeChatId ?? ''),
     );
@@ -132,6 +148,8 @@
             fontSizeIndex = settings.fontSizeIndex;
         if (settings.chatWidth !== undefined) chatWidth = settings.chatWidth;
         if (settings.smoothText !== undefined) smoothText = settings.smoothText;
+        if (settings.submitKeystroke !== undefined)
+            submitKeystroke = settings.submitKeystroke;
         if (settings.providerId) providerId = settings.providerId;
         if (settings.modelId) modelId = settings.modelId;
         if (settings.temperature !== undefined)
@@ -139,6 +157,8 @@
         if (settings.maxTokens !== undefined) maxTokens = settings.maxTokens;
         if (settings.thinkingLevel !== undefined)
             thinkingLevel = settings.thinkingLevel;
+        if (settings.adaptiveThinking !== undefined)
+            adaptiveThinking = settings.adaptiveThinking;
 
         settingsLoaded = true;
 
@@ -201,6 +221,58 @@
         isLoadingMore = false;
     }
 
+    function search(query: string) {
+        searchQuery = query;
+        highlightMessageIndex = null;
+        const q = query.toLowerCase();
+        const results: SearchResult[] = [];
+        for (const chat of chats) {
+            let matchIndex: number | null = null;
+            let snippet = '';
+            for (let i = 0; i < chat.messages.length; i++) {
+                const content = chat.messages[i].content;
+                const idx = content.toLowerCase().indexOf(q);
+                if (idx !== -1) {
+                    matchIndex = i;
+                    const start = Math.max(0, idx - 40);
+                    const end = Math.min(content.length, idx + q.length + 60);
+                    snippet =
+                        (start > 0 ? '…' : '') +
+                        content.slice(start, end) +
+                        (end < content.length ? '…' : '');
+                    break;
+                }
+            }
+            if (matchIndex !== null) {
+                results.push({
+                    id: chat.id,
+                    title: chat.title,
+                    snippet,
+                    matchIndex,
+                });
+            } else if (chat.title.toLowerCase().includes(q)) {
+                const firstMsg = chat.messages.find((m) => m.content);
+                snippet = firstMsg
+                    ? firstMsg.content.slice(0, 100) +
+                      (firstMsg.content.length > 100 ? '…' : '')
+                    : '';
+                results.push({
+                    id: chat.id,
+                    title: chat.title,
+                    snippet,
+                    matchIndex: null,
+                });
+            }
+        }
+        searchResults = results;
+    }
+
+    function clearSearch() {
+        searchResults = null;
+        searchQuery = '';
+        highlightMessageIndex = null;
+    }
+
     // Debounced save — fires 300ms after any settings change (but not during initial load)
     $effect(() => {
         const snapshot = {
@@ -208,11 +280,13 @@
             fontSizeIndex,
             chatWidth,
             smoothText,
+            submitKeystroke,
             providerId,
             modelId,
             temperature,
             maxTokens,
             thinkingLevel,
+            adaptiveThinking,
         };
         if (!untrack(() => settingsLoaded)) return;
         const timer = setTimeout(() => {
@@ -239,6 +313,7 @@
             temperature: chat.temperature,
             maxTokens: chat.maxTokens,
             thinkingLevel: chat.thinkingLevel,
+            adaptiveThinking: chat.adaptiveThinking,
             systemPrompt: chat.systemPrompt,
         };
     }
@@ -261,6 +336,7 @@
                 temperature,
                 maxTokens,
                 thinkingLevel,
+                adaptiveThinking,
             },
             ...chats,
         ];
@@ -274,6 +350,7 @@
                 temperature,
                 maxTokens,
                 thinkingLevel,
+                adaptiveThinking,
                 systemPrompt,
             },
             ...allMetas,
@@ -282,7 +359,8 @@
         activeChatId = id;
     }
 
-    async function selectChat(id: string) {
+    async function selectChat(id: string, matchIndex?: number | null) {
+        highlightMessageIndex = matchIndex ?? null;
         console.log(LOG, 'select chat', id);
         activeChatId = id;
 
@@ -294,6 +372,7 @@
             temperature = meta.temperature;
             maxTokens = meta.maxTokens;
             thinkingLevel = meta.thinkingLevel;
+            adaptiveThinking = meta.adaptiveThinking ?? true;
             systemPrompt = meta.systemPrompt;
         }
 
@@ -415,6 +494,7 @@
                     temperature,
                     maxTokens,
                     thinkingLevel,
+                    adaptiveThinking,
                 },
                 ...chats,
             ];
@@ -428,6 +508,7 @@
                     temperature,
                     maxTokens,
                     thinkingLevel,
+                    adaptiveThinking,
                     systemPrompt,
                 },
                 ...allMetas,
@@ -449,6 +530,7 @@
                     temperature,
                     maxTokens,
                     thinkingLevel,
+                    adaptiveThinking,
                     ...(isFirst ? { title: content.slice(0, 40) } : {}),
                 };
             });
@@ -461,6 +543,7 @@
                     temperature,
                     maxTokens,
                     thinkingLevel,
+                    adaptiveThinking,
                     systemPrompt,
                     ...(isFirst ? { title: content.slice(0, 40) } : {}),
                 };
@@ -501,12 +584,19 @@
             ? [{ role: 'system' as const, content: systemPrompt }, ...history]
             : history;
 
+        const modelParams = PROVIDERS.find((p) => p.id === providerId)
+            ?.models.find((m) => m.id === modelId)?.params;
         const disconnect = sendToExtension(
             {
                 provider: providerId,
                 model: modelId,
                 messages: apiMessages,
-                params: { temperature, maxTokens, thinkingLevel },
+                params: {
+                    ...(modelParams?.temperatureMax !== undefined ? { temperature } : {}),
+                    maxTokens,
+                    thinkingLevel,
+                    adaptiveThinking,
+                },
             },
             (chunk) => {
                 // Append chunk to the last message in the target chat
@@ -581,6 +671,165 @@
         );
         streamDisconnects.set(chatId as string, disconnect);
     }
+
+    function retryMessage(index: number) {
+        if (!activeChatId) return;
+        const chatId = activeChatId;
+        const chat = chats.find((c) => c.id === chatId);
+        if (!chat) return;
+
+        // Abort any in-progress stream for this chat
+        streamDisconnects.get(chatId)?.();
+        streamDisconnects.delete(chatId);
+        streamingChatIds = streamingChatIds.filter((id) => id !== chatId);
+
+        // If assistant message, treat as retrying the user message above it
+        const msg = chat.messages[index];
+        const keepUpTo = msg.role === 'user' ? index : index - 1;
+        if (keepUpTo < 0) return;
+
+        const truncated: typeof chat.messages = [
+            ...chat.messages.slice(0, keepUpTo + 1),
+            { role: 'assistant', content: '' },
+        ];
+        chats = chats.map((c) =>
+            c.id === chatId ? { ...c, messages: truncated } : c,
+        );
+
+        if (chatErrors[chatId]) {
+            const { [chatId]: _, ...rest } = chatErrors;
+            chatErrors = rest;
+        }
+        streamingChatIds = [...streamingChatIds, chatId];
+
+        const snap = chats.find((c) => c.id === chatId)!;
+        const history = snap.messages
+            .slice(0, -1)
+            .map(({ role, content, attachments }) => ({
+                role,
+                content,
+                ...(attachments ? { attachments } : {}),
+            }));
+        const apiMessages = snap.systemPrompt.trim()
+            ? [
+                  { role: 'system' as const, content: snap.systemPrompt },
+                  ...history,
+              ]
+            : history;
+
+        const disconnect = sendToExtension(
+            {
+                provider: snap.providerId,
+                model: snap.modelId,
+                messages: apiMessages,
+                params: {
+                    temperature: snap.temperature,
+                    maxTokens: snap.maxTokens,
+                    thinkingLevel: snap.thinkingLevel,
+                    adaptiveThinking: snap.adaptiveThinking,
+                },
+            },
+            (chunk) => {
+                chats = chats.map((c) => {
+                    if (c.id !== chatId) return c;
+                    const msgs = [...c.messages];
+                    msgs[msgs.length - 1] = {
+                        ...msgs[msgs.length - 1],
+                        content: msgs[msgs.length - 1].content + chunk,
+                    };
+                    return { ...c, messages: msgs };
+                });
+            },
+            (usage) => {
+                streamDisconnects.delete(chatId);
+                streamingChatIds = streamingChatIds.filter(
+                    (id) => id !== chatId,
+                );
+                chats = chats.map((c) => {
+                    if (c.id !== chatId) return c;
+                    return usage
+                        ? {
+                              ...c,
+                              tokens: {
+                                  input: usage.inputTokens,
+                                  output: usage.outputTokens,
+                              },
+                          }
+                        : c;
+                });
+                const done = chats.find((c) => c.id === chatId);
+                if (done)
+                    saveChat(chatToStored(done), chatToMeta(done)).catch(
+                        console.error,
+                    );
+            },
+            (errMsg) => {
+                streamDisconnects.delete(chatId);
+                streamingChatIds = streamingChatIds.filter(
+                    (id) => id !== chatId,
+                );
+                chatErrors = {
+                    ...chatErrors,
+                    [chatId]: `API Error: ${errMsg}`,
+                };
+                chats = chats.map((c) => {
+                    if (c.id !== chatId) return c;
+                    const last = c.messages[c.messages.length - 1];
+                    return last?.content
+                        ? c
+                        : { ...c, messages: c.messages.slice(0, -1) };
+                });
+                const errored = chats.find((c) => c.id === chatId);
+                if (errored)
+                    saveChat(chatToStored(errored), chatToMeta(errored)).catch(
+                        console.error,
+                    );
+            },
+            (thinkingChunk) => {
+                chats = chats.map((c) => {
+                    if (c.id !== chatId) return c;
+                    const msgs = [...c.messages];
+                    const last = msgs[msgs.length - 1];
+                    msgs[msgs.length - 1] = {
+                        ...last,
+                        thinking: (last.thinking ?? '') + thinkingChunk,
+                    };
+                    return { ...c, messages: msgs };
+                });
+            },
+        );
+        streamDisconnects.set(chatId, disconnect);
+    }
+
+    function editMessage(index: number, content: string) {
+        if (!activeChatId) return;
+        const chatId = activeChatId;
+        chats = chats.map((c) => {
+            if (c.id !== chatId) return c;
+            const msgs = [...c.messages];
+            msgs[index] = { ...msgs[index], content };
+            return { ...c, messages: msgs };
+        });
+        const updated = chats.find((c) => c.id === chatId);
+        if (updated)
+            saveChat(chatToStored(updated), chatToMeta(updated)).catch(
+                console.error,
+            );
+    }
+
+    function deleteMessage(index: number) {
+        if (!activeChatId) return;
+        const chatId = activeChatId;
+        chats = chats.map((c) => {
+            if (c.id !== chatId) return c;
+            return { ...c, messages: c.messages.filter((_, i) => i !== index) };
+        });
+        const updated = chats.find((c) => c.id === chatId);
+        if (updated)
+            saveChat(chatToStored(updated), chatToMeta(updated)).catch(
+                console.error,
+            );
+    }
 </script>
 
 {#if extensionDetected === false}
@@ -595,16 +844,21 @@
         {isLoadingMore}
         {streamingChatIds}
         {chatErrors}
+        {searchResults}
+        {searchQuery}
         bind:theme
         bind:fontSizeIndex
         bind:chatWidth
         bind:smoothText
+        bind:submitKeystroke
         onnewchat={newChat}
         onselectchat={selectChat}
         ondeletechat={removeChat}
         onrenamechat={renameChat}
         onexportchat={exportChat}
         onloadmore={loadMoreChats}
+        onsearch={search}
+        onclearsearch={clearSearch}
     />
     <ChatPanel
         messages={activeMessages}
@@ -613,9 +867,14 @@
         streamError={activeStreamError}
         {chatWidth}
         {smoothText}
+        {submitKeystroke}
         loading={chatLoading}
         bind:systemPrompt
+        {highlightMessageIndex}
         onsend={sendMessage}
+        onretry={retryMessage}
+        onedit={editMessage}
+        ondelete={deleteMessage}
     />
     <ModelConfig
         bind:providerId
@@ -623,6 +882,7 @@
         bind:temperature
         bind:maxTokens
         bind:thinkingLevel
+        bind:adaptiveThinking
         tokens={activeTokens}
     />
 </div>

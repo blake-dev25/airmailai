@@ -1,6 +1,7 @@
 <script lang="ts">
     import type { Attachment } from '@courier/shared';
     import { tick, untrack } from 'svelte';
+    import Icon from './Icon.svelte';
     import MarkdownMessage from './MarkdownMessage.svelte';
 
     interface Message {
@@ -18,8 +19,13 @@
         streamError = null,
         loading = false,
         smoothText = true,
+        submitKeystroke = 'enter',
         systemPrompt = $bindable(),
+        highlightMessageIndex = null,
         onsend,
+        onretry,
+        onedit,
+        ondelete,
     }: {
         messages: Message[];
         modelName: string;
@@ -28,8 +34,13 @@
         streamError?: string | null;
         loading?: boolean;
         smoothText?: boolean;
+        submitKeystroke?: 'enter' | 'ctrl+enter';
         systemPrompt: string;
+        highlightMessageIndex?: number | null;
         onsend: (content: string, attachments?: Attachment[]) => void;
+        onretry: (index: number) => void;
+        onedit: (index: number, content: string) => void;
+        ondelete: (index: number) => void;
     } = $props();
 
     let systemExpanded = $state(false);
@@ -39,10 +50,15 @@
     let textareaEl = $state<HTMLTextAreaElement | null>(null);
     let fileInputEl = $state<HTMLInputElement | null>(null);
     let isAtBottom = $state(true);
+    let isAtTop = $state(true);
     let pendingAttachments = $state<Attachment[]>([]);
+    let hoveredIndex = $state<number | null>(null);
+    let hoverHideTimer: ReturnType<typeof setTimeout> | null = null;
+    let editingIndex = $state<number | null>(null);
+    let editingText = $state('');
+    let editingDims = $state<{ w: number; h: number } | null>(null);
 
     const MAX_ATTACHMENTS = 20;
-
     const DRAIN_CHARS_PER_SEC = 60;
 
     let displayContent = $state('');
@@ -106,12 +122,10 @@
             return;
         }
 
-        // Content grew from a non-empty target — streaming continuation, keep draining.
         const grew =
             raw.length >= rafTarget.length &&
             raw.startsWith(rafTarget) &&
             rafTarget.length > 0;
-        // rafTarget is empty — only drain if a stream is actively running (first chunk).
         const firstChunk = rafTarget.length === 0 && untrack(() => isStreaming);
 
         if (grew || firstChunk) {
@@ -120,7 +134,6 @@
                 rafId = requestAnimationFrame(rafTick);
             }
         } else {
-            // Content changed to something else (chat switch, error reset, page load) — flush.
             if (rafId !== null) {
                 cancelAnimationFrame(rafId);
                 rafId = null;
@@ -140,10 +153,39 @@
         };
     });
 
+    $effect(() => {
+        const idx = highlightMessageIndex;
+        if (idx == null) return;
+        let cancelled = false;
+        tick().then(() => {
+            requestAnimationFrame(() => {
+                if (cancelled || !messagesEl) return;
+                const el = messagesEl.querySelector(
+                    `[data-msg-index="${idx}"]`,
+                ) as HTMLElement | null;
+                if (!el) return;
+                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                el.classList.add('search-highlight');
+                setTimeout(() => el.classList.remove('search-highlight'), 1500);
+            });
+        });
+        return () => {
+            cancelled = true;
+        };
+    });
+
+    $effect(() => {
+        if (editingIndex !== null && editingIndex >= messages.length) {
+            editingIndex = null;
+            editingText = '';
+        }
+    });
+
     function handleMessagesScroll() {
         if (!messagesEl) return;
         const { scrollTop, scrollHeight, clientHeight } = messagesEl;
         isAtBottom = scrollHeight - scrollTop - clientHeight < 80;
+        isAtTop = scrollTop < 20;
     }
 
     function scrollToBottom() {
@@ -153,7 +195,11 @@
     }
 
     function handleKeydown(e: KeyboardEvent) {
-        if (e.key === 'Enter' && !e.shiftKey) {
+        const shouldSubmit =
+            submitKeystroke === 'ctrl+enter'
+                ? e.key === 'Enter' && e.ctrlKey
+                : e.key === 'Enter' && !e.shiftKey;
+        if (shouldSubmit) {
             e.preventDefault();
             submit();
         }
@@ -203,6 +249,43 @@
         ta.style.height = 'auto';
         ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
     }
+
+    function startEdit(i: number, content: string, bubbleEl?: HTMLElement | null) {
+        editingDims = bubbleEl ? { w: bubbleEl.offsetWidth, h: bubbleEl.offsetHeight } : null;
+        editingIndex = i;
+        editingText = content;
+    }
+
+    function saveEdit() {
+        if (editingIndex === null) return;
+        onedit(editingIndex, editingText);
+        editingIndex = null;
+        editingText = '';
+    }
+
+    function cancelEdit() {
+        editingIndex = null;
+        editingText = '';
+    }
+
+    function setHovered(i: number | null) {
+        if (hoverHideTimer !== null) {
+            clearTimeout(hoverHideTimer);
+            hoverHideTimer = null;
+        }
+        if (i === null) {
+            hoverHideTimer = setTimeout(() => {
+                hoveredIndex = null;
+                hoverHideTimer = null;
+            }, 120);
+        } else {
+            hoveredIndex = i;
+        }
+    }
+
+    async function copyMessage(content: string) {
+        await navigator.clipboard.writeText(content);
+    }
 </script>
 
 <div class="chat-panel">
@@ -213,23 +296,10 @@
             class="system-header"
             onclick={() => (systemExpanded = !systemExpanded)}
         >
-            <svg
-                class="chevron"
-                class:expanded={systemExpanded}
-                width="14"
-                height="14"
-                viewBox="0 0 14 14"
-                fill="none"
-                aria-hidden="true"
-            >
-                <path
-                    d="M3 5l4 4 4-4"
-                    stroke="currentColor"
-                    stroke-width="1.5"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                />
-            </svg>
+            <Icon
+                name="chevron-down"
+                class="chevron {systemExpanded ? 'expanded' : ''}"
+            />
             <span>System Prompt</span>
             {#if systemPrompt.trim()}
                 <span class="prompt-dot" aria-label="System prompt is set"
@@ -249,6 +319,7 @@
 
     <!-- Messages -->
     <div class="messages-wrapper">
+        <div class="top-fade" class:visible={!isAtTop} aria-hidden="true"></div>
         <div
             class="messages"
             bind:this={messagesEl}
@@ -261,29 +332,7 @@
                     </div>
                 {:else if messages.length === 0}
                     <div class="empty-state">
-                        <svg
-                            width="32"
-                            height="32"
-                            viewBox="0 0 32 32"
-                            fill="none"
-                            aria-hidden="true"
-                        >
-                            <rect
-                                x="2"
-                                y="5"
-                                width="28"
-                                height="22"
-                                rx="3"
-                                stroke="currentColor"
-                                stroke-width="1.5"
-                            />
-                            <path
-                                d="M2 11l14 9 14-9"
-                                stroke="currentColor"
-                                stroke-width="1.5"
-                                stroke-linejoin="round"
-                            />
-                        </svg>
+                        <Icon name="inbox" />
                         <p>Start a conversation</p>
                         <p class="sub">
                             Choose a provider and model on the right, then type
@@ -292,9 +341,15 @@
                     </div>
                 {:else}
                     {#each messages as message, i (i)}
+                        {@const isLastStreaming =
+                            isStreaming && i === messages.length - 1}
                         <div
                             class="message"
                             class:user={message.role === 'user'}
+                            data-msg-index={i}
+                            role="group"
+                            onmouseenter={() => setHovered(i)}
+                            onmouseleave={() => setHovered(null)}
                         >
                             {#if message.role === 'user'}
                                 <div class="user-group">
@@ -307,9 +362,75 @@
                                             {/each}
                                         </div>
                                     {/if}
-                                    {#if message.content}
+                                    {#if editingIndex === i}
+                                        <textarea
+                                            class="edit-textarea"
+                                            style={editingDims ? `width: ${editingDims.w}px; min-height: ${editingDims.h}px;` : ''}
+                                            bind:value={editingText}
+                                        ></textarea>
+                                        <div class="edit-btns">
+                                            <button
+                                                type="button"
+                                                class="edit-save"
+                                                onclick={saveEdit}>Save</button
+                                            >
+                                            <button
+                                                type="button"
+                                                class="edit-cancel"
+                                                onclick={cancelEdit}
+                                                >Cancel</button
+                                            >
+                                        </div>
+                                    {:else if message.content}
                                         <div class="bubble">
                                             {message.content}
+                                        </div>
+                                    {/if}
+                                    {#if hoveredIndex === i && editingIndex !== i}
+                                        <div class="msg-actions">
+                                            <button
+                                                type="button"
+                                                class="msg-action-btn"
+                                                onclick={() => onretry(i)}
+                                                disabled={isStreaming}
+                                                aria-label="Retry"
+                                            >
+                                                <Icon name="retry" />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="msg-action-btn"
+                                                onclick={(e) =>
+                                                    startEdit(
+                                                        i,
+                                                        message.content,
+                                                        (e.currentTarget as HTMLElement).closest('.user-group')?.querySelector('.bubble') as HTMLElement | null,
+                                                    )}
+                                                disabled={isStreaming}
+                                                aria-label="Edit"
+                                            >
+                                                <Icon name="edit" />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="msg-action-btn"
+                                                onclick={() =>
+                                                    copyMessage(
+                                                        message.content,
+                                                    )}
+                                                aria-label="Copy"
+                                            >
+                                                <Icon name="copy" />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="msg-action-btn"
+                                                onclick={() => ondelete(i)}
+                                                disabled={isStreaming}
+                                                aria-label="Delete"
+                                            >
+                                                <Icon name="trash" />
+                                            </button>
                                         </div>
                                     {/if}
                                 </div>
@@ -324,24 +445,7 @@
                                 <div class="assistant-group">
                                     {#if isStreaming && i === messages.length - 1 && !message.content && !message.thinking}
                                         <div class="waiting-spinner">
-                                            <svg
-                                                class="spinner"
-                                                width="16"
-                                                height="16"
-                                                viewBox="0 0 12 12"
-                                                fill="none"
-                                                aria-hidden="true"
-                                            >
-                                                <circle
-                                                    cx="6"
-                                                    cy="6"
-                                                    r="4.5"
-                                                    stroke="currentColor"
-                                                    stroke-width="1.5"
-                                                    stroke-dasharray="18 8"
-                                                    stroke-linecap="round"
-                                                />
-                                            </svg>
+                                            <Icon name="spinner" size={16} />
                                         </div>
                                     {/if}
                                     {#if message.thinking}
@@ -360,45 +464,17 @@
                                                 }}
                                             >
                                                 {#if isStreaming && i === messages.length - 1 && !message.content}
-                                                    <svg
-                                                        class="spinner"
-                                                        width="12"
-                                                        height="12"
-                                                        viewBox="0 0 12 12"
-                                                        fill="none"
-                                                        aria-hidden="true"
-                                                    >
-                                                        <circle
-                                                            cx="6"
-                                                            cy="6"
-                                                            r="4.5"
-                                                            stroke="currentColor"
-                                                            stroke-width="1.5"
-                                                            stroke-dasharray="18 8"
-                                                            stroke-linecap="round"
-                                                        />
-                                                    </svg>
+                                                    <Icon name="spinner" />
                                                 {/if}
                                                 <span>Thinking</span>
-                                                <svg
-                                                    class="thinking-chevron"
-                                                    class:expanded={expandedThinking.has(
+                                                <Icon
+                                                    name="chevron-right"
+                                                    class="thinking-chevron {expandedThinking.has(
                                                         i,
-                                                    )}
-                                                    width="12"
-                                                    height="12"
-                                                    viewBox="0 0 12 12"
-                                                    fill="none"
-                                                    aria-hidden="true"
-                                                >
-                                                    <path
-                                                        d="M4.5 2.5l3.5 3.5-3.5 3.5"
-                                                        stroke="currentColor"
-                                                        stroke-width="1.5"
-                                                        stroke-linecap="round"
-                                                        stroke-linejoin="round"
-                                                    />
-                                                </svg>
+                                                    )
+                                                        ? 'expanded'
+                                                        : ''}"
+                                                />
                                             </button>
                                             {#if expandedThinking.has(i)}
                                                 <div class="thinking-content">
@@ -407,11 +483,77 @@
                                             {/if}
                                         </div>
                                     {/if}
-                                    {#if msgContent}
+                                    {#if editingIndex === i}
+                                        <textarea
+                                            class="edit-textarea"
+                                            style={editingDims ? `width: ${editingDims.w}px; min-height: ${editingDims.h}px;` : ''}
+                                            bind:value={editingText}
+                                        ></textarea>
+                                        <div class="edit-btns">
+                                            <button
+                                                type="button"
+                                                class="edit-save"
+                                                onclick={saveEdit}>Save</button
+                                            >
+                                            <button
+                                                type="button"
+                                                class="edit-cancel"
+                                                onclick={cancelEdit}
+                                                >Cancel</button
+                                            >
+                                        </div>
+                                    {:else if msgContent}
                                         <div class="bubble">
                                             <MarkdownMessage
                                                 content={msgContent}
                                             />
+                                        </div>
+                                    {/if}
+                                    {#if hoveredIndex === i && editingIndex !== i && !isLastStreaming}
+                                        <div class="msg-actions">
+                                            <button
+                                                type="button"
+                                                class="msg-action-btn"
+                                                onclick={() => onretry(i)}
+                                                disabled={isStreaming}
+                                                aria-label="Retry"
+                                            >
+                                                <Icon name="retry" />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="msg-action-btn"
+                                                onclick={(e) =>
+                                                    startEdit(
+                                                        i,
+                                                        message.content,
+                                                        (e.currentTarget as HTMLElement).closest('.assistant-group')?.querySelector('.bubble') as HTMLElement | null,
+                                                    )}
+                                                disabled={isStreaming}
+                                                aria-label="Edit"
+                                            >
+                                                <Icon name="edit" />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="msg-action-btn"
+                                                onclick={() =>
+                                                    copyMessage(
+                                                        message.content,
+                                                    )}
+                                                aria-label="Copy"
+                                            >
+                                                <Icon name="copy" />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="msg-action-btn"
+                                                onclick={() => ondelete(i)}
+                                                disabled={isStreaming}
+                                                aria-label="Delete"
+                                            >
+                                                <Icon name="trash" />
+                                            </button>
                                         </div>
                                     {/if}
                                 </div>
@@ -428,21 +570,7 @@
                 onclick={scrollToBottom}
                 aria-label="Scroll to bottom"
             >
-                <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 14 14"
-                    fill="none"
-                    aria-hidden="true"
-                >
-                    <path
-                        d="M3 5l4 4 4-4"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                    />
-                </svg>
+                <Icon name="chevron-down" />
             </button>
         {/if}
     </div>
@@ -458,26 +586,7 @@
             <div class="file-tab-row">
                 {#each pendingAttachments as att, i}
                     <div class="file-tab">
-                        <svg
-                            width="12"
-                            height="12"
-                            viewBox="0 0 12 12"
-                            fill="none"
-                            aria-hidden="true"
-                        >
-                            <path
-                                d="M2 1.5h5.5L10 4v6.5H2V1.5z"
-                                stroke="currentColor"
-                                stroke-width="1.2"
-                                stroke-linejoin="round"
-                            />
-                            <path
-                                d="M7.5 1.5V4H10"
-                                stroke="currentColor"
-                                stroke-width="1.2"
-                                stroke-linejoin="round"
-                            />
-                        </svg>
+                        <Icon name="file" />
                         <span class="file-tab-name">{att.name}</span>
                         <button
                             type="button"
@@ -488,20 +597,7 @@
                                 ))}
                             aria-label="Remove attachment"
                         >
-                            <svg
-                                width="10"
-                                height="10"
-                                viewBox="0 0 10 10"
-                                fill="none"
-                                aria-hidden="true"
-                            >
-                                <path
-                                    d="M2 2l6 6M8 2l-6 6"
-                                    stroke="currentColor"
-                                    stroke-width="1.4"
-                                    stroke-linecap="round"
-                                />
-                            </svg>
+                            <Icon name="close" />
                         </button>
                     </div>
                 {/each}
@@ -524,20 +620,7 @@
                     pendingAttachments.length >= MAX_ATTACHMENTS}
                 aria-label="Attach file"
             >
-                <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    aria-hidden="true"
-                >
-                    <path
-                        d="M8 3v10M3 8h10"
-                        stroke="currentColor"
-                        stroke-width="1.75"
-                        stroke-linecap="round"
-                    />
-                </svg>
+                <Icon name="plus" />
             </button>
             <textarea
                 class="input"
@@ -556,21 +639,7 @@
                     isStreaming}
                 aria-label="Send message"
             >
-                <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    aria-hidden="true"
-                >
-                    <path
-                        d="M2 8h12M9 3l5 5-5 5"
-                        stroke="currentColor"
-                        stroke-width="1.75"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                    />
-                </svg>
+                <Icon name="send" />
             </button>
         </div>
     </div>
@@ -615,12 +684,11 @@
         color: var(--color-text);
     }
 
-    .chevron {
-        flex-shrink: 0;
+    .system-header :global(.chevron) {
         transition: transform 0.2s ease;
     }
 
-    .chevron.expanded {
+    .system-header :global(.chevron.expanded) {
         transform: rotate(180deg);
     }
 
@@ -663,6 +731,23 @@
     }
 
     /* Messages */
+    .top-fade {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 64px;
+        background: linear-gradient(to bottom, var(--color-bg), transparent);
+        pointer-events: none;
+        z-index: 2;
+        opacity: 0;
+        transition: opacity 0.2s ease;
+    }
+
+    .top-fade.visible {
+        opacity: 1;
+    }
+
     .messages-wrapper {
         flex: 1;
         position: relative;
@@ -714,7 +799,7 @@
         padding: 28px 20px;
         display: flex;
         flex-direction: column;
-        gap: 16px;
+        gap: 28px;
         min-height: 100%;
         box-sizing: border-box;
     }
@@ -797,6 +882,7 @@
         flex-direction: column;
         gap: 8px;
         max-width: 70%;
+        position: relative;
     }
 
     /* Thinking block */
@@ -828,26 +914,12 @@
         opacity: 1;
     }
 
-    .thinking-chevron {
-        flex-shrink: 0;
+    .thinking-toggle :global(.thinking-chevron) {
         transition: transform 0.2s ease;
     }
 
-    .thinking-chevron.expanded {
+    .thinking-toggle :global(.thinking-chevron.expanded) {
         transform: rotate(90deg);
-    }
-
-    @keyframes spin {
-        to {
-            transform: rotate(360deg);
-        }
-    }
-
-    .spinner {
-        flex-shrink: 0;
-        animation: spin 0.8s linear infinite;
-        transform-box: fill-box;
-        transform-origin: center;
     }
 
     .thinking-content {
@@ -875,6 +947,7 @@
         align-items: flex-end;
         gap: 6px;
         max-width: 70%;
+        position: relative;
     }
 
     .attachment-chips {
@@ -897,6 +970,152 @@
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+    }
+
+    /* Message action buttons */
+    .msg-actions {
+        position: absolute;
+        top: calc(100% + 2px);
+        display: flex;
+        flex-direction: row;
+        gap: 1px;
+        animation: actionsAppear 0.1s ease both;
+        z-index: 1;
+    }
+
+    .user-group .msg-actions {
+        right: 0;
+    }
+
+    .assistant-group .msg-actions {
+        left: 0;
+    }
+
+    @keyframes actionsAppear {
+        from {
+            opacity: 0;
+            transform: translateY(2px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    .msg-action-btn {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        background: none;
+        border: none;
+        border-radius: 6px;
+        color: var(--color-text);
+        opacity: 0.4;
+        cursor: pointer;
+        transition:
+            opacity 0.12s,
+            background-color 0.12s;
+    }
+
+    .msg-action-btn::after {
+        content: attr(aria-label);
+        position: absolute;
+        bottom: calc(100% + 5px);
+        left: 50%;
+        transform: translateX(-50%);
+        background: var(--color-surface-raised);
+        color: var(--color-text);
+        border: 1px solid var(--color-border);
+        padding: 2px 7px;
+        border-radius: 5px;
+        font-size: 11px;
+        font-weight: 500;
+        white-space: nowrap;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.1s;
+        z-index: 10;
+    }
+
+    .msg-action-btn:hover:not(:disabled)::after {
+        opacity: 1;
+    }
+
+    .msg-action-btn:hover:not(:disabled) {
+        opacity: 1;
+        background-color: var(--color-surface-sunken);
+    }
+
+    .msg-action-btn:disabled {
+        opacity: 0.18;
+        cursor: not-allowed;
+    }
+
+    /* Edit mode */
+    .edit-textarea {
+        width: 100%;
+        min-height: 60px;
+        padding: 10px 14px;
+        background-color: var(--color-bg);
+        border: 1px solid var(--color-border);
+        border-radius: 12px;
+        color: var(--color-text);
+        font-family: var(--font-sans);
+        font-size: 0.875rem;
+        line-height: 1.65;
+        resize: vertical;
+        box-sizing: border-box;
+        transition: border-color 0.15s;
+    }
+
+    .edit-textarea:focus {
+        outline: none;
+        border-color: var(--color-accent);
+    }
+
+    .edit-btns {
+        display: flex;
+        gap: 6px;
+    }
+
+    .edit-save,
+    .edit-cancel {
+        padding: 5px 14px;
+        border-radius: 8px;
+        border: none;
+        font-family: var(--font-sans);
+        font-size: 0.8125rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition:
+            opacity 0.15s,
+            background-color 0.15s;
+    }
+
+    .edit-save {
+        background-color: var(--color-accent-3, var(--color-accent));
+        color: var(--color-bg);
+    }
+
+    .edit-save:hover {
+        background-color: var(
+            --color-accent-3-hover,
+            var(--color-accent-hover)
+        );
+    }
+
+    .edit-cancel {
+        background-color: var(--color-surface-sunken);
+        color: var(--color-text);
+        border: 1px solid var(--color-border);
+    }
+
+    .edit-cancel:hover {
+        background-color: var(--color-border);
     }
 
     /* Input wrapper (file tab + input row) */
@@ -1050,6 +1269,21 @@
     .send-btn:disabled {
         opacity: 0.35;
         cursor: not-allowed;
+    }
+
+    @keyframes searchFlash {
+        0%,
+        15% {
+            box-shadow: 0 0 0 3px var(--color-accent);
+            border-radius: 8px;
+        }
+        100% {
+            box-shadow: 0 0 0 0 transparent;
+        }
+    }
+
+    :global(.search-highlight) {
+        animation: searchFlash 1.5s ease-out;
     }
 
     .stream-error {

@@ -8,6 +8,7 @@
         temperature = $bindable(),
         maxTokens = $bindable(),
         thinkingLevel = $bindable(),
+        adaptiveThinking = $bindable(),
         tokens = null,
     }: {
         providerId: string;
@@ -15,6 +16,7 @@
         temperature: number;
         maxTokens: number;
         thinkingLevel: string;
+        adaptiveThinking: boolean;
         tokens?: { input: number; output: number } | null;
     } = $props();
 
@@ -36,7 +38,7 @@
         const val = parseFloat(badgeEl?.textContent ?? '');
         temperature = Number.isNaN(val)
             ? temperature
-            : Math.max(0, Math.min(currentModel.params.temperatureMax, val));
+            : Math.max(0, Math.min(currentModel.params.temperatureMax!, val));
         if (badgeEl) badgeEl.textContent = temperature.toFixed(2);
     }
 
@@ -127,9 +129,12 @@
         if (provider) {
             modelId = provider.models[0].id;
             maxTokens = provider.models[0].params.defaultMaxTokens;
-            temperature = provider.models[0].params.defaultTemperature;
+            if (provider.models[0].params.defaultTemperature !== undefined)
+                temperature = provider.models[0].params.defaultTemperature;
             thinkingLevel =
                 provider.models[0].params.thinking?.defaultLevel ?? 'none';
+            adaptiveThinking =
+                provider.models[0].params.thinking?.adaptive !== undefined;
         }
     }
 
@@ -138,10 +143,32 @@
         const model = currentProvider.models.find((m) => m.id === modelId);
         if (model) {
             maxTokens = model.params.defaultMaxTokens;
-            temperature = model.params.defaultTemperature;
+            if (model.params.defaultTemperature !== undefined)
+                temperature = model.params.defaultTemperature;
             thinkingLevel = model.params.thinking?.defaultLevel ?? 'none';
+            adaptiveThinking = model.params.thinking?.adaptive !== undefined;
         }
     }
+
+    // Airmail stripe — same geometry as Sidebar, adapted for modelConfig width
+    const mcStripeH = 20;
+    const mcStripeW = 40;
+    const mcGap = 40;
+    const mcPitch = mcStripeW + mcGap;
+    const mcW = 272;
+    const mcStartI = -Math.ceil(mcStripeH / mcPitch) - 1;
+    const mcEndI = Math.ceil(mcW / mcPitch) + 1;
+    const mcStripes = Array.from(
+        { length: mcEndI - mcStartI + 1 },
+        (_, idx) => {
+            const i = mcStartI + idx;
+            const x = i * mcPitch - 8;
+            return {
+                points: `${x + mcStripeH},0 ${x + mcStripeH + mcStripeW},0 ${x + mcStripeW},${mcStripeH} ${x},${mcStripeH}`,
+                red: i % 2 === 0,
+            };
+        },
+    );
 
     // Safety clamp for externally set values (e.g. loading a chat saved with an old model limit)
     $effect(() => {
@@ -150,8 +177,8 @@
             if (maxTokens > params.maxOutputTokens)
                 maxTokens = params.maxOutputTokens;
             if (maxTokens < 1) maxTokens = 1;
-            if (temperature > params.temperatureMax)
-                temperature = params.defaultTemperature;
+            if (params.temperatureMax !== undefined && temperature > params.temperatureMax)
+                temperature = params.defaultTemperature ?? 1;
             // If the loaded thinkingLevel isn't valid for this model, fall back to default
             if (
                 params.thinking &&
@@ -160,6 +187,10 @@
                 thinkingLevel = params.thinking.defaultLevel;
             }
             if (!params.thinking) thinkingLevel = 'none';
+            // Coerce adaptiveThinking to a valid state for the current model
+            const adaptiveSupport = params.thinking?.adaptive;
+            if (adaptiveSupport === 'required') adaptiveThinking = true;
+            else if (adaptiveSupport === undefined) adaptiveThinking = false;
         });
     });
 </script>
@@ -228,7 +259,7 @@
             </div>
         </div>
 
-        {#if currentModel.params.temperatureMax > 0}
+        {#if currentModel.params.temperatureMax !== undefined}
             <div class="field">
                 <div class="label-row">
                     <label for="temperature">Temperature</label>
@@ -291,6 +322,34 @@
                             ],
                         )}</span
                     >
+                </div>
+            </div>
+        {/if}
+
+        {#if thinkingConfig?.adaptive && thinkingLevel !== 'none'}
+            {@const locked = thinkingConfig.adaptive === 'required'}
+            <div class="field">
+                <div class="label-row">
+                    <label for="adaptive-thinking">Adaptive Thinking</label>
+                    <button
+                        id="adaptive-thinking"
+                        type="button"
+                        class="ios-switch"
+                        class:on={adaptiveThinking}
+                        class:locked
+                        role="switch"
+                        aria-checked={adaptiveThinking}
+                        aria-label="Adaptive Thinking"
+                        disabled={locked}
+                        title={locked
+                            ? 'This model only supports adaptive thinking.'
+                            : undefined}
+                        onclick={() => {
+                            if (!locked) adaptiveThinking = !adaptiveThinking;
+                        }}
+                    >
+                        <span class="ios-switch-thumb"></span>
+                    </button>
                 </div>
             </div>
         {/if}
@@ -362,6 +421,31 @@
     </div>
 
     <div class="made-by">Made with &lt;3 by @blake__dev + Claude</div>
+
+    <svg
+        width={mcW}
+        height={mcStripeH}
+        viewBox="0 0 {mcW} {mcStripeH}"
+        class="airmail-stripe"
+        aria-hidden="true"
+    >
+        <defs>
+            <clipPath id="mc-stripe-clip">
+                <rect width={mcW} height={mcStripeH} />
+            </clipPath>
+        </defs>
+        <g clip-path="url(#mc-stripe-clip)">
+            <rect width={mcW} height={mcStripeH} fill="var(--color-bg)" />
+            {#each mcStripes as stripe}
+                <polygon
+                    points={stripe.points}
+                    fill={stripe.red
+                        ? 'var(--color-accent)'
+                        : 'var(--color-accent-2)'}
+                />
+            {/each}
+        </g>
+    </svg>
 </aside>
 
 <style>
@@ -372,6 +456,7 @@
         flex-direction: column;
         background-color: var(--color-bg);
         border-left: 1px solid var(--color-border);
+        overflow-x: hidden;
         overflow-y: auto;
     }
 
@@ -535,6 +620,48 @@
         margin-top: -4px;
     }
 
+    /* iOS-style switch */
+    .ios-switch {
+        position: relative;
+        width: 34px;
+        height: 20px;
+        padding: 0;
+        background-color: var(--color-surface-raised);
+        border: 1px solid var(--color-border);
+        border-radius: 999px;
+        cursor: pointer;
+        transition:
+            background-color 0.18s ease,
+            border-color 0.18s ease;
+        flex-shrink: 0;
+    }
+
+    .ios-switch.on {
+        background-color: var(--color-accent-3, var(--color-accent));
+        border-color: var(--color-accent-3, var(--color-accent));
+    }
+
+    .ios-switch-thumb {
+        position: absolute;
+        top: 1px;
+        left: 1px;
+        width: 16px;
+        height: 16px;
+        background-color: var(--color-bg);
+        border-radius: 50%;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+        transition: transform 0.18s ease;
+    }
+
+    .ios-switch.on .ios-switch-thumb {
+        transform: translateX(14px);
+    }
+
+    .ios-switch.locked {
+        cursor: not-allowed;
+        opacity: 0.6;
+    }
+
     /* Model Details */
     .model-details {
         border-top: 1px solid var(--color-border);
@@ -581,11 +708,16 @@
     }
 
     .made-by {
-        padding: 12px 16px;
-        font-size: 0.6875rem;
+        padding: 8px 0px;
+        font-size: 12px;
         color: var(--color-text);
         opacity: 0.4;
         text-align: center;
         border-top: 1px solid var(--color-border);
+    }
+
+    .airmail-stripe {
+        display: block;
+        flex-shrink: 0;
     }
 </style>

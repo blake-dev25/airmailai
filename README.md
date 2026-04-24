@@ -1,2 +1,2 @@
 # ✉️CourierAI
-Chat with AI. No limits, no fluff, no downloads. Bring your own keys.
+Chat with AI. No subscription rate limits. Pay as you go. Bring your own keys.

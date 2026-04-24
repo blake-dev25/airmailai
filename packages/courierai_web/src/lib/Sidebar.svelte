@@ -15,16 +15,21 @@
         isLoadingMore,
         streamingChatIds,
         chatErrors,
+        searchResults,
+        searchQuery,
         theme = $bindable(),
         fontSizeIndex = $bindable(),
         chatWidth = $bindable(),
         smoothText = $bindable(),
+        submitKeystroke = $bindable(),
         onnewchat,
         onselectchat,
         ondeletechat,
         onrenamechat,
         onexportchat,
         onloadmore,
+        onsearch,
+        onclearsearch,
     }: {
         chats: Chat[];
         activeChatId: string | null;
@@ -32,20 +37,49 @@
         isLoadingMore: boolean;
         streamingChatIds: string[];
         chatErrors: Record<string, string>;
+        searchResults:
+            | {
+                  id: string;
+                  title: string;
+                  snippet: string;
+                  matchIndex: number | null;
+              }[]
+            | null;
+        searchQuery: string;
         theme: string;
         fontSizeIndex: number;
         chatWidth: number;
         smoothText: boolean;
+        submitKeystroke: 'enter' | 'ctrl+enter';
         onnewchat: () => void;
-        onselectchat: (id: string) => void;
+        onselectchat: (id: string, matchIndex?: number | null) => void;
         ondeletechat: (id: string) => void;
         onrenamechat: (id: string, title: string) => void;
         onexportchat: (id: string) => void;
         onloadmore: () => void;
+        onsearch: (query: string) => void;
+        onclearsearch: () => void;
     } = $props();
 
     let showSettings = $state(false);
     let historyHovered = $state(false);
+    let searchValue = $state('');
+
+    function highlightSnippet(raw: string, query: string): string {
+        const q = query.toLowerCase();
+        const idx = raw.toLowerCase().indexOf(q);
+        const esc = (s: string) =>
+            s
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        if (idx === -1) return esc(raw);
+        return (
+            esc(raw.slice(0, idx)) +
+            `<mark class="search-mark">${esc(raw.slice(idx, idx + query.length))}</mark>` +
+            esc(raw.slice(idx + query.length))
+        );
+    }
 
     // Chat context menu
     let openMenuChat = $state<Chat | null>(null);
@@ -185,7 +219,49 @@
                     stroke-linecap="round"
                 />
             </svg>
-            <input class="search-input" type="search" placeholder="Search" />
+            <input
+                class="search-input"
+                type="search"
+                placeholder="Search"
+                bind:value={searchValue}
+                onkeydown={(e) => {
+                    if (e.key === 'Enter' && searchValue.trim())
+                        onsearch(searchValue.trim());
+                    if (e.key === 'Escape') {
+                        searchValue = '';
+                        onclearsearch();
+                    }
+                }}
+                oninput={() => {
+                    if (!searchValue) onclearsearch();
+                }}
+            />
+            {#if searchValue}
+                <button
+                    type="button"
+                    class="search-clear-btn"
+                    onclick={() => {
+                        searchValue = '';
+                        onclearsearch();
+                    }}
+                    aria-label="Clear search"
+                >
+                    <svg
+                        width="10"
+                        height="10"
+                        viewBox="0 0 10 10"
+                        fill="none"
+                        aria-hidden="true"
+                    >
+                        <path
+                            d="M2 2l6 6M8 2l-6 6"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                        />
+                    </svg>
+                </button>
+            {/if}
         </div>
         <button type="button" class="new-chat-btn" onclick={onnewchat}>
             <svg
@@ -213,96 +289,154 @@
         onmouseenter={() => (historyHovered = true)}
         onmouseleave={() => (historyHovered = false)}
     >
-        <p class="section-label">Recent Chats</p>
-        {#if chats.length === 0}
-            <p class="empty">No conversations yet</p>
-        {:else}
-            {#each chats as chat (chat.id)}
-                <div class="chat-row" class:active={chat.id === activeChatId}>
-                    {#if renamingChatId === chat.id}
-                        <input
-                            class="chat-rename-input"
-                            use:focusAndSelect
-                            bind:value={renameValue}
-                            onblur={commitRename}
-                            onclick={(e) => e.stopPropagation()}
-                            onkeydown={(e) => {
-                                if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
-                                if (e.key === 'Escape') { renamingChatId = null; renameValue = ''; }
-                            }}
-                        />
-                    {:else}
+        {#if searchResults !== null}
+            <p class="section-label">
+                {searchResults.length} result{searchResults.length === 1
+                    ? ''
+                    : 's'}
+            </p>
+            {#if searchResults.length === 0}
+                <p class="empty">No matches found</p>
+            {:else}
+                {#each searchResults as result (result.id)}
+                    <div
+                        class="chat-row"
+                        class:active={result.id === activeChatId}
+                    >
                         <button
                             type="button"
                             class="chat-item"
-                            onclick={() => onselectchat(chat.id)}
-                            title={chat.title}
+                            onclick={() =>
+                                onselectchat(result.id, result.matchIndex)}
+                            title={result.title}
                         >
-                            <span class="chat-title">{chat.title}</span>
+                            <span class="chat-title"
+                                >{@html highlightSnippet(
+                                    result.title,
+                                    searchQuery,
+                                )}</span
+                            >
+                            {#if result.snippet}
+                                <span class="search-snippet"
+                                    >{@html highlightSnippet(
+                                        result.snippet,
+                                        searchQuery,
+                                    )}</span
+                                >
+                            {/if}
                         </button>
-                    {/if}
-                    {#if streamingChatIds.includes(chat.id) && chat.id !== activeChatId}
-                        <span class="chat-status" aria-label="Streaming">
+                    </div>
+                {/each}
+            {/if}
+        {:else}
+            <p class="section-label">Recent Chats</p>
+            {#if chats.length === 0}
+                <p class="empty">No conversations yet</p>
+            {:else}
+                {#each chats as chat (chat.id)}
+                    <div
+                        class="chat-row"
+                        class:active={chat.id === activeChatId}
+                    >
+                        {#if renamingChatId === chat.id}
+                            <input
+                                class="chat-rename-input"
+                                use:focusAndSelect
+                                bind:value={renameValue}
+                                onblur={commitRename}
+                                onclick={(e) => e.stopPropagation()}
+                                onkeydown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        commitRename();
+                                    }
+                                    if (e.key === 'Escape') {
+                                        renamingChatId = null;
+                                        renameValue = '';
+                                    }
+                                }}
+                            />
+                        {:else}
+                            <button
+                                type="button"
+                                class="chat-item"
+                                onclick={() => onselectchat(chat.id)}
+                                title={chat.title}
+                            >
+                                <span class="chat-title">{chat.title}</span>
+                            </button>
+                        {/if}
+                        {#if streamingChatIds.includes(chat.id) && chat.id !== activeChatId}
+                            <span class="chat-status" aria-label="Streaming">
+                                <svg
+                                    class="spinner"
+                                    width="12"
+                                    height="12"
+                                    viewBox="0 0 12 12"
+                                    fill="none"
+                                    aria-hidden="true"
+                                >
+                                    <circle
+                                        cx="6"
+                                        cy="6"
+                                        r="4.5"
+                                        stroke="currentColor"
+                                        stroke-width="1.5"
+                                        stroke-dasharray="18 8"
+                                        stroke-linecap="round"
+                                    />
+                                </svg>
+                            </span>
+                        {:else if chatErrors[chat.id]}
+                            <span
+                                class="chat-status chat-status--error"
+                                aria-label="Error">!</span
+                            >
+                        {/if}
+                        <button
+                            type="button"
+                            class="menu-btn"
+                            class:active={openMenuChat?.id === chat.id}
+                            aria-label="Chat options"
+                            onclick={(e) => openMenu(e, chat)}
+                        >
                             <svg
-                                class="spinner"
-                                width="12"
-                                height="12"
-                                viewBox="0 0 12 12"
+                                width="13"
+                                height="13"
+                                viewBox="0 0 24 24"
                                 fill="none"
                                 aria-hidden="true"
                             >
                                 <circle
-                                    cx="6"
-                                    cy="6"
-                                    r="4.5"
+                                    cx="12"
+                                    cy="12"
+                                    r="3"
                                     stroke="currentColor"
-                                    stroke-width="1.5"
-                                    stroke-dasharray="18 8"
+                                    stroke-width="1.75"
                                     stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                />
+                                <path
+                                    d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"
+                                    stroke="currentColor"
+                                    stroke-width="1.75"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
                                 />
                             </svg>
-                        </span>
-                    {:else if chatErrors[chat.id]}
-                        <span
-                            class="chat-status chat-status--error"
-                            aria-label="Error">!</span
-                        >
-                    {/if}
+                        </button>
+                    </div>
+                {/each}
+                {#if hasMoreChats}
                     <button
                         type="button"
-                        class="menu-btn"
-                        class:active={openMenuChat?.id === chat.id}
-                        aria-label="Chat options"
-                        onclick={(e) => openMenu(e, chat)}
+                        class="load-more-btn"
+                        onclick={onloadmore}
+                        disabled={isLoadingMore}
                     >
-                        <svg
-                            width="13"
-                            height="13"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            aria-hidden="true"
-                        >
-                            <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" />
-                            <path
-                                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"
-                                stroke="currentColor"
-                                stroke-width="1.75"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                            />
-                        </svg>
+                        {isLoadingMore ? 'Loading…' : 'Load More'}
                     </button>
-                </div>
-            {/each}
-            {#if hasMoreChats}
-                <button
-                    type="button"
-                    class="load-more-btn"
-                    onclick={onloadmore}
-                    disabled={isLoadingMore}
-                >
-                    {isLoadingMore ? 'Loading…' : 'Load More'}
-                </button>
+                {/if}
             {/if}
         {/if}
     </nav>
@@ -321,7 +455,15 @@
                 fill="none"
                 aria-hidden="true"
             >
-                <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" />
+                <circle
+                    cx="12"
+                    cy="12"
+                    r="3"
+                    stroke="currentColor"
+                    stroke-width="1.75"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                />
                 <path
                     d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"
                     stroke="currentColor"
@@ -336,24 +478,58 @@
 </aside>
 
 {#if openMenuChat}
-    <div class="chat-menu" style="top: {menuPos.top}px; left: {menuPos.left}px;">
+    <div
+        class="chat-menu"
+        style="top: {menuPos.top}px; left: {menuPos.left}px;"
+    >
         <button
             type="button"
             class="chat-menu-item"
-            onclick={(e) => { e.stopPropagation(); startRename(openMenuChat!.id, openMenuChat!.title); }}
+            onclick={(e) => {
+                e.stopPropagation();
+                startRename(openMenuChat!.id, openMenuChat!.title);
+            }}
         >
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                <path d="M8.5 1.5l2 2L3 11H1V9L8.5 1.5Z" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" />
+            <svg
+                width="12"
+                height="12"
+                viewBox="0 0 12 12"
+                fill="none"
+                aria-hidden="true"
+            >
+                <path
+                    d="M8.5 1.5l2 2L3 11H1V9L8.5 1.5Z"
+                    stroke="currentColor"
+                    stroke-width="1.25"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                />
             </svg>
             Rename
         </button>
         <button
             type="button"
             class="chat-menu-item"
-            onclick={(e) => { e.stopPropagation(); onexportchat(openMenuChat!.id); closeMenu(); }}
+            onclick={(e) => {
+                e.stopPropagation();
+                onexportchat(openMenuChat!.id);
+                closeMenu();
+            }}
         >
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                <path d="M6 1v7M3 5.5l3 3 3-3M1 10.5h10" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" />
+            <svg
+                width="12"
+                height="12"
+                viewBox="0 0 12 12"
+                fill="none"
+                aria-hidden="true"
+            >
+                <path
+                    d="M6 1v7M3 5.5l3 3 3-3M1 10.5h10"
+                    stroke="currentColor"
+                    stroke-width="1.25"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                />
             </svg>
             Export
         </button>
@@ -361,10 +537,26 @@
         <button
             type="button"
             class="chat-menu-item chat-menu-item--danger"
-            onclick={(e) => { e.stopPropagation(); ondeletechat(openMenuChat!.id); closeMenu(); }}
+            onclick={(e) => {
+                e.stopPropagation();
+                ondeletechat(openMenuChat!.id);
+                closeMenu();
+            }}
         >
-            <svg width="12" height="12" viewBox="0 0 13 13" fill="none" aria-hidden="true">
-                <path d="M2 4h9M5 4V2.5h3V4M3.5 4l.5 7h5l.5-7" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" />
+            <svg
+                width="12"
+                height="12"
+                viewBox="0 0 13 13"
+                fill="none"
+                aria-hidden="true"
+            >
+                <path
+                    d="M2 4h9M5 4V2.5h3V4M3.5 4l.5 7h5l.5-7"
+                    stroke="currentColor"
+                    stroke-width="1.25"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                />
             </svg>
             Delete
         </button>
@@ -377,6 +569,7 @@
         bind:fontSizeIndex
         bind:chatWidth
         bind:smoothText
+        bind:submitKeystroke
         onclose={() => (showSettings = false)}
     />
 {/if}
@@ -467,6 +660,27 @@
 
     .search-input::-webkit-search-cancel-button {
         -webkit-appearance: none;
+    }
+
+    .search-clear-btn {
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
+        padding: 0;
+        background: none;
+        border: none;
+        border-radius: 3px;
+        color: var(--color-text-muted);
+        cursor: pointer;
+        opacity: 0.6;
+        transition: opacity 0.1s;
+    }
+
+    .search-clear-btn:hover {
+        opacity: 1;
     }
 
     .new-chat-btn {
@@ -703,6 +917,23 @@
 
     .chat-status--error {
         color: var(--color-accent);
+    }
+
+    .search-snippet {
+        display: block;
+        font-size: 0.6875rem;
+        color: var(--color-text-muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        margin-top: 1px;
+    }
+
+    :global(.search-mark) {
+        background-color: var(--color-accent-2);
+        color: var(--color-surface-sunken);
+        border-radius: 2px;
+        padding: 0 1px;
     }
 
     @keyframes spin {
