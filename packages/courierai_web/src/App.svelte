@@ -1,6 +1,6 @@
 <script lang="ts">
     import type { Attachment, ChatMeta, StoredChat } from '@courier/shared';
-    import { untrack } from 'svelte';
+    import { onMount, untrack } from 'svelte';
     import ChatPanel from './lib/ChatPanel.svelte';
     import { FONT_SIZES, PROVIDERS } from './lib/constants';
     import ExtensionPrompt from './lib/ExtensionPrompt.svelte';
@@ -15,8 +15,19 @@
         sendToExtension,
         waitForExtension,
     } from './lib/extension';
+    import { initMarkdown } from './lib/markdown';
     import ModelConfig from './lib/ModelConfig.svelte';
     import Sidebar from './lib/Sidebar.svelte';
+
+    // Preload Shiki in the browser's idle window so the first code block doesn't pay the cost.
+    onMount(() => {
+        const trigger = () => initMarkdown();
+        if ('requestIdleCallback' in window) {
+            window.requestIdleCallback(trigger);
+        } else {
+            setTimeout(trigger, 0);
+        }
+    });
 
     const LOG = '[courier:web]';
     console.log(LOG, 'page load', {

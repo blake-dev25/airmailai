@@ -1,33 +1,11 @@
 import DOMPurify from 'dompurify';
 import { marked, type TokenizerAndRendererExtension } from 'marked';
 import markedFootnote from 'marked-footnote';
-import { createHighlighter, type Highlighter } from 'shiki';
+import type { HighlighterCore } from 'shiki/core';
 
 const THEME = 'github-dark';
 
-const LANGUAGES = [
-    'javascript',
-    'typescript',
-    'jsx',
-    'tsx',
-    'python',
-    'bash',
-    'sh',
-    'json',
-    'html',
-    'css',
-    'markdown',
-    'sql',
-    'rust',
-    'go',
-    'java',
-    'cpp',
-    'c',
-    'yaml',
-    'toml',
-];
-
-let highlighter: Highlighter | null = null;
+let highlighter: HighlighterCore | null = null;
 let initPromise: Promise<void> | null = null;
 
 export function isHighlighterReady(): boolean {
@@ -37,18 +15,12 @@ export function isHighlighterReady(): boolean {
 export function initMarkdown(): Promise<void> {
     if (highlighter) return Promise.resolve();
     if (!initPromise) {
-        initPromise = createHighlighter({
-            themes: [THEME],
-            langs: LANGUAGES,
-        }).then((h) => {
-            highlighter = h;
+        initPromise = import('./markdown-highlighter.js').then(async (m) => {
+            highlighter = await m.createMarkdownHighlighter();
         });
     }
     return initPromise;
 }
-
-// Kick off loading immediately on module import
-initMarkdown();
 
 function inlineExtension(
     name: string,
