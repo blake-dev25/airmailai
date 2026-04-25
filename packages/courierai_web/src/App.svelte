@@ -15,8 +15,8 @@
         sendToExtension,
         waitForExtension,
     } from './lib/extension';
-    import { initMarkdown } from './lib/markdown';
     import ModelConfig from './lib/ModelConfig.svelte';
+    import { initMarkdown } from './lib/markdown';
     import Sidebar from './lib/Sidebar.svelte';
 
     // Preload Shiki in the browser's idle window so the first code block doesn't pay the cost.

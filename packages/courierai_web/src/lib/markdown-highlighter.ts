@@ -1,6 +1,5 @@
 import { createHighlighterCore, type HighlighterCore } from 'shiki/core';
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
-import githubDark from 'shiki/themes/github-dark.mjs';
 import bash from 'shiki/langs/bash.mjs';
 import c from 'shiki/langs/c.mjs';
 import cpp from 'shiki/langs/cpp.mjs';
@@ -20,6 +19,7 @@ import toml from 'shiki/langs/toml.mjs';
 import tsx from 'shiki/langs/tsx.mjs';
 import typescript from 'shiki/langs/typescript.mjs';
 import yaml from 'shiki/langs/yaml.mjs';
+import githubDark from 'shiki/themes/github-dark.mjs';
 
 export function createMarkdownHighlighter(): Promise<HighlighterCore> {
     return createHighlighterCore({
