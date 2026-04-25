@@ -136,8 +136,9 @@
     // --- Storage ---
 
     let settingsLoaded = $state(false);
-    let extensionDetected = $state<boolean | null>(null);
     let chatLoading = $state(false);
+    let demoMode = $state(false);
+    let showExtensionPrompt = $state(false);
 
     // Tracks which chat IDs have full messages loaded in memory
     const loadedChatIds = new Set<string>();
@@ -145,7 +146,7 @@
     const streamDisconnects = new Map<string, () => void>();
 
     waitForExtension().then(async (detected) => {
-        extensionDetected = detected;
+        if (!detected) showExtensionPrompt = true;
         console.log(LOG, 'extension detected:', detected);
 
         const [settings, metas] = await Promise.all([
@@ -300,6 +301,7 @@
             adaptiveThinking,
         };
         if (!untrack(() => settingsLoaded)) return;
+        if (untrack(() => demoMode)) return;
         const timer = setTimeout(() => {
             console.log(LOG, 'settings save (debounced)', snapshot);
             saveSettings(snapshot);
@@ -327,6 +329,69 @@
             adaptiveThinking: chat.adaptiveThinking,
             systemPrompt: chat.systemPrompt,
         };
+    }
+
+    // --- Demo mode ---
+
+    function enterDemoMode() {
+        const fizzbuzz =
+            "sure! here's your script:\n\n" +
+            '```python\n' +
+            'for i in range(1, 101):\n' +
+            '    if i % 15 == 0:\n' +
+            '        print("FizzBuzz")\n' +
+            '    elif i % 3 == 0:\n' +
+            '        print("Fizz")\n' +
+            '    elif i % 5 == 0:\n' +
+            '        print("Buzz")\n' +
+            '    else:\n' +
+            '        print(i)\n' +
+            '```';
+        const now = Date.now();
+        const demo1: Chat = {
+            id: 'demo-1',
+            title: 'this is a demo conversation',
+            messages: [
+                { role: 'user', content: 'this is a demo conversation' },
+                { role: 'assistant', content: 'great! how can I help you?' },
+            ],
+            createdAt: now,
+            systemPrompt: '',
+            providerId,
+            modelId,
+            temperature,
+            maxTokens,
+            thinkingLevel,
+            adaptiveThinking,
+        };
+        const demo2: Chat = {
+            id: 'demo-2',
+            title: 'write me a python fizzbuzz script',
+            messages: [
+                { role: 'user', content: 'write me a python fizzbuzz script' },
+                { role: 'assistant', content: fizzbuzz },
+            ],
+            createdAt: now - 1000,
+            systemPrompt: '',
+            providerId,
+            modelId,
+            temperature,
+            maxTokens,
+            thinkingLevel,
+            adaptiveThinking,
+        };
+        chats = [demo1, demo2];
+        allMetas = chats.map(chatToMeta);
+        loadedChatIds.add('demo-1');
+        loadedChatIds.add('demo-2');
+        activeChatId = 'demo-1';
+        demoMode = true;
+        showExtensionPrompt = false;
+        console.log(LOG, 'entered demo mode');
+    }
+
+    function requestExtension() {
+        showExtensionPrompt = true;
     }
 
     // --- Chat actions ---
@@ -420,7 +485,7 @@
             const { [id]: _, ...rest } = chatErrors;
             chatErrors = rest;
         }
-        deleteChat(id).catch(console.error);
+        if (!demoMode) deleteChat(id).catch(console.error);
     }
 
     function renameChat(id: string, newTitle: string) {
@@ -430,7 +495,7 @@
             m.id === id ? { ...m, title: newTitle } : m,
         );
         const updated = chats.find((c) => c.id === id);
-        if (updated)
+        if (updated && !demoMode)
             saveChat(chatToStored(updated), chatToMeta(updated)).catch(
                 console.error,
             );
@@ -478,6 +543,10 @@
     }
 
     function sendMessage(content: string, attachments?: Attachment[]) {
+        if (demoMode) {
+            requestExtension();
+            return;
+        }
         if (activeChatId && streamingChatIds.includes(activeChatId)) return;
         console.log(LOG, 'send message', {
             provider: providerId,
@@ -684,6 +753,10 @@
     }
 
     function retryMessage(index: number) {
+        if (demoMode) {
+            requestExtension();
+            return;
+        }
         if (!activeChatId) return;
         const chatId = activeChatId;
         const chat = chats.find((c) => c.id === chatId);
@@ -822,7 +895,7 @@
             return { ...c, messages: msgs };
         });
         const updated = chats.find((c) => c.id === chatId);
-        if (updated)
+        if (updated && !demoMode)
             saveChat(chatToStored(updated), chatToMeta(updated)).catch(
                 console.error,
             );
@@ -836,15 +909,15 @@
             return { ...c, messages: c.messages.filter((_, i) => i !== index) };
         });
         const updated = chats.find((c) => c.id === chatId);
-        if (updated)
+        if (updated && !demoMode)
             saveChat(chatToStored(updated), chatToMeta(updated)).catch(
                 console.error,
             );
     }
 </script>
 
-{#if extensionDetected === false}
-    <ExtensionPrompt />
+{#if showExtensionPrompt}
+    <ExtensionPrompt onlookaround={enterDemoMode} />
 {/if}
 
 <div class="app">
@@ -857,6 +930,7 @@
         {chatErrors}
         {searchResults}
         {searchQuery}
+        {demoMode}
         bind:theme
         bind:fontSizeIndex
         bind:chatWidth
@@ -870,6 +944,7 @@
         onloadmore={loadMoreChats}
         onsearch={search}
         onclearsearch={clearSearch}
+        onextensionneeded={requestExtension}
     />
     <ChatPanel
         messages={activeMessages}
@@ -882,10 +957,12 @@
         loading={chatLoading}
         bind:systemPrompt
         {highlightMessageIndex}
+        {demoMode}
         onsend={sendMessage}
         onretry={retryMessage}
         onedit={editMessage}
         ondelete={deleteMessage}
+        onextensionneeded={requestExtension}
     />
     <ModelConfig
         bind:providerId

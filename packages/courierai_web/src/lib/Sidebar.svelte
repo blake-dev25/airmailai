@@ -17,6 +17,7 @@
         chatErrors,
         searchResults,
         searchQuery,
+        demoMode = false,
         theme = $bindable(),
         fontSizeIndex = $bindable(),
         chatWidth = $bindable(),
@@ -30,6 +31,7 @@
         onloadmore,
         onsearch,
         onclearsearch,
+        onextensionneeded,
     }: {
         chats: Chat[];
         activeChatId: string | null;
@@ -46,6 +48,7 @@
               }[]
             | null;
         searchQuery: string;
+        demoMode?: boolean;
         theme: string;
         fontSizeIndex: number;
         chatWidth: number;
@@ -59,6 +62,7 @@
         onloadmore: () => void;
         onsearch: (query: string) => void;
         onclearsearch: () => void;
+        onextensionneeded: () => void;
     } = $props();
 
     let showSettings = $state(false);
@@ -446,7 +450,13 @@
             type="button"
             class="settings-btn"
             class:active={showSettings}
-            onclick={() => (showSettings = !showSettings)}
+            onclick={() => {
+                if (demoMode) {
+                    onextensionneeded();
+                    return;
+                }
+                showSettings = !showSettings;
+            }}
         >
             <svg
                 width="15"
@@ -583,6 +593,13 @@
         background-color: var(--color-bg);
         border-right: 1px solid var(--color-border);
         overflow: hidden;
+        -webkit-user-select: none;
+        user-select: none;
+    }
+
+    .sidebar input {
+        -webkit-user-select: text;
+        user-select: text;
     }
 
     .airmail-stripe {
@@ -867,6 +884,8 @@
         padding: 4px;
         display: flex;
         flex-direction: column;
+        -webkit-user-select: none;
+        user-select: none;
     }
 
     .chat-menu-divider {

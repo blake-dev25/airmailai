@@ -1,3 +1,7 @@
+<script lang="ts">
+    let { onlookaround }: { onlookaround: () => void } = $props();
+</script>
+
 <div class="backdrop" aria-hidden="true"></div>
 
 <div
@@ -29,8 +33,11 @@
         CourierAI needs the browser extension to store your API keys and send
         requests. Install it, then reload this page.
     </p>
-    <button type="button" onclick={() => window.location.reload()}
+    <button type="button" class="primary" onclick={() => window.location.reload()}
         >Reload</button
+    >
+    <button type="button" class="secondary" onclick={onlookaround}
+        >Let me look around (settings/text will not be saved)</button
     >
 </div>
 
@@ -81,7 +88,7 @@
         line-height: 1.5;
     }
 
-    button {
+    .primary {
         margin-top: 8px;
         padding: 8px 24px;
         background-color: var(--color-accent);
@@ -94,7 +101,23 @@
         transition: background-color 0.15s;
     }
 
-    button:hover {
+    .primary:hover {
         background-color: var(--color-accent-hover);
+    }
+
+    .secondary {
+        margin-top: 2px;
+        padding: 4px 8px;
+        background: none;
+        border: none;
+        font-size: 0.75rem;
+        color: var(--color-text-muted);
+        cursor: pointer;
+        transition: color 0.15s;
+    }
+
+    .secondary:hover {
+        color: var(--color-text);
+        text-decoration: underline;
     }
 </style>

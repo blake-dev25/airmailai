@@ -458,6 +458,14 @@
         border-left: 1px solid var(--color-border);
         overflow-x: hidden;
         overflow-y: auto;
+        -webkit-user-select: none;
+        user-select: none;
+    }
+
+    .model-config input,
+    .model-config [contenteditable='true'] {
+        -webkit-user-select: text;
+        user-select: text;
     }
 
     .model-config::-webkit-scrollbar {

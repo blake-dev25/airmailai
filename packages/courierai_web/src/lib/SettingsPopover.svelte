@@ -284,7 +284,7 @@
         </div>
 
         <div
-            class="tab-panel"
+            class="tab-panel changelog-panel"
             class:active={activeTab === 'changelog'}
             aria-hidden={activeTab !== 'changelog'}
         >
@@ -317,6 +317,18 @@
         display: flex;
         flex-direction: column;
         overflow: hidden;
+        -webkit-user-select: none;
+        user-select: none;
+    }
+
+    .popover input {
+        -webkit-user-select: text;
+        user-select: text;
+    }
+
+    .changelog-panel {
+        -webkit-user-select: text;
+        user-select: text;
     }
 
     .tabs {

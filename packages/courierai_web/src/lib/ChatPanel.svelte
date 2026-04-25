@@ -22,10 +22,12 @@
         submitKeystroke = 'enter',
         systemPrompt = $bindable(),
         highlightMessageIndex = null,
+        demoMode = false,
         onsend,
         onretry,
         onedit,
         ondelete,
+        onextensionneeded,
     }: {
         messages: Message[];
         modelName: string;
@@ -37,10 +39,12 @@
         submitKeystroke?: 'enter' | 'ctrl+enter';
         systemPrompt: string;
         highlightMessageIndex?: number | null;
+        demoMode?: boolean;
         onsend: (content: string, attachments?: Attachment[]) => void;
         onretry: (index: number) => void;
         onedit: (index: number, content: string) => void;
         ondelete: (index: number) => void;
+        onextensionneeded: () => void;
     } = $props();
 
     let systemExpanded = $state(false);
@@ -208,6 +212,10 @@
     function submit() {
         const text = inputText.trim();
         if ((!text && !pendingAttachments.length) || isStreaming) return;
+        if (demoMode) {
+            onextensionneeded();
+            return;
+        }
         isAtBottom = true;
         const atts = pendingAttachments;
         pendingAttachments = [];
@@ -306,6 +314,26 @@
                 ></span>
             {/if}
         </button>
+        {#if demoMode}
+            <button type="button" class="install-link">
+                <span>Install the extension</span>
+                <svg
+                    width="11"
+                    height="11"
+                    viewBox="0 0 11 11"
+                    fill="none"
+                    aria-hidden="true"
+                >
+                    <path
+                        d="M3.5 2h5.5v5.5M9 2L2 9"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    />
+                </svg>
+            </button>
+        {/if}
         {#if systemExpanded}
             <div class="system-body">
                 <textarea
@@ -657,9 +685,37 @@
 
     /* System Prompt */
     .system-section {
+        position: relative;
         flex-shrink: 0;
         background-color: var(--color-bg);
         border-bottom: 1px solid var(--color-border);
+    }
+
+    .install-link {
+        position: absolute;
+        top: 0;
+        right: 16px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        padding: 0 8px;
+        background: none;
+        border: none;
+        font-family: var(--font-sans);
+        font-size: 0.75rem;
+        font-weight: 500;
+        color: var(--color-accent);
+        cursor: pointer;
+        border-radius: 4px;
+        transition:
+            color 0.15s,
+            background-color 0.15s;
+    }
+
+    .install-link:hover {
+        color: var(--color-accent-hover);
+        text-decoration: underline;
     }
 
     .system-header {
