@@ -420,7 +420,7 @@
         </div>
     </div>
 
-    <div class="made-by">Made with &lt;3 by @blake__dev + Claude</div>
+    <div class="made-by">Made with &lt;3 by @blake__dev + AI</div>
 
     <svg
         width={mcW}

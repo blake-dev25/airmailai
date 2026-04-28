@@ -353,7 +353,10 @@
             bind:this={messagesEl}
             onscroll={handleMessagesScroll}
         >
-            <div class="messages-inner" style="max-width: {chatWidth}vw;">
+            <div
+                class="messages-inner"
+                style="max-width: min(100vw, calc(var(--narrow-chat-width) + (100vw - var(--narrow-chat-width)) * {chatWidth / 100}));"
+            >
                 {#if loading}
                     <div class="empty-state">
                         <p class="sub">Loading…</p>
@@ -851,6 +854,7 @@
     }
 
     .messages-inner {
+        --narrow-chat-width: 744px;
         margin: 0 auto;
         padding: 28px 20px;
         display: flex;
@@ -933,11 +937,12 @@
     }
 
     /* Assistant message group (thinking + bubble stacked) */
+    /* Right edge stays anchored to the narrow chat's right edge; left edge expands as the chat widens */
     .assistant-group {
         display: flex;
         flex-direction: column;
         gap: 8px;
-        max-width: 70%;
+        max-width: calc(50% + var(--narrow-chat-width) / 2);
         position: relative;
     }
 
@@ -997,12 +1002,13 @@
     }
 
     /* User group (attachment chips + bubble) */
+    /* Left edge stays anchored to the narrow chat's user-bubble left edge (80% from left); right edge expands as the chat widens */
     .user-group {
         display: flex;
         flex-direction: column;
         align-items: flex-end;
         gap: 6px;
-        max-width: 70%;
+        max-width: calc(50% + var(--narrow-chat-width) * 0.3);
         position: relative;
     }
 

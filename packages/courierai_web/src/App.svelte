@@ -84,8 +84,8 @@
         document.documentElement.style.fontSize = `${FONT_SIZES[fontSizeIndex]}px`;
     });
 
-    // Chat width — 33 to 100 (vw), default unconstrained
-    let chatWidth = $state(100);
+    // Chat width — 0 to 100, interpolates between 744px (narrowest) and 100vw (widest)
+    let chatWidth = $state(0);
     // Smooth text loading — animate streaming text with rAF drain
     let smoothText = $state(true);
     // Submit keystroke — 'enter' or 'ctrl+enter'

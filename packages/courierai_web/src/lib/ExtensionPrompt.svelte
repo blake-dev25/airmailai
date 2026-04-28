@@ -113,11 +113,11 @@
         font-size: 0.75rem;
         color: var(--color-text-muted);
         cursor: pointer;
+        text-decoration: underline;
         transition: color 0.15s;
     }
 
     .secondary:hover {
         color: var(--color-text);
-        text-decoration: underline;
     }
 </style>
