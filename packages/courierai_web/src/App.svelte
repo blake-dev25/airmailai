@@ -86,8 +86,10 @@
 
     // Chat width — 0 to 100, interpolates between 744px (narrowest) and 100vw (widest)
     let chatWidth = $state(0);
-    // Smooth text loading — animate streaming text with rAF drain
-    let smoothText = $state(true);
+    // Smooth text rendering — controls how streaming AI message text is drained to the UI
+    let smoothTextMode = $state<
+        'smooth' | 'boost-on-complete' | 'dump-on-complete' | 'raw'
+    >('smooth');
     // Submit keystroke — 'enter' or 'ctrl+enter'
     let submitKeystroke = $state<'enter' | 'ctrl+enter'>('enter');
 
@@ -159,7 +161,8 @@
         if (settings.fontSizeIndex !== undefined)
             fontSizeIndex = settings.fontSizeIndex;
         if (settings.chatWidth !== undefined) chatWidth = settings.chatWidth;
-        if (settings.smoothText !== undefined) smoothText = settings.smoothText;
+        if (settings.smoothTextMode !== undefined)
+            smoothTextMode = settings.smoothTextMode;
         if (settings.submitKeystroke !== undefined)
             submitKeystroke = settings.submitKeystroke;
         if (settings.providerId) providerId = settings.providerId;
@@ -291,7 +294,7 @@
             theme,
             fontSizeIndex,
             chatWidth,
-            smoothText,
+            smoothTextMode,
             submitKeystroke,
             providerId,
             modelId,
@@ -934,7 +937,7 @@
         bind:theme
         bind:fontSizeIndex
         bind:chatWidth
-        bind:smoothText
+        bind:smoothTextMode
         bind:submitKeystroke
         onnewchat={newChat}
         onselectchat={selectChat}
@@ -952,7 +955,7 @@
         isStreaming={isActiveStreaming}
         streamError={activeStreamError}
         {chatWidth}
-        {smoothText}
+        {smoothTextMode}
         {submitKeystroke}
         loading={chatLoading}
         bind:systemPrompt

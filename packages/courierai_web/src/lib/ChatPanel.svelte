@@ -18,7 +18,7 @@
         chatWidth = 100,
         streamError = null,
         loading = false,
-        smoothText = true,
+        smoothTextMode = 'smooth',
         submitKeystroke = 'enter',
         systemPrompt = $bindable(),
         highlightMessageIndex = null,
@@ -35,7 +35,11 @@
         chatWidth?: number;
         streamError?: string | null;
         loading?: boolean;
-        smoothText?: boolean;
+        smoothTextMode?:
+            | 'smooth'
+            | 'boost-on-complete'
+            | 'dump-on-complete'
+            | 'raw';
         submitKeystroke?: 'enter' | 'ctrl+enter';
         systemPrompt: string;
         highlightMessageIndex?: number | null;
@@ -64,6 +68,7 @@
 
     const MAX_ATTACHMENTS = 20;
     const DRAIN_CHARS_PER_SEC = 60;
+    const DRAIN_CHARS_PER_SEC_BOOST = 300;
 
     let displayContent = $state('');
     let rafTarget = '';
@@ -81,7 +86,11 @@
         }
         if (displayContent.length < rafTarget.length) {
             if (rafLastTime > 0) {
-                rafAccum += ((now - rafLastTime) / 1000) * DRAIN_CHARS_PER_SEC;
+                const rate =
+                    smoothTextMode === 'boost-on-complete' && !isStreaming
+                        ? DRAIN_CHARS_PER_SEC_BOOST
+                        : DRAIN_CHARS_PER_SEC;
+                rafAccum += ((now - rafLastTime) / 1000) * rate;
                 const step = Math.floor(rafAccum);
                 rafAccum -= step;
                 if (step > 0) {
@@ -114,7 +123,7 @@
     $effect(() => {
         const raw = messages[messages.length - 1]?.content ?? '';
 
-        if (!smoothText) {
+        if (smoothTextMode === 'raw') {
             if (rafId !== null) {
                 cancelAnimationFrame(rafId);
                 rafId = null;
@@ -155,6 +164,20 @@
                 rafId = null;
             }
         };
+    });
+
+    // dump-on-complete: when the stream ends, snap any remaining un-drained text to the screen.
+    $effect(() => {
+        if (smoothTextMode !== 'dump-on-complete') return;
+        if (isStreaming) return;
+        if (displayContent.length >= rafTarget.length) return;
+        if (rafId !== null) {
+            cancelAnimationFrame(rafId);
+            rafId = null;
+        }
+        rafLastTime = 0;
+        rafAccum = 0;
+        displayContent = rafTarget;
     });
 
     $effect(() => {

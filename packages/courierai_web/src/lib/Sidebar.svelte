@@ -21,7 +21,7 @@
         theme = $bindable(),
         fontSizeIndex = $bindable(),
         chatWidth = $bindable(),
-        smoothText = $bindable(),
+        smoothTextMode = $bindable(),
         submitKeystroke = $bindable(),
         onnewchat,
         onselectchat,
@@ -52,7 +52,11 @@
         theme: string;
         fontSizeIndex: number;
         chatWidth: number;
-        smoothText: boolean;
+        smoothTextMode:
+            | 'smooth'
+            | 'boost-on-complete'
+            | 'dump-on-complete'
+            | 'raw';
         submitKeystroke: 'enter' | 'ctrl+enter';
         onnewchat: () => void;
         onselectchat: (id: string, matchIndex?: number | null) => void;
@@ -578,7 +582,7 @@
         bind:theme
         bind:fontSizeIndex
         bind:chatWidth
-        bind:smoothText
+        bind:smoothTextMode
         bind:submitKeystroke
         onclose={() => (showSettings = false)}
     />

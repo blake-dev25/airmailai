@@ -28,7 +28,7 @@ export interface UserSettings {
     theme: string;
     fontSizeIndex: number;
     chatWidth: number;
-    smoothText: boolean;
+    smoothTextMode: 'smooth' | 'boost-on-complete' | 'dump-on-complete' | 'raw';
     submitKeystroke: 'enter' | 'ctrl+enter';
     providerId: string;
     modelId: string;
@@ -42,7 +42,7 @@ export const SETTINGS_KEYS: (keyof UserSettings)[] = [
     'theme',
     'fontSizeIndex',
     'chatWidth',
-    'smoothText',
+    'smoothTextMode',
     'submitKeystroke',
     'providerId',
     'modelId',

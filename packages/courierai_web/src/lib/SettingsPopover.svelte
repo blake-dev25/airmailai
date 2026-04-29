@@ -11,14 +11,18 @@
         theme = $bindable(),
         fontSizeIndex = $bindable(),
         chatWidth = $bindable(),
-        smoothText = $bindable(),
+        smoothTextMode = $bindable(),
         submitKeystroke = $bindable(),
         onclose,
     }: {
         theme: string;
         fontSizeIndex: number;
         chatWidth: number;
-        smoothText: boolean;
+        smoothTextMode:
+            | 'smooth'
+            | 'boost-on-complete'
+            | 'dump-on-complete'
+            | 'raw';
         submitKeystroke: 'enter' | 'ctrl+enter';
         onclose: () => void;
     } = $props();
@@ -233,12 +237,12 @@
                     <option value="ctrl+enter">Control+Enter</option>
                 </select>
             </div>
-            <div class="row toggle-row">
+            <div class="row theme-row">
                 <div class="label-with-info">
-                    <label for="smooth-text">Smooth Text Loading</label>
+                    <label for="smooth-text-mode">Smooth Text Rendering</label>
                     <span
                         class="info-icon"
-                        aria-label="About smooth text loading"
+                        aria-label="About smooth text rendering"
                     >
                         <svg
                             width="13"
@@ -268,18 +272,26 @@
                             />
                         </svg>
                         <span class="info-tooltip"
-                            >When enabled, writes AI messages to the chat
-                            character by character for a smooth text effect like
-                            provider UIs. When disabled, prints text as it's
-                            received from the API.</span
+                            >Changes how AI messages are displayed. Sorted from
+                            slow/pretty to fast/less pretty.</span
                         >
                     </span>
                 </div>
-                <input
-                    type="checkbox"
-                    id="smooth-text"
-                    bind:checked={smoothText}
-                />
+                <select
+                    id="smooth-text-mode"
+                    bind:value={smoothTextMode}
+                >
+                    <option value="smooth">Normal rendering</option>
+                    <option value="boost-on-complete"
+                        >Fast rendering upon message completion</option
+                    >
+                    <option value="dump-on-complete"
+                        >Render all text upon message completion</option
+                    >
+                    <option value="raw"
+                        >Render text chunks as streamed from API</option
+                    >
+                </select>
             </div>
         </div>
 
@@ -463,12 +475,6 @@
         margin-top: -4px;
     }
 
-    .toggle-row {
-        flex-direction: row;
-        align-items: center;
-        justify-content: space-between;
-    }
-
     .label-with-info {
         display: flex;
         align-items: center;
@@ -510,14 +516,6 @@
 
     .info-icon:hover .info-tooltip {
         display: block;
-    }
-
-    input[type='checkbox'] {
-        width: 16px;
-        height: 16px;
-        cursor: pointer;
-        accent-color: var(--color-accent);
-        flex-shrink: 0;
     }
 
     /* API Keys table */
