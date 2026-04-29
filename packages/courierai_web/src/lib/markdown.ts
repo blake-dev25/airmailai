@@ -48,8 +48,8 @@ marked.use(markedFootnote());
 marked.use({
     extensions: [
         inlineExtension('highlight', '==', /^==([^=]+)==/, 'mark'),
-        inlineExtension('superscript', '^', /^\^([^^]+)\^/, 'sup'),
-        inlineExtension('subscript', '~', /^~([^~]+)~/, 'sub'),
+        inlineExtension('superscript', '^', /^\^([^^\s]+)\^/, 'sup'),
+        inlineExtension('subscript', '~', /^~([^~\s]+)~/, 'sub'),
     ],
 });
 marked.use({
