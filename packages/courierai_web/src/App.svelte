@@ -1,6 +1,7 @@
 <script lang="ts">
     import type { Attachment, ChatMeta, StoredChat } from '@courier/shared';
     import { onMount, untrack } from 'svelte';
+    import { detectBrowser } from './lib/browser';
     import ChatPanel from './lib/ChatPanel.svelte';
     import { FONT_SIZES, PROVIDERS } from './lib/constants';
     import ExtensionPrompt from './lib/ExtensionPrompt.svelte';
@@ -141,6 +142,9 @@
     let chatLoading = $state(false);
     let demoMode = $state(false);
     let showExtensionPrompt = $state(false);
+    let promptVariant = $state<
+        'no-extension' | 'unsupported-browser' | 'mobile'
+    >('no-extension');
 
     // Tracks which chat IDs have full messages loaded in memory
     const loadedChatIds = new Set<string>();
@@ -148,7 +152,16 @@
     const streamDisconnects = new Map<string, () => void>();
 
     waitForExtension().then(async (detected) => {
-        if (!detected) showExtensionPrompt = true;
+        if (!detected) {
+            const browser = detectBrowser();
+            promptVariant =
+                browser === 'mobile'
+                    ? 'mobile'
+                    : browser === 'other-desktop'
+                      ? 'unsupported-browser'
+                      : 'no-extension';
+            showExtensionPrompt = true;
+        }
         console.log(LOG, 'extension detected:', detected);
 
         const [settings, metas] = await Promise.all([
@@ -978,7 +991,7 @@
 </script>
 
 {#if showExtensionPrompt}
-    <ExtensionPrompt onlookaround={enterDemoMode} />
+    <ExtensionPrompt variant={promptVariant} onlookaround={enterDemoMode} />
 {/if}
 
 <div class="app">

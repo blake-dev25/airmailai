@@ -1,5 +1,16 @@
 <script lang="ts">
-    let { onlookaround }: { onlookaround: () => void } = $props();
+    type Variant = 'no-extension' | 'unsupported-browser' | 'mobile';
+
+    let {
+        variant,
+        onlookaround,
+    }: { variant: Variant; onlookaround: () => void } = $props();
+
+    const titles: Record<Variant, string> = {
+        'no-extension': 'Extension required',
+        'unsupported-browser': 'Browser not supported',
+        mobile: 'Desktop only',
+    };
 </script>
 
 <div class="backdrop" aria-hidden="true"></div>
@@ -7,38 +18,41 @@
 <div
     class="popover"
     role="dialog"
-    aria-label="Extension required"
+    aria-label={titles[variant]}
     aria-modal="true"
 >
-    <div class="icon">
-        <svg
-            width="32"
-            height="32"
-            viewBox="0 0 24 24"
-            fill="none"
-            role="img"
-            aria-hidden="true"
+    <h2>{titles[variant]}</h2>
+
+    {#if variant === 'no-extension'}
+        <p>
+            CourierAI needs the browser extension to store your API keys and
+            send requests. Install it, then reload this page.
+        </p>
+        <button
+            type="button"
+            class="primary"
+            onclick={() => window.location.reload()}>Reload</button
         >
-            <path
-                d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2v-4M9 21H5a2 2 0 0 1-2-2v-4m0 0h18"
-                stroke="currentColor"
-                stroke-width="1.75"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-            />
-        </svg>
-    </div>
-    <h2>Extension required</h2>
-    <p>
-        CourierAI needs the browser extension to store your API keys and send
-        requests. Install it, then reload this page.
-    </p>
-    <button type="button" class="primary" onclick={() => window.location.reload()}
-        >Reload</button
-    >
-    <button type="button" class="secondary" onclick={onlookaround}
-        >Let me look around (settings/text will not be saved)</button
-    >
+        <button type="button" class="secondary" onclick={onlookaround}
+            >Let me look around (settings/text will not be saved)</button
+        >
+    {:else if variant === 'unsupported-browser'}
+        <p>
+            CourierAI requires a Chromium browser (Chrome, Edge, Brave, etc)
+            with the CourierAI extension installed. See our <a
+                href="/faq"
+                class="inline-link">FAQ ↗</a
+            >
+        </p>
+        <button type="button" class="secondary" onclick={onlookaround}
+            >Let me look around (settings/text will not be saved)</button
+        >
+    {:else}
+        <p>
+            CourierAI requires a desktop browser extension, so it isn't
+            available on mobile. Please visit on desktop.
+        </p>
+    {/if}
 </div>
 
 <style>
@@ -65,13 +79,8 @@
         flex-direction: column;
         align-items: center;
         gap: 12px;
-        padding: 32px 28px;
+        padding: 28px;
         text-align: center;
-    }
-
-    .icon {
-        color: var(--color-accent);
-        margin-bottom: 4px;
     }
 
     h2 {
@@ -86,6 +95,15 @@
         font-size: 0.8125rem;
         color: var(--color-text-muted);
         line-height: 1.5;
+    }
+
+    .inline-link {
+        color: var(--color-accent);
+        text-decoration: none;
+    }
+
+    .inline-link:hover {
+        text-decoration: underline;
     }
 
     .primary {
