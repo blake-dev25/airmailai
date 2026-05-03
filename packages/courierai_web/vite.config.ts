@@ -5,11 +5,12 @@ import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 
 function readVersion(): string {
-    try {
-        return readFileSync(join(__dirname, '../../VERSION'), 'utf-8').trim();
-    } catch {
-        return '0.0.0.0';
+    for (const name of ['VERSION_NAME', 'VERSION']) {
+        try {
+            return readFileSync(join(__dirname, '../..', name), 'utf-8').trim();
+        } catch {}
     }
+    return '0.0.0.1';
 }
 
 export default defineConfig({

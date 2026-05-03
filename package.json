@@ -6,12 +6,15 @@
     "check": "NO_COLOR=1 biome check packages/",
     "format": "NO_COLOR=1 biome format packages/ --write && bunx prettier --write \"packages/**/*.svelte\"",
     "build": "bun scripts/gen-version.ts && bun run check && NO_COLOR=1 bun run --filter courierai_web build && NO_COLOR=1 bun run --filter courierai_ext zip",
+    "build:web": "bun scripts/gen-version.ts && bun run check && NO_COLOR=1 bun run --filter courierai_web build",
     "dev:web": "bun run check && NO_COLOR=1 bun run --filter courierai_web typecheck && NO_COLOR=1 bun run --filter courierai_web dev",
     "dev:ext": "bun run check && NO_COLOR=1 bun run --filter courierai_ext build",
     "deploy:web": "bun scripts/deploy-web.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.12",
+    "@types/bun": "1.3.13",
+    "@types/node": "^25.6.0",
     "prettier": "^3.8.3",
     "prettier-plugin-svelte": "^3.5.1"
   }

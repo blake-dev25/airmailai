@@ -2,16 +2,19 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { defineConfig } from 'wxt';
 
-function readVersion(): string {
+function readFile(name: string): string | undefined {
     try {
         return readFileSync(
-            join(import.meta.dirname, '../../VERSION'),
+            join(import.meta.dirname, '../..', name),
             'utf-8'
         ).trim();
     } catch {
-        return '0.0.0.0';
+        return undefined;
     }
 }
+
+const version = readFile('VERSION') ?? '0.0.0.1';
+const versionName = readFile('VERSION_NAME');
 
 export default defineConfig({
     vite: () => ({ logLevel: 'warn' }),
@@ -26,7 +29,10 @@ export default defineConfig({
     manifest: {
         name: 'CourierAI',
         description: 'Chat with LLMs using your own API keys',
-        version: readVersion(),
+        version,
+        ...(versionName && versionName !== version
+            ? { version_name: versionName }
+            : {}),
         permissions: ['storage'],
         externally_connectable: {
             matches: ['http://localhost:*/*', 'https://*.courierai.net/*'],
