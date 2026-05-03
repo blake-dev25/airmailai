@@ -1,5 +1,5 @@
 {
-  "name": "courier-ai",
+  "name": "courierai",
   "private": true,
   "workspaces": ["packages/*"],
   "scripts": {
