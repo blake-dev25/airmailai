@@ -1,4 +1,5 @@
 <script lang="ts">
+    import type { ModelTier } from './constants';
     import { PROVIDERS, THEMES } from './constants';
     import {
         checkApiKeys,
@@ -13,6 +14,7 @@
         chatWidth = $bindable(),
         smoothTextMode = $bindable(),
         submitKeystroke = $bindable(),
+        modelTier = $bindable(),
         onclose,
     }: {
         theme: string;
@@ -24,10 +26,26 @@
             | 'dump-on-complete'
             | 'raw';
         submitKeystroke: 'enter' | 'ctrl+enter';
+        modelTier: ModelTier;
         onclose: () => void;
     } = $props();
 
     let activeTab = $state<'keys' | 'ui' | 'changelog'>('keys');
+
+    let showPrevious = $derived(modelTier !== 'latest');
+    let showLegacy = $derived(modelTier === 'legacy');
+
+    function togglePrevious(checked: boolean) {
+        // Unchecking Previous also clears Legacy (cascade), since Legacy
+        // implies Previous.
+        modelTier = checked ? 'previous' : 'latest';
+    }
+
+    function toggleLegacy(checked: boolean) {
+        // Checking Legacy auto-enables Previous (cascade); unchecking it
+        // keeps Previous enabled.
+        modelTier = checked ? 'legacy' : 'previous';
+    }
 
     // Input values (cleared after saving — we never display stored keys)
     let keyInputs = $state<Record<string, string>>(
@@ -238,6 +256,18 @@
                 </select>
             </div>
             <div class="row theme-row">
+                <label for="show-previous">Show Previous Generation Models</label>
+                <input
+                    id="show-previous"
+                    type="checkbox"
+                    checked={showPrevious}
+                    onchange={(e) =>
+                        togglePrevious(
+                            (e.currentTarget as HTMLInputElement).checked,
+                        )}
+                />
+            </div>
+            <div class="row theme-row">
                 <div class="label-with-info">
                     <label for="smooth-text-mode">Smooth Text Rendering</label>
                     <span
@@ -293,6 +323,22 @@
                     >
                 </select>
             </div>
+
+            <details class="advanced">
+                <summary>Advanced</summary>
+                <div class="row theme-row">
+                    <label for="show-legacy">Show Legacy Models</label>
+                    <input
+                        id="show-legacy"
+                        type="checkbox"
+                        checked={showLegacy}
+                        onchange={(e) =>
+                            toggleLegacy(
+                                (e.currentTarget as HTMLInputElement).checked,
+                            )}
+                    />
+                </div>
+            </details>
         </div>
 
         <div
@@ -473,6 +519,55 @@
         font-size: 0.6875rem;
         color: var(--color-text);
         margin-top: -4px;
+    }
+
+    /* Checkbox — accent-tinted to match the rest of the UI */
+    input[type='checkbox'] {
+        flex-shrink: 0;
+        width: 16px;
+        height: 16px;
+        margin: 0;
+        accent-color: var(--color-accent);
+        cursor: pointer;
+    }
+
+    /* Advanced expando — sits at the bottom of the UI panel */
+    .advanced {
+        margin-top: -8px;
+        border-top: 1px solid var(--color-border);
+        padding-top: 16px;
+    }
+
+    .advanced > summary {
+        list-style: none;
+        cursor: pointer;
+        font-size: 0.75rem;
+        font-weight: 500;
+        color: var(--color-text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        padding: 2px 0;
+        user-select: none;
+        -webkit-user-select: none;
+    }
+
+    .advanced > summary::-webkit-details-marker {
+        display: none;
+    }
+
+    .advanced > summary::before {
+        content: '▸';
+        display: inline-block;
+        margin-right: 6px;
+        transition: transform 0.15s;
+    }
+
+    .advanced[open] > summary::before {
+        transform: rotate(90deg);
+    }
+
+    .advanced > .row {
+        margin-top: 14px;
     }
 
     .label-with-info {

@@ -3,7 +3,12 @@
     import { onMount, untrack } from 'svelte';
     import { detectBrowser } from './lib/browser';
     import ChatPanel from './lib/ChatPanel.svelte';
-    import { FONT_SIZES, PROVIDERS } from './lib/constants';
+    import {
+        FONT_SIZES,
+        filterProvidersByTier,
+        type ModelTier,
+        PROVIDERS,
+    } from './lib/constants';
     import ExtensionPrompt from './lib/ExtensionPrompt.svelte';
     import {
         deleteChat,
@@ -94,6 +99,9 @@
     // Submit keystroke — 'enter' or 'ctrl+enter'
     let submitKeystroke = $state<'enter' | 'ctrl+enter'>('enter');
 
+    // Model tier — controls which models surface in the picker
+    let modelTier = $state<ModelTier>('latest');
+
     // Model config
     const defaultModel = PROVIDERS[0].models[1]; // Sonnet as default
     let providerId = $state(PROVIDERS[0].id);
@@ -135,6 +143,38 @@
     let activeTokens = $derived(
         chats.find((c) => c.id === activeChatId)?.tokens ?? null,
     );
+
+    // When the user changes tier and the active model is no longer in the
+    // filtered list, snap to the first model of the first filtered provider.
+    // Skip the snap when the active chat already has messages — the stored
+    // model is the source of truth and stays visible even if out-of-tier.
+    // Plain let (not $state) — non-reactive marker for the effect to compare.
+    let lastSnappedTier: ModelTier | null = null;
+    $effect(() => {
+        const tier = modelTier;
+        if (!settingsLoaded) return;
+        if (lastSnappedTier === null) {
+            lastSnappedTier = tier;
+            return;
+        }
+        if (tier === lastSnappedTier) return;
+        lastSnappedTier = tier;
+        untrack(() => {
+            const active = chats.find((c) => c.id === activeChatId);
+            if ((active?.messages.length ?? 0) > 0) return;
+            const filtered = filterProvidersByTier(PROVIDERS, tier);
+            const provider = filtered.find((p) => p.id === providerId);
+            if (!provider) {
+                const fallback = filtered[0] ?? PROVIDERS[0];
+                providerId = fallback.id;
+                modelId = fallback.models[0].id;
+                return;
+            }
+            if (!provider.models.find((m) => m.id === modelId)) {
+                modelId = provider.models[0].id;
+            }
+        });
+    });
 
     // --- Storage ---
 
@@ -178,6 +218,7 @@
             smoothTextMode = settings.smoothTextMode;
         if (settings.submitKeystroke !== undefined)
             submitKeystroke = settings.submitKeystroke;
+        if (settings.modelTier !== undefined) modelTier = settings.modelTier;
         if (settings.providerId) providerId = settings.providerId;
         if (settings.modelId) modelId = settings.modelId;
         if (settings.temperature !== undefined)
@@ -309,6 +350,7 @@
             chatWidth,
             smoothTextMode,
             submitKeystroke,
+            modelTier,
             providerId,
             modelId,
             temperature,
@@ -1010,6 +1052,7 @@
         bind:chatWidth
         bind:smoothTextMode
         bind:submitKeystroke
+        bind:modelTier
         onnewchat={newChat}
         onselectchat={selectChat}
         ondeletechat={removeChat}
@@ -1039,6 +1082,8 @@
         onextensionneeded={requestExtension}
     />
     <ModelConfig
+        providers={PROVIDERS}
+        {modelTier}
         bind:providerId
         bind:modelId
         bind:temperature

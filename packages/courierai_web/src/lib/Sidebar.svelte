@@ -1,4 +1,5 @@
 <script lang="ts">
+    import type { ModelTier } from './constants';
     import SettingsPopover from './SettingsPopover.svelte';
 
     interface Chat {
@@ -23,6 +24,7 @@
         chatWidth = $bindable(),
         smoothTextMode = $bindable(),
         submitKeystroke = $bindable(),
+        modelTier = $bindable(),
         onnewchat,
         onselectchat,
         ondeletechat,
@@ -58,6 +60,7 @@
             | 'dump-on-complete'
             | 'raw';
         submitKeystroke: 'enter' | 'ctrl+enter';
+        modelTier: ModelTier;
         onnewchat: () => void;
         onselectchat: (id: string, matchIndex?: number | null) => void;
         ondeletechat: (id: string) => void;
@@ -584,6 +587,7 @@
         bind:chatWidth
         bind:smoothTextMode
         bind:submitKeystroke
+        bind:modelTier
         onclose={() => (showSettings = false)}
     />
 {/if}

@@ -32,3 +32,5 @@ Thumbs.db
 # deploy scratch
 .deploy-tmp/
 scripts/deploy-web.ts
+scripts/update-model-list.ts
+scripts/overrides.ts

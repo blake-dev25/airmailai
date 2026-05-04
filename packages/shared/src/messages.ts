@@ -30,6 +30,7 @@ export interface UserSettings {
     chatWidth: number;
     smoothTextMode: 'smooth' | 'boost-on-complete' | 'dump-on-complete' | 'raw';
     submitKeystroke: 'enter' | 'ctrl+enter';
+    modelTier: 'latest' | 'previous' | 'legacy';
     providerId: string;
     modelId: string;
     temperature: number;
@@ -44,6 +45,7 @@ export const SETTINGS_KEYS: (keyof UserSettings)[] = [
     'chatWidth',
     'smoothTextMode',
     'submitKeystroke',
+    'modelTier',
     'providerId',
     'modelId',
     'temperature',

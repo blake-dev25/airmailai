@@ -1,8 +1,16 @@
 <script lang="ts">
     import { untrack } from 'svelte';
-    import { PROVIDERS } from './constants';
+    import {
+        filterProvidersByTier,
+        MODEL_TIERS,
+        type ModelOption,
+        type ModelTier,
+        type ProviderOption,
+    } from './constants';
 
     let {
+        providers,
+        modelTier,
         providerId = $bindable(),
         modelId = $bindable(),
         temperature = $bindable(),
@@ -11,6 +19,8 @@
         adaptiveThinking = $bindable(),
         tokens = null,
     }: {
+        providers: ProviderOption[];
+        modelTier: ModelTier;
         providerId: string;
         modelId: string;
         temperature: number;
@@ -19,6 +29,70 @@
         adaptiveThinking: boolean;
         tokens?: { input: number; output: number } | null;
     } = $props();
+
+    const TIER_ORDER: ModelTier[] = ['latest', 'previous', 'legacy'];
+    const TIER_LABELS: Record<ModelTier, string> = {
+        latest: 'Latest',
+        previous: 'Previous',
+        legacy: 'Legacy',
+    };
+
+    function getTier(id: string): ModelTier {
+        return MODEL_TIERS[id] ?? 'legacy';
+    }
+
+    let filteredProviders = $derived(
+        filterProvidersByTier(providers, modelTier),
+    );
+
+    let providerOptions = $derived.by(() => {
+        // Ensure the chat's stored provider stays visible even if it has no
+        // in-tier models — otherwise the select would show a blank value.
+        const out = [...filteredProviders];
+        if (!out.find((p) => p.id === providerId)) {
+            const stored = providers.find((p) => p.id === providerId);
+            if (stored) out.push(stored);
+        }
+        return out;
+    });
+
+    // Tier-grouped, sorted options for the model dropdown. If the chat's
+    // stored model is out-of-tier, it gets its own group at the top so the
+    // select can display it (and the user can revert to it by closing the
+    // dropdown without picking).
+    let modelGroups = $derived.by(() => {
+        const provider =
+            providerOptions.find((p) => p.id === providerId) ??
+            providerOptions[0];
+        if (!provider) return [] as Array<{ label: string; models: ModelOption[] }>;
+
+        const inTier = new Set(
+            filteredProviders
+                .find((p) => p.id === provider.id)
+                ?.models.map((m) => m.id) ?? [],
+        );
+
+        const groups: Array<{ label: string; models: ModelOption[] }> = [];
+        const stored = provider.models.find((m) => m.id === modelId);
+        if (stored && !inTier.has(stored.id)) {
+            groups.push({ label: 'From this chat', models: [stored] });
+        }
+
+        const byTier = new Map<ModelTier, ModelOption[]>();
+        for (const m of provider.models) {
+            if (!inTier.has(m.id)) continue;
+            const tier = getTier(m.id);
+            if (!byTier.has(tier)) byTier.set(tier, []);
+            byTier.get(tier)!.push(m);
+        }
+        for (const tier of TIER_ORDER) {
+            const models = byTier.get(tier);
+            if (models?.length) {
+                groups.push({ label: TIER_LABELS[tier], models });
+            }
+        }
+        return groups;
+    });
 
     let badgeEl = $state<HTMLSpanElement | undefined>(undefined);
     let badgeFocused = false;
@@ -104,7 +178,7 @@
     }
 
     let currentProvider = $derived(
-        PROVIDERS.find((p) => p.id === providerId) ?? PROVIDERS[0],
+        providers.find((p) => p.id === providerId) ?? providers[0],
     );
     let currentModel = $derived(
         currentProvider.models.find((m) => m.id === modelId) ??
@@ -125,16 +199,16 @@
 
     function onProviderChange(e: Event) {
         providerId = (e.currentTarget as HTMLSelectElement).value;
-        const provider = PROVIDERS.find((p) => p.id === providerId);
-        if (provider) {
-            modelId = provider.models[0].id;
-            maxTokens = provider.models[0].params.defaultMaxTokens;
-            if (provider.models[0].params.defaultTemperature !== undefined)
-                temperature = provider.models[0].params.defaultTemperature;
-            thinkingLevel =
-                provider.models[0].params.thinking?.defaultLevel ?? 'none';
-            adaptiveThinking =
-                provider.models[0].params.thinking?.adaptive !== undefined;
+        const filtered = filteredProviders.find((p) => p.id === providerId);
+        const fallback = providers.find((p) => p.id === providerId);
+        const first = filtered?.models[0] ?? fallback?.models[0];
+        if (first) {
+            modelId = first.id;
+            maxTokens = first.params.defaultMaxTokens;
+            if (first.params.defaultTemperature !== undefined)
+                temperature = first.params.defaultTemperature;
+            thinkingLevel = first.params.thinking?.defaultLevel ?? 'none';
+            adaptiveThinking = first.params.thinking?.adaptive !== undefined;
         }
     }
 
@@ -209,7 +283,7 @@
                     value={providerId}
                     onchange={onProviderChange}
                 >
-                    {#each PROVIDERS as provider}
+                    {#each providerOptions as provider}
                         <option value={provider.id}>{provider.name}</option>
                     {/each}
                 </select>
@@ -236,9 +310,19 @@
             <label for="model">Model</label>
             <div class="select-wrap">
                 <select id="model" value={modelId} onchange={onModelChange}>
-                    {#each currentProvider.models as model}
-                        <option value={model.id}>{model.name}</option>
-                    {/each}
+                    {#if modelGroups.length === 1}
+                        {#each modelGroups[0].models as model}
+                            <option value={model.id}>{model.name}</option>
+                        {/each}
+                    {:else}
+                        {#each modelGroups as group}
+                            <optgroup label={group.label}>
+                                {#each group.models as model}
+                                    <option value={model.id}>{model.name}</option>
+                                {/each}
+                            </optgroup>
+                        {/each}
+                    {/if}
                 </select>
                 <svg
                     class="select-arrow"
@@ -411,12 +495,14 @@
                     {/if}
                 </span>
             </div>
-            <div class="detail-row">
-                <span class="detail-label">Knowledge Cutoff</span>
-                <span class="detail-value"
-                    >{currentModel.params.knowledgeCutoff}</span
-                >
-            </div>
+            {#if currentModel.params.knowledgeCutoff}
+                <div class="detail-row">
+                    <span class="detail-label">Knowledge Cutoff</span>
+                    <span class="detail-value"
+                        >{currentModel.params.knowledgeCutoff}</span
+                    >
+                </div>
+            {/if}
         </div>
     </div>
 
