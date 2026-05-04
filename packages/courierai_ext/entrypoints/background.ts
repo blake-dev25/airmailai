@@ -1,8 +1,10 @@
 import type {
+    ChatMessage,
     ExtensionRequest,
     ExtensionResponse,
     StorageRequest,
     StorageResponse,
+    StreamHandlers,
     UserSettings,
 } from '@courier/shared';
 import { SETTINGS_KEYS } from '@courier/shared';
@@ -19,6 +21,21 @@ import {
     dbLoadChatsByIds,
     dbSaveChat,
 } from '../storage/db';
+
+type StreamFn = (
+    apiKey: string,
+    model: string,
+    messages: ChatMessage[],
+    params: Record<string, unknown>,
+    handlers: StreamHandlers,
+    signal?: AbortSignal
+) => Promise<void>;
+
+const PROVIDERS: Record<string, StreamFn> = {
+    anthropic: streamAnthropic,
+    openai: streamOpenAI,
+    google: streamGoogle,
+};
 
 const LOG = '[courier:ext]';
 
@@ -197,63 +214,32 @@ export default defineBackground(() => {
                 });
             }
 
-            switch (request.provider) {
-                case 'anthropic':
-                    await streamAnthropic(
-                        apiKey,
-                        request.model,
-                        request.messages,
-                        request.params ?? {},
-                        (text) => send({ type: 'chunk', content: text }),
-                        (usage) =>
-                            send({ type: 'done', usage: usage ?? undefined }),
-                        (msg) => send({ type: 'error', message: msg }),
-                        (text) =>
-                            send({ type: 'thinking_chunk', content: text }),
-                        controller.signal
-                    );
-                    break;
-                case 'openai':
-                    await streamOpenAI(
-                        apiKey,
-                        request.model,
-                        request.messages,
-                        request.params ?? {},
-                        (text) => send({ type: 'chunk', content: text }),
-                        (usage) =>
-                            send({ type: 'done', usage: usage ?? undefined }),
-                        (msg) => send({ type: 'error', message: msg }),
-                        (text) =>
-                            send({ type: 'thinking_chunk', content: text }),
-                        controller.signal
-                    );
-                    break;
-                case 'google':
-                    await streamGoogle(
-                        apiKey,
-                        request.model,
-                        request.messages,
-                        request.params ?? {},
-                        (text) => send({ type: 'chunk', content: text }),
-                        (usage) =>
-                            send({ type: 'done', usage: usage ?? undefined }),
-                        (msg) => send({ type: 'error', message: msg }),
-                        (text) =>
-                            send({ type: 'thinking_chunk', content: text }),
-                        controller.signal
-                    );
-                    break;
-                default:
-                    console.error(
-                        LOG,
-                        'unsupported provider',
-                        request.provider
-                    );
-                    send({
-                        type: 'error',
-                        message: `Unsupported provider: ${request.provider}`,
-                    });
+            const stream = PROVIDERS[request.provider];
+            if (!stream) {
+                console.error(LOG, 'unsupported provider', request.provider);
+                send({
+                    type: 'error',
+                    message: `Unsupported provider: ${request.provider}`,
+                });
+                return;
             }
+
+            const handlers: StreamHandlers = {
+                onChunk: (text) => send({ type: 'chunk', content: text }),
+                onThinking: (text) =>
+                    send({ type: 'thinking_chunk', content: text }),
+                onDone: (usage) => send({ type: 'done', usage }),
+                onError: (msg) => send({ type: 'error', message: msg }),
+            };
+
+            await stream(
+                apiKey,
+                request.model,
+                request.messages,
+                request.params ?? {},
+                handlers,
+                controller.signal
+            );
         });
     });
 });

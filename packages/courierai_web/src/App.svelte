@@ -1,5 +1,11 @@
 <script lang="ts">
-    import type { Attachment, ChatMeta, StoredChat } from '@courier/shared';
+    import type {
+        Attachment,
+        ChatMeta,
+        StoredChat,
+        UserSettings,
+    } from '@courier/shared';
+    import { SETTINGS_KEYS } from '@courier/shared';
     import { onMount, untrack } from 'svelte';
     import { detectBrowser } from './lib/browser';
     import ChatPanel from './lib/ChatPanel.svelte';
@@ -106,7 +112,9 @@
     const defaultModel = PROVIDERS[0].models[1]; // Sonnet as default
     let providerId = $state(PROVIDERS[0].id);
     let modelId = $state(defaultModel.id);
-    let temperature = $state<number>(defaultModel.params.defaultTemperature ?? 1);
+    let temperature = $state<number>(
+        defaultModel.params.defaultTemperature ?? 1,
+    );
     let maxTokens = $state(defaultModel.params.defaultMaxTokens);
     let thinkingLevel = $state<string>(
         defaultModel.params.thinking?.defaultLevel ?? 'none',
@@ -118,9 +126,9 @@
 
     // Chats
     let chats = $state<Chat[]>([]);
-    // All chat metas sorted newest-first — used to track total count for pagination
-    let allMetas = $state<ChatMeta[]>([]);
-    let hasMoreChats = $derived(chats.length < allMetas.length);
+    // Metas for chats not yet loaded into `chats` (older pages). Sorted newest-first.
+    let unloadedMetas = $state<ChatMeta[]>([]);
+    let hasMoreChats = $derived(unloadedMetas.length > 0);
     let isLoadingMore = $state(false);
     let activeChatId = $state<string | null>(null);
     let streamingChatIds = $state<string[]>([]);
@@ -186,8 +194,6 @@
         'no-extension' | 'unsupported-browser' | 'mobile'
     >('no-extension');
 
-    // Tracks which chat IDs have full messages loaded in memory
-    const loadedChatIds = new Set<string>();
     // Disconnect functions for active streams — call to abort a stream early
     const streamDisconnects = new Map<string, () => void>();
 
@@ -210,42 +216,68 @@
         ]);
 
         console.log(LOG, 'settings loaded', settings);
-        if (settings.theme) theme = settings.theme;
-        if (settings.fontSizeIndex !== undefined)
-            fontSizeIndex = settings.fontSizeIndex;
-        if (settings.chatWidth !== undefined) chatWidth = settings.chatWidth;
-        if (settings.smoothTextMode !== undefined)
-            smoothTextMode = settings.smoothTextMode;
-        if (settings.submitKeystroke !== undefined)
-            submitKeystroke = settings.submitKeystroke;
-        if (settings.modelTier !== undefined) modelTier = settings.modelTier;
-        if (settings.providerId) providerId = settings.providerId;
-        if (settings.modelId) modelId = settings.modelId;
-        if (settings.temperature !== undefined)
-            temperature = settings.temperature;
-        if (settings.maxTokens !== undefined) maxTokens = settings.maxTokens;
-        if (settings.thinkingLevel !== undefined)
-            thinkingLevel = settings.thinkingLevel;
-        if (settings.adaptiveThinking !== undefined)
-            adaptiveThinking = settings.adaptiveThinking;
+        // The mapped type forces every UserSettings field to have a setter —
+        // adding a field to UserSettings without listing it here is a TS error.
+        const setSetting: {
+            [K in keyof UserSettings]: (v: UserSettings[K]) => void;
+        } = {
+            theme: (v) => {
+                theme = v;
+            },
+            fontSizeIndex: (v) => {
+                fontSizeIndex = v;
+            },
+            chatWidth: (v) => {
+                chatWidth = v;
+            },
+            smoothTextMode: (v) => {
+                smoothTextMode = v;
+            },
+            submitKeystroke: (v) => {
+                submitKeystroke = v;
+            },
+            modelTier: (v) => {
+                modelTier = v;
+            },
+            providerId: (v) => {
+                providerId = v;
+            },
+            modelId: (v) => {
+                modelId = v;
+            },
+            temperature: (v) => {
+                temperature = v;
+            },
+            maxTokens: (v) => {
+                maxTokens = v;
+            },
+            thinkingLevel: (v) => {
+                thinkingLevel = v;
+            },
+            adaptiveThinking: (v) => {
+                adaptiveThinking = v;
+            },
+        };
+        for (const key of SETTINGS_KEYS) {
+            const v = settings[key];
+            if (v !== undefined) (setSetting[key] as (val: unknown) => void)(v);
+        }
 
         settingsLoaded = true;
 
         const sorted = metas.sort((a, b) => b.createdAt - a.createdAt);
-        allMetas = sorted;
         console.log(LOG, 'chat metas loaded', `${sorted.length} chats`);
 
-        // Load first page of full chats
-        const firstIds = sorted.slice(0, PAGE_SIZE).map((t) => t.id);
-        if (firstIds.length > 0) {
-            const fullChats = await loadChatsByIds(firstIds);
+        const firstPage = sorted.slice(0, PAGE_SIZE);
+        unloadedMetas = sorted.slice(PAGE_SIZE);
+
+        if (firstPage.length > 0) {
+            const fullChats = await loadChatsByIds(firstPage.map((m) => m.id));
             const byId = new Map(fullChats.map((c) => [c.id, c]));
-            const metaById = new Map(sorted.map((t) => [t.id, t]));
-            chats = firstIds
-                .map((id) => {
-                    const stored = byId.get(id);
-                    const meta = metaById.get(id);
-                    if (!stored || !meta) return null;
+            chats = firstPage
+                .map((meta) => {
+                    const stored = byId.get(meta.id);
+                    if (!stored) return null;
                     return {
                         ...meta,
                         messages: stored.messages,
@@ -253,26 +285,20 @@
                     };
                 })
                 .filter((c): c is Chat => c !== null);
-            for (const id of firstIds) loadedChatIds.add(id);
             console.log(LOG, 'first page loaded', `${chats.length} chats`);
         }
     });
 
     async function loadMoreChats() {
-        if (isLoadingMore || !hasMoreChats) return;
+        if (isLoadingMore || unloadedMetas.length === 0) return;
         isLoadingMore = true;
-        // chats.length == number loaded so far == offset into allMetas
-        const nextIds = allMetas
-            .slice(chats.length, chats.length + PAGE_SIZE)
-            .map((t) => t.id);
-        const fullChats = await loadChatsByIds(nextIds);
+        const nextPage = unloadedMetas.slice(0, PAGE_SIZE);
+        const fullChats = await loadChatsByIds(nextPage.map((m) => m.id));
         const byId = new Map(fullChats.map((c) => [c.id, c]));
-        const metaById = new Map(allMetas.map((t) => [t.id, t]));
-        const newChats = nextIds
-            .map((id) => {
-                const stored = byId.get(id);
-                const meta = metaById.get(id);
-                if (!stored || !meta) return null;
+        const newChats = nextPage
+            .map((meta) => {
+                const stored = byId.get(meta.id);
+                if (!stored) return null;
                 return {
                     ...meta,
                     messages: stored.messages,
@@ -281,7 +307,7 @@
             })
             .filter((c): c is Chat => c !== null);
         chats = [...chats, ...newChats];
-        for (const id of nextIds) loadedChatIds.add(id);
+        unloadedMetas = unloadedMetas.slice(PAGE_SIZE);
         console.log(
             LOG,
             'loaded more chats',
@@ -344,7 +370,7 @@
 
     // Debounced save — fires 300ms after any settings change (but not during initial load)
     $effect(() => {
-        const snapshot = {
+        const snapshot: UserSettings = {
             theme,
             fontSizeIndex,
             chatWidth,
@@ -429,7 +455,7 @@
             '- `15 % 5` → 0 (15 divides evenly by 5)\n' +
             '- `7 % 3` → 1 (7 ÷ 3 is 2 remainder 1)\n' +
             '- `10 % 3` → 1\n\n' +
-            "So `i % 15 == 0` is true exactly when `i` is a multiple of 15 — i.e. divisible by *both* 3 and 5. That's why we check it **first**: otherwise multiples of 15 would match the `% 3` branch and print \"Fizz\", and we'd never reach the FizzBuzz case.\n\n" +
+            'So `i % 15 == 0` is true exactly when `i` is a multiple of 15 — i.e. divisible by *both* 3 and 5. That\'s why we check it **first**: otherwise multiples of 15 would match the `% 3` branch and print "Fizz", and we\'d never reach the FizzBuzz case.\n\n' +
             'Rule of thumb: check the most specific condition first, then fall back to the more general ones.';
         const skyBlue =
             'Short answer: **Rayleigh scattering**.\n\n' +
@@ -496,10 +522,7 @@
             adaptiveThinking,
         };
         chats = [demo1, demo2, demo3];
-        allMetas = chats.map(chatToMeta);
-        loadedChatIds.add('demo-1');
-        loadedChatIds.add('demo-2');
-        loadedChatIds.add('demo-3');
+        unloadedMetas = [];
         activeChatId = 'demo-1';
         demoMode = true;
         showExtensionPrompt = false;
@@ -532,22 +555,6 @@
             },
             ...chats,
         ];
-        allMetas = [
-            {
-                id,
-                title: 'New Chat',
-                createdAt: now,
-                providerId,
-                modelId,
-                temperature,
-                maxTokens,
-                thinkingLevel,
-                adaptiveThinking,
-                systemPrompt,
-            },
-            ...allMetas,
-        ];
-        loadedChatIds.add(id);
         activeChatId = id;
     }
 
@@ -556,58 +563,71 @@
         console.log(LOG, 'select chat', id);
         activeChatId = id;
 
-        // Restore model config + system prompt from saved meta
-        const meta = allMetas.find((t) => t.id === id);
-        if (meta) {
-            providerId = meta.providerId;
-            modelId = meta.modelId;
-            temperature = meta.temperature;
-            maxTokens = meta.maxTokens;
-            thinkingLevel = meta.thinkingLevel;
-            adaptiveThinking = meta.adaptiveThinking ?? true;
-            systemPrompt = meta.systemPrompt;
+        // Restore model config + system prompt from whichever side has the meta.
+        const loaded = chats.find((c) => c.id === id);
+        if (loaded) {
+            providerId = loaded.providerId;
+            modelId = loaded.modelId;
+            temperature = loaded.temperature;
+            maxTokens = loaded.maxTokens;
+            thinkingLevel = loaded.thinkingLevel;
+            adaptiveThinking = loaded.adaptiveThinking ?? true;
+            systemPrompt = loaded.systemPrompt;
+            return;
         }
 
-        if (loadedChatIds.has(id)) return;
+        const meta = unloadedMetas.find((t) => t.id === id);
+        if (!meta) return;
+        providerId = meta.providerId;
+        modelId = meta.modelId;
+        temperature = meta.temperature;
+        maxTokens = meta.maxTokens;
+        thinkingLevel = meta.thinkingLevel;
+        adaptiveThinking = meta.adaptiveThinking ?? true;
+        systemPrompt = meta.systemPrompt;
 
-        // Background load hasn't finished yet — fetch this chat on demand
         chatLoading = true;
         const full = await loadChat(id);
         chatLoading = false;
 
         if (full && activeChatId === id) {
-            loadedChatIds.add(full.id);
-            chats = chats.map((c) =>
-                c.id === id
-                    ? { ...c, messages: full.messages, tokens: full.tokens }
-                    : c,
-            );
+            chats = [
+                ...chats,
+                {
+                    ...meta,
+                    messages: full.messages,
+                    ...(full.tokens ? { tokens: full.tokens } : {}),
+                },
+            ];
+            unloadedMetas = unloadedMetas.filter((m) => m.id !== id);
         }
+    }
+
+    function clearChatError(id: string) {
+        if (!chatErrors[id]) return;
+        const { [id]: _, ...rest } = chatErrors;
+        chatErrors = rest;
     }
 
     function removeChat(id: string) {
         console.log(LOG, 'remove chat', id);
         streamDisconnects.get(id)?.();
         streamDisconnects.delete(id);
-        loadedChatIds.delete(id);
         chats = chats.filter((c) => c.id !== id);
-        allMetas = allMetas.filter((t) => t.id !== id);
+        unloadedMetas = unloadedMetas.filter((t) => t.id !== id);
         if (activeChatId === id) {
             activeChatId = null;
             systemPrompt = '';
         }
         streamingChatIds = streamingChatIds.filter((sid) => sid !== id);
-        if (chatErrors[id]) {
-            const { [id]: _, ...rest } = chatErrors;
-            chatErrors = rest;
-        }
+        clearChatError(id);
         if (!demoMode) deleteChat(id).catch(console.error);
     }
 
     function renameChat(id: string, newTitle: string) {
         console.log(LOG, 'rename chat', id, newTitle);
         chats = chats.map((c) => (c.id === id ? { ...c, title: newTitle } : c));
-        allMetas = allMetas.map((m) =>
+        unloadedMetas = unloadedMetas.map((m) =>
             m.id === id ? { ...m, title: newTitle } : m,
         );
         const updated = chats.find((c) => c.id === id);
@@ -622,7 +642,7 @@
         if (!chat) return;
 
         let messages = chat.messages;
-        if (!loadedChatIds.has(id) || messages.length === 0) {
+        if (messages.length === 0) {
             const full = await loadChat(id);
             if (full) messages = full.messages;
         }
@@ -656,6 +676,118 @@
         a.click();
         URL.revokeObjectURL(url);
         console.log(LOG, 'exported chat', id, filename);
+    }
+
+    // Streams an assistant response into the trailing placeholder of `chatId`.
+    // Caller is responsible for prepping the chat: messages must end with an
+    // empty assistant message, streamingChatIds must include chatId, and any
+    // prior stream for this chat must be disconnected.
+    function streamForChat(chatId: string) {
+        const snap = chats.find((c) => c.id === chatId);
+        if (!snap) return;
+
+        const history = snap.messages
+            .slice(0, -1)
+            .map(({ role, content, attachments }) => ({
+                role,
+                content,
+                ...(attachments ? { attachments } : {}),
+            }));
+        const apiMessages = snap.systemPrompt.trim()
+            ? [
+                  { role: 'system' as const, content: snap.systemPrompt },
+                  ...history,
+              ]
+            : history;
+
+        const modelParams = PROVIDERS.find(
+            (p) => p.id === snap.providerId,
+        )?.models.find((m) => m.id === snap.modelId)?.params;
+
+        const updateLast = (mutate: (last: Message) => Message) => {
+            chats = chats.map((c) => {
+                if (c.id !== chatId) return c;
+                const msgs = [...c.messages];
+                msgs[msgs.length - 1] = mutate(msgs[msgs.length - 1]);
+                return { ...c, messages: msgs };
+            });
+        };
+
+        const persistChat = () => {
+            const c = chats.find((c) => c.id === chatId);
+            if (c)
+                saveChat(chatToStored(c), chatToMeta(c)).catch(console.error);
+        };
+
+        const finishStream = () => {
+            streamDisconnects.delete(chatId);
+            streamingChatIds = streamingChatIds.filter((id) => id !== chatId);
+        };
+
+        const disconnect = sendToExtension(
+            {
+                provider: snap.providerId,
+                model: snap.modelId,
+                messages: apiMessages,
+                params: {
+                    ...(modelParams?.temperatureMax !== undefined
+                        ? { temperature: snap.temperature }
+                        : {}),
+                    maxTokens: snap.maxTokens,
+                    thinkingLevel: snap.thinkingLevel,
+                    adaptiveThinking: snap.adaptiveThinking,
+                },
+            },
+            {
+                onChunk: (chunk) => {
+                    updateLast((last) => ({
+                        ...last,
+                        content: last.content + chunk,
+                    }));
+                },
+                onThinking: (chunk) => {
+                    updateLast((last) => ({
+                        ...last,
+                        thinking: (last.thinking ?? '') + chunk,
+                    }));
+                },
+                onDone: (usage) => {
+                    finishStream();
+                    if (usage) {
+                        chats = chats.map((c) =>
+                            c.id === chatId
+                                ? {
+                                      ...c,
+                                      tokens: {
+                                          input: usage.inputTokens,
+                                          output: usage.outputTokens,
+                                      },
+                                  }
+                                : c,
+                        );
+                    }
+                    persistChat();
+                },
+                onError: (msg) => {
+                    finishStream();
+                    chatErrors = {
+                        ...chatErrors,
+                        [chatId]: `API Error: ${msg}`,
+                    };
+                    // Discard the placeholder only if no content arrived —
+                    // keep partial content otherwise.
+                    chats = chats.map((c) => {
+                        if (c.id !== chatId) return c;
+                        const last = c.messages[c.messages.length - 1];
+                        return last?.content
+                            ? c
+                            : { ...c, messages: c.messages.slice(0, -1) };
+                    });
+                    persistChat();
+                },
+            },
+        );
+        streamDisconnects.set(chatId, disconnect);
     }
 
     function sendMessage(content: string, attachments?: Attachment[]) {
@@ -694,22 +826,6 @@
                 },
                 ...chats,
             ];
-            allMetas = [
-                {
-                    id: chatId,
-                    title,
-                    createdAt: now,
-                    providerId,
-                    modelId,
-                    temperature,
-                    maxTokens,
-                    thinkingLevel,
-                    adaptiveThinking,
-                    systemPrompt,
-                },
-                ...allMetas,
-            ];
-            loadedChatIds.add(chatId);
             activeChatId = chatId;
         } else {
             // Update config and rename if this is the first message
@@ -730,142 +846,29 @@
                     ...(isFirst ? { title: content.slice(0, 40) } : {}),
                 };
             });
-            allMetas = allMetas.map((t) => {
-                if (t.id !== chatId) return t;
-                return {
-                    ...t,
-                    providerId,
-                    modelId,
-                    temperature,
-                    maxTokens,
-                    thinkingLevel,
-                    adaptiveThinking,
-                    systemPrompt,
-                    ...(isFirst ? { title: content.slice(0, 40) } : {}),
-                };
-            });
         }
 
-        // Add user message, then empty assistant placeholder for streaming
         const userMsg: Message = {
             role: 'user',
             content,
             ...(attachments?.length ? { attachments } : {}),
         };
-        const assistantMsg: Message = { role: 'assistant', content: '' };
         chats = chats.map((c) =>
             c.id === chatId
-                ? { ...c, messages: [...c.messages, userMsg, assistantMsg] }
+                ? {
+                      ...c,
+                      messages: [
+                          ...c.messages,
+                          userMsg,
+                          { role: 'assistant', content: '' },
+                      ],
+                  }
                 : c,
         );
 
         streamingChatIds = [...streamingChatIds, chatId];
-        // Clear any prior error for this chat
-        if (chatErrors[chatId]) {
-            const { [chatId]: _, ...rest } = chatErrors;
-            chatErrors = rest;
-        }
-
-        const chatSnapshot = chats.find((c) => c.id === chatId)!;
-
-        // Build message history for the API (exclude the empty placeholder, strip thinking)
-        const history = chatSnapshot.messages
-            .slice(0, -1)
-            .map(({ role, content, attachments }) => ({
-                role,
-                content,
-                ...(attachments ? { attachments } : {}),
-            }));
-        const apiMessages = systemPrompt.trim()
-            ? [{ role: 'system' as const, content: systemPrompt }, ...history]
-            : history;
-
-        const modelParams = PROVIDERS.find((p) => p.id === providerId)
-            ?.models.find((m) => m.id === modelId)?.params;
-        const disconnect = sendToExtension(
-            {
-                provider: providerId,
-                model: modelId,
-                messages: apiMessages,
-                params: {
-                    ...(modelParams?.temperatureMax !== undefined ? { temperature } : {}),
-                    maxTokens,
-                    thinkingLevel,
-                    adaptiveThinking,
-                },
-            },
-            (chunk) => {
-                // Append chunk to the last message in the target chat
-                chats = chats.map((c) => {
-                    if (c.id !== chatId) return c;
-                    const msgs = [...c.messages];
-                    msgs[msgs.length - 1] = {
-                        ...msgs[msgs.length - 1],
-                        content: msgs[msgs.length - 1].content + chunk,
-                    };
-                    return { ...c, messages: msgs };
-                });
-            },
-            (usage) => {
-                streamDisconnects.delete(chatId as string);
-                streamingChatIds = streamingChatIds.filter(
-                    (id) => id !== chatId,
-                );
-                chats = chats.map((c) => {
-                    if (c.id !== chatId) return c;
-                    return usage
-                        ? {
-                              ...c,
-                              tokens: {
-                                  input: usage.inputTokens,
-                                  output: usage.outputTokens,
-                              },
-                          }
-                        : c;
-                });
-                const done = chats.find((c) => c.id === chatId);
-                if (done)
-                    saveChat(chatToStored(done), chatToMeta(done)).catch(
-                        console.error,
-                    );
-            },
-            (msg) => {
-                streamDisconnects.delete(chatId as string);
-                streamingChatIds = streamingChatIds.filter(
-                    (id) => id !== chatId,
-                );
-                chatErrors = {
-                    ...chatErrors,
-                    [chatId as string]: `API Error: ${msg}`,
-                };
-                // Discard the placeholder only if no content arrived — keep partial content otherwise
-                chats = chats.map((c) => {
-                    if (c.id !== chatId) return c;
-                    const last = c.messages[c.messages.length - 1];
-                    return last?.content
-                        ? c
-                        : { ...c, messages: c.messages.slice(0, -1) };
-                });
-                const errored = chats.find((c) => c.id === chatId);
-                if (errored)
-                    saveChat(chatToStored(errored), chatToMeta(errored)).catch(
-                        console.error,
-                    );
-            },
-            (thinkingChunk) => {
-                chats = chats.map((c) => {
-                    if (c.id !== chatId) return c;
-                    const msgs = [...c.messages];
-                    const last = msgs[msgs.length - 1];
-                    msgs[msgs.length - 1] = {
-                        ...last,
-                        thinking: (last.thinking ?? '') + thinkingChunk,
-                    };
-                    return { ...c, messages: msgs };
-                });
-            },
-        );
-        streamDisconnects.set(chatId as string, disconnect);
+        clearChatError(chatId);
+        streamForChat(chatId);
     }
 
     function retryMessage(index: number) {
@@ -888,117 +891,21 @@
         const keepUpTo = msg.role === 'user' ? index : index - 1;
         if (keepUpTo < 0) return;
 
-        const truncated: typeof chat.messages = [
-            ...chat.messages.slice(0, keepUpTo + 1),
-            { role: 'assistant', content: '' },
-        ];
         chats = chats.map((c) =>
-            c.id === chatId ? { ...c, messages: truncated } : c,
+            c.id === chatId
+                ? {
+                      ...c,
+                      messages: [
+                          ...c.messages.slice(0, keepUpTo + 1),
+                          { role: 'assistant', content: '' },
+                      ],
+                  }
+                : c,
         );
 
-        if (chatErrors[chatId]) {
-            const { [chatId]: _, ...rest } = chatErrors;
-            chatErrors = rest;
-        }
+        clearChatError(chatId);
         streamingChatIds = [...streamingChatIds, chatId];
-
-        const snap = chats.find((c) => c.id === chatId)!;
-        const history = snap.messages
-            .slice(0, -1)
-            .map(({ role, content, attachments }) => ({
-                role,
-                content,
-                ...(attachments ? { attachments } : {}),
-            }));
-        const apiMessages = snap.systemPrompt.trim()
-            ? [
-                  { role: 'system' as const, content: snap.systemPrompt },
-                  ...history,
-              ]
-            : history;
-
-        const disconnect = sendToExtension(
-            {
-                provider: snap.providerId,
-                model: snap.modelId,
-                messages: apiMessages,
-                params: {
-                    temperature: snap.temperature,
-                    maxTokens: snap.maxTokens,
-                    thinkingLevel: snap.thinkingLevel,
-                    adaptiveThinking: snap.adaptiveThinking,
-                },
-            },
-            (chunk) => {
-                chats = chats.map((c) => {
-                    if (c.id !== chatId) return c;
-                    const msgs = [...c.messages];
-                    msgs[msgs.length - 1] = {
-                        ...msgs[msgs.length - 1],
-                        content: msgs[msgs.length - 1].content + chunk,
-                    };
-                    return { ...c, messages: msgs };
-                });
-            },
-            (usage) => {
-                streamDisconnects.delete(chatId);
-                streamingChatIds = streamingChatIds.filter(
-                    (id) => id !== chatId,
-                );
-                chats = chats.map((c) => {
-                    if (c.id !== chatId) return c;
-                    return usage
-                        ? {
-                              ...c,
-                              tokens: {
-                                  input: usage.inputTokens,
-                                  output: usage.outputTokens,
-                              },
-                          }
-                        : c;
-                });
-                const done = chats.find((c) => c.id === chatId);
-                if (done)
-                    saveChat(chatToStored(done), chatToMeta(done)).catch(
-                        console.error,
-                    );
-            },
-            (errMsg) => {
-                streamDisconnects.delete(chatId);
-                streamingChatIds = streamingChatIds.filter(
-                    (id) => id !== chatId,
-                );
-                chatErrors = {
-                    ...chatErrors,
-                    [chatId]: `API Error: ${errMsg}`,
-                };
-                chats = chats.map((c) => {
-                    if (c.id !== chatId) return c;
-                    const last = c.messages[c.messages.length - 1];
-                    return last?.content
-                        ? c
-                        : { ...c, messages: c.messages.slice(0, -1) };
-                });
-                const errored = chats.find((c) => c.id === chatId);
-                if (errored)
-                    saveChat(chatToStored(errored), chatToMeta(errored)).catch(
-                        console.error,
-                    );
-            },
-            (thinkingChunk) => {
-                chats = chats.map((c) => {
-                    if (c.id !== chatId) return c;
-                    const msgs = [...c.messages];
-                    const last = msgs[msgs.length - 1];
-                    msgs[msgs.length - 1] = {
-                        ...last,
-                        thinking: (last.thinking ?? '') + thinkingChunk,
-                    };
-                    return { ...c, messages: msgs };
-                });
-            },
-        );
-        streamDisconnects.set(chatId, disconnect);
+        streamForChat(chatId);
     }
 
     function editMessage(index: number, content: string) {

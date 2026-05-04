@@ -24,6 +24,20 @@ export type ExtensionResponse =
     | { type: 'done'; usage?: { inputTokens: number; outputTokens: number } }
     | { type: 'error'; message: string };
 
+export interface StreamUsage {
+    inputTokens: number;
+    outputTokens: number;
+}
+
+// Shared stream-callback shape for both the provider implementations
+// (in the extension background) and the web-side `sendToExtension` wrapper.
+export interface StreamHandlers {
+    onChunk: (text: string) => void;
+    onThinking?: (text: string) => void;
+    onDone: (usage?: StreamUsage) => void;
+    onError: (message: string) => void;
+}
+
 export interface UserSettings {
     theme: string;
     fontSizeIndex: number;
@@ -39,20 +53,25 @@ export interface UserSettings {
     adaptiveThinking: boolean;
 }
 
-export const SETTINGS_KEYS: (keyof UserSettings)[] = [
-    'theme',
-    'fontSizeIndex',
-    'chatWidth',
-    'smoothTextMode',
-    'submitKeystroke',
-    'modelTier',
-    'providerId',
-    'modelId',
-    'temperature',
-    'maxTokens',
-    'thinkingLevel',
-    'adaptiveThinking',
-];
+// The mapped-type constraint forces every UserSettings field to appear here —
+// adding a field to UserSettings without listing it here is a compile error.
+const SETTINGS_KEY_MAP: { [K in keyof UserSettings]: 0 } = {
+    theme: 0,
+    fontSizeIndex: 0,
+    chatWidth: 0,
+    smoothTextMode: 0,
+    submitKeystroke: 0,
+    modelTier: 0,
+    providerId: 0,
+    modelId: 0,
+    temperature: 0,
+    maxTokens: 0,
+    thinkingLevel: 0,
+    adaptiveThinking: 0,
+};
+export const SETTINGS_KEYS = Object.keys(
+    SETTINGS_KEY_MAP
+) as (keyof UserSettings)[];
 
 export interface ChatMeta {
     id: string;

@@ -8,8 +8,7 @@
     "build": "bun scripts/gen-version.ts && bun run check && NO_COLOR=1 bun run --filter courierai_web build && NO_COLOR=1 bun run --filter courierai_ext zip",
     "build:web": "bun scripts/gen-version.ts && bun run check && NO_COLOR=1 bun run --filter courierai_web build",
     "dev:web": "bun run check && NO_COLOR=1 bun run --filter courierai_web typecheck && NO_COLOR=1 bun run --filter courierai_web dev",
-    "dev:ext": "bun run check && NO_COLOR=1 bun run --filter courierai_ext build",
-    "deploy:web": "bun scripts/deploy-web.ts"
+    "dev:ext": "bun run check && NO_COLOR=1 bun run --filter courierai_ext build"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.92.0",

@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type { ChatMessage } from '@courier/shared';
+import type { ChatMessage, StreamHandlers } from '@courier/shared';
 import { DEBUG_API_LOGGING } from '../debug';
 
 const LOG = '[courier:ext]';
@@ -49,12 +49,7 @@ export async function streamAnthropic(
     model: string,
     messages: ChatMessage[],
     params: Record<string, unknown>,
-    onChunk: (text: string) => void,
-    onDone: (
-        usage: { inputTokens: number; outputTokens: number } | null
-    ) => void,
-    onError: (message: string) => void,
-    onThinkingChunk?: (text: string) => void,
+    handlers: StreamHandlers,
     signal?: AbortSignal
 ): Promise<void> {
     const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
@@ -132,13 +127,9 @@ export async function streamAnthropic(
                         console.log(LOG, 'anthropic: first chunk received');
                         firstChunk = false;
                     }
-                    onChunk(delta.text);
-                } else if (
-                    delta.type === 'thinking_delta' &&
-                    delta.thinking &&
-                    onThinkingChunk
-                ) {
-                    onThinkingChunk(delta.thinking);
+                    handlers.onChunk(delta.text);
+                } else if (delta.type === 'thinking_delta' && delta.thinking) {
+                    handlers.onThinking?.(delta.thinking);
                 }
             }
         }
@@ -153,12 +144,12 @@ export async function streamAnthropic(
                   inputTokens: finalMsg.usage.input_tokens,
                   outputTokens: finalMsg.usage.output_tokens,
               }
-            : null;
-        onDone(usage);
+            : undefined;
+        handlers.onDone(usage);
     } catch (e) {
         if (signal?.aborted) return;
         const msg = e instanceof Error ? e.message : String(e);
         console.error(LOG, 'anthropic: error', msg);
-        onError(msg);
+        handlers.onError(msg);
     }
 }

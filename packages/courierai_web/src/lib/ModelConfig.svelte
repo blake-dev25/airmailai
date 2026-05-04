@@ -64,7 +64,8 @@
         const provider =
             providerOptions.find((p) => p.id === providerId) ??
             providerOptions[0];
-        if (!provider) return [] as Array<{ label: string; models: ModelOption[] }>;
+        if (!provider)
+            return [] as Array<{ label: string; models: ModelOption[] }>;
 
         const inTier = new Set(
             filteredProviders
@@ -251,7 +252,10 @@
             if (maxTokens > params.maxOutputTokens)
                 maxTokens = params.maxOutputTokens;
             if (maxTokens < 1) maxTokens = 1;
-            if (params.temperatureMax !== undefined && temperature > params.temperatureMax)
+            if (
+                params.temperatureMax !== undefined &&
+                temperature > params.temperatureMax
+            )
                 temperature = params.defaultTemperature ?? 1;
             // If the loaded thinkingLevel isn't valid for this model, fall back to default
             if (
@@ -318,7 +322,9 @@
                         {#each modelGroups as group}
                             <optgroup label={group.label}>
                                 {#each group.models as model}
-                                    <option value={model.id}>{model.name}</option>
+                                    <option value={model.id}
+                                        >{model.name}</option
+                                    >
                                 {/each}
                             </optgroup>
                         {/each}

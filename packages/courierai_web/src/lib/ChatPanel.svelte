@@ -3,6 +3,7 @@
     import { tick, untrack } from 'svelte';
     import Icon from './Icon.svelte';
     import MarkdownMessage from './MarkdownMessage.svelte';
+    import { createSmoothText } from './smoothText.svelte';
 
     interface Message {
         role: 'user' | 'assistant';
@@ -67,53 +68,17 @@
     let editingDims = $state<{ w: number; h: number } | null>(null);
 
     const MAX_ATTACHMENTS = 20;
-    const DRAIN_CHARS_PER_SEC = 60;
-    const DRAIN_CHARS_PER_SEC_BOOST = 300;
 
-    let displayContent = $state('');
-    let rafTarget = '';
-    let rafId: number | null = null;
-    let rafLastTime = 0;
-    let rafAccum = 0;
-
-    function rafTick(now: DOMHighResTimeStamp) {
-        if (displayContent.length > rafTarget.length) {
-            displayContent = rafTarget;
-            rafId = null;
-            rafLastTime = 0;
-            rafAccum = 0;
-            return;
-        }
-        if (displayContent.length < rafTarget.length) {
-            if (rafLastTime > 0) {
-                const rate =
-                    smoothTextMode === 'boost-on-complete' && !isStreaming
-                        ? DRAIN_CHARS_PER_SEC_BOOST
-                        : DRAIN_CHARS_PER_SEC;
-                rafAccum += ((now - rafLastTime) / 1000) * rate;
-                const step = Math.floor(rafAccum);
-                rafAccum -= step;
-                if (step > 0) {
-                    displayContent = rafTarget.slice(
-                        0,
-                        Math.min(
-                            rafTarget.length,
-                            displayContent.length + step,
-                        ),
-                    );
-                }
-            }
-            rafLastTime = now;
-            rafId = requestAnimationFrame(rafTick);
-        } else {
-            rafId = null;
-            rafLastTime = 0;
-            rafAccum = 0;
-        }
-    }
+    const smooth = createSmoothText({
+        mode: () => smoothTextMode,
+        streaming: () => untrack(() => isStreaming),
+        onReset: () => {
+            isAtBottom = true;
+        },
+    });
 
     $effect(() => {
-        void displayContent;
+        void smooth.display;
         tick().then(() => {
             if (messagesEl && untrack(() => isAtBottom))
                 messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -122,62 +87,15 @@
 
     $effect(() => {
         const raw = messages[messages.length - 1]?.content ?? '';
-
-        if (smoothTextMode === 'raw') {
-            if (rafId !== null) {
-                cancelAnimationFrame(rafId);
-                rafId = null;
-            }
-            rafLastTime = 0;
-            rafAccum = 0;
-            displayContent = raw;
-            rafTarget = raw;
-            return;
-        }
-
-        const grew =
-            raw.length >= rafTarget.length &&
-            raw.startsWith(rafTarget) &&
-            rafTarget.length > 0;
-        const firstChunk = rafTarget.length === 0 && untrack(() => isStreaming);
-
-        if (grew || firstChunk) {
-            rafTarget = raw;
-            if (rafId === null && displayContent.length < rafTarget.length) {
-                rafId = requestAnimationFrame(rafTick);
-            }
-        } else {
-            if (rafId !== null) {
-                cancelAnimationFrame(rafId);
-                rafId = null;
-            }
-            rafLastTime = 0;
-            rafAccum = 0;
-            displayContent = raw;
-            rafTarget = raw;
-            isAtBottom = true;
-        }
-
-        return () => {
-            if (rafId !== null) {
-                cancelAnimationFrame(rafId);
-                rafId = null;
-            }
-        };
+        smooth.setRaw(raw);
+        return () => smooth.cancel();
     });
 
     // dump-on-complete: when the stream ends, snap any remaining un-drained text to the screen.
     $effect(() => {
         if (smoothTextMode !== 'dump-on-complete') return;
         if (isStreaming) return;
-        if (displayContent.length >= rafTarget.length) return;
-        if (rafId !== null) {
-            cancelAnimationFrame(rafId);
-            rafId = null;
-        }
-        rafLastTime = 0;
-        rafAccum = 0;
-        displayContent = rafTarget;
+        smooth.flushIfComplete();
     });
 
     $effect(() => {
@@ -281,8 +199,14 @@
         ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
     }
 
-    function startEdit(i: number, content: string, bubbleEl?: HTMLElement | null) {
-        editingDims = bubbleEl ? { w: bubbleEl.offsetWidth, h: bubbleEl.offsetHeight } : null;
+    function startEdit(
+        i: number,
+        content: string,
+        bubbleEl?: HTMLElement | null,
+    ) {
+        editingDims = bubbleEl
+            ? { w: bubbleEl.offsetWidth, h: bubbleEl.offsetHeight }
+            : null;
         editingIndex = i;
         editingText = content;
     }
@@ -378,7 +302,8 @@
         >
             <div
                 class="messages-inner"
-                style="max-width: min(100vw, calc(var(--narrow-chat-width) + (100vw - var(--narrow-chat-width)) * {chatWidth / 100}));"
+                style="max-width: min(100vw, calc(var(--narrow-chat-width) + (100vw - var(--narrow-chat-width)) * {chatWidth /
+                    100}));"
             >
                 {#if loading}
                     <div class="empty-state">
@@ -419,7 +344,9 @@
                                     {#if editingIndex === i}
                                         <textarea
                                             class="edit-textarea"
-                                            style={editingDims ? `width: ${editingDims.w}px; min-height: ${editingDims.h}px;` : ''}
+                                            style={editingDims
+                                                ? `width: ${editingDims.w}px; min-height: ${editingDims.h}px;`
+                                                : ''}
                                             bind:value={editingText}
                                         ></textarea>
                                         <div class="edit-btns">
@@ -458,7 +385,15 @@
                                                     startEdit(
                                                         i,
                                                         message.content,
-                                                        (e.currentTarget as HTMLElement).closest('.user-group')?.querySelector('.bubble') as HTMLElement | null,
+                                                        (
+                                                            e.currentTarget as HTMLElement
+                                                        )
+                                                            .closest(
+                                                                '.user-group',
+                                                            )
+                                                            ?.querySelector(
+                                                                '.bubble',
+                                                            ) as HTMLElement | null,
                                                     )}
                                                 disabled={isStreaming}
                                                 aria-label="Edit"
@@ -493,8 +428,8 @@
                                     i === messages.length - 1 &&
                                     message.role === 'assistant' &&
                                     (isStreaming ||
-                                        displayContent !== message.content)
-                                        ? displayContent
+                                        smooth.display !== message.content)
+                                        ? smooth.display
                                         : message.content}
                                 <div class="assistant-group">
                                     {#if isStreaming && i === messages.length - 1 && !message.content && !message.thinking}
@@ -540,7 +475,9 @@
                                     {#if editingIndex === i}
                                         <textarea
                                             class="edit-textarea"
-                                            style={editingDims ? `width: ${editingDims.w}px; min-height: ${editingDims.h}px;` : ''}
+                                            style={editingDims
+                                                ? `width: ${editingDims.w}px; min-height: ${editingDims.h}px;`
+                                                : ''}
                                             bind:value={editingText}
                                         ></textarea>
                                         <div class="edit-btns">
@@ -581,7 +518,15 @@
                                                     startEdit(
                                                         i,
                                                         message.content,
-                                                        (e.currentTarget as HTMLElement).closest('.assistant-group')?.querySelector('.bubble') as HTMLElement | null,
+                                                        (
+                                                            e.currentTarget as HTMLElement
+                                                        )
+                                                            .closest(
+                                                                '.assistant-group',
+                                                            )
+                                                            ?.querySelector(
+                                                                '.bubble',
+                                                            ) as HTMLElement | null,
                                                     )}
                                                 disabled={isStreaming}
                                                 aria-label="Edit"

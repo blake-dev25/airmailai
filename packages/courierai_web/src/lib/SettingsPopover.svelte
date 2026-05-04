@@ -256,7 +256,9 @@
                 </select>
             </div>
             <div class="row theme-row">
-                <label for="show-previous">Show Previous Generation Models</label>
+                <label for="show-previous"
+                    >Show Previous Generation Models</label
+                >
                 <input
                     id="show-previous"
                     type="checkbox"
@@ -307,10 +309,7 @@
                         >
                     </span>
                 </div>
-                <select
-                    id="smooth-text-mode"
-                    bind:value={smoothTextMode}
-                >
+                <select id="smooth-text-mode" bind:value={smoothTextMode}>
                     <option value="smooth">Normal rendering</option>
                     <option value="boost-on-complete"
                         >Fast rendering upon message completion</option

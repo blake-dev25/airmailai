@@ -33,9 +33,10 @@
             class="primary"
             onclick={() => window.location.reload()}>Reload</button
         >
-        <button type="button" class="secondary" onclick={onlookaround}
-            >Let me look around (settings/text will not be saved)</button
+        <button type="button" class="primary" onclick={onlookaround}
+            >Let me look around first</button
         >
+        <p class="caption">(text/settings will not be saved)</p>
     {:else if variant === 'unsupported-browser'}
         <p>
             CourierAI requires a Chromium browser (Chrome, Edge, Brave, etc)
@@ -44,9 +45,10 @@
                 class="inline-link">FAQ ↗</a
             >
         </p>
-        <button type="button" class="secondary" onclick={onlookaround}
-            >Let me look around (settings/text will not be saved)</button
+        <button type="button" class="primary" onclick={onlookaround}
+            >Let me look around first</button
         >
+        <p class="caption">(text/settings will not be saved)</p>
     {:else}
         <p>
             CourierAI requires a desktop browser extension, so it isn't
@@ -123,19 +125,9 @@
         background-color: var(--color-accent-hover);
     }
 
-    .secondary {
-        margin-top: 2px;
-        padding: 4px 8px;
-        background: none;
-        border: none;
+    .caption {
+        margin-top: -4px;
         font-size: 0.75rem;
         color: var(--color-text-muted);
-        cursor: pointer;
-        text-decoration: underline;
-        transition: color 0.15s;
-    }
-
-    .secondary:hover {
-        color: var(--color-text);
     }
 </style>

@@ -5,6 +5,7 @@ import type {
     StorageRequest,
     StorageResponse,
     StoredChat,
+    StreamHandlers,
     UserSettings,
 } from '@courier/shared';
 
@@ -152,14 +153,11 @@ export async function loadChat(chatId: string): Promise<StoredChat | null> {
 
 export function sendToExtension(
     request: ExtensionRequest,
-    onChunk: (text: string) => void,
-    onDone: (usage?: { inputTokens: number; outputTokens: number }) => void,
-    onError: (message: string) => void,
-    onThinkingChunk?: (text: string) => void
+    handlers: StreamHandlers
 ): () => void {
     if (!extensionId) {
         console.error(LOG, 'chat: extension not detected');
-        onError(
+        handlers.onError(
             'CourierAI extension not detected. Install it and refresh to start chatting.'
         );
         return () => {};
@@ -183,21 +181,21 @@ export function sendToExtension(
                     console.log(LOG, '← first chunk received');
                     firstChunk = false;
                 }
-                onChunk(response.content);
+                handlers.onChunk(response.content);
                 break;
             case 'thinking_chunk':
-                onThinkingChunk?.(response.content);
+                handlers.onThinking?.(response.content);
                 break;
             case 'done':
                 done = true;
                 console.log(LOG, '← stream done');
-                onDone(response.usage);
+                handlers.onDone(response.usage);
                 port.disconnect();
                 break;
             case 'error':
                 done = true;
                 console.error(LOG, '← stream error', response.message);
-                onError(response.message);
+                handlers.onError(response.message);
                 port.disconnect();
                 break;
         }
@@ -209,7 +207,7 @@ export function sendToExtension(
                 chrome.runtime.lastError?.message ??
                 'Extension disconnected unexpectedly.';
             console.error(LOG, '✗ unexpected port disconnect', msg);
-            onError(msg);
+            handlers.onError(msg);
         }
     });
 

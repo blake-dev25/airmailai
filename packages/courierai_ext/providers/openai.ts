@@ -1,4 +1,4 @@
-import type { ChatMessage } from '@courier/shared';
+import type { ChatMessage, StreamHandlers, StreamUsage } from '@courier/shared';
 import OpenAI from 'openai';
 import { DEBUG_API_LOGGING } from '../debug';
 
@@ -46,12 +46,7 @@ export async function streamOpenAI(
     model: string,
     messages: ChatMessage[],
     params: Record<string, unknown>,
-    onChunk: (text: string) => void,
-    onDone: (
-        usage: { inputTokens: number; outputTokens: number } | null
-    ) => void,
-    onError: (message: string) => void,
-    onThinkingChunk?: (text: string) => void,
+    handlers: StreamHandlers,
     signal?: AbortSignal
 ): Promise<void> {
     const client = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
@@ -95,7 +90,7 @@ export async function streamOpenAI(
         );
 
         let firstChunk = true;
-        let usage: { inputTokens: number; outputTokens: number } | null = null;
+        let usage: StreamUsage | undefined;
 
         for await (const event of stream) {
             if (event.type === 'response.output_text.delta') {
@@ -103,12 +98,9 @@ export async function streamOpenAI(
                     console.log(LOG, 'openai: first chunk received');
                     firstChunk = false;
                 }
-                onChunk(event.delta);
-            } else if (
-                event.type === 'response.reasoning_summary_text.delta' &&
-                onThinkingChunk
-            ) {
-                onThinkingChunk((event as { delta: string }).delta);
+                handlers.onChunk(event.delta);
+            } else if (event.type === 'response.reasoning_summary_text.delta') {
+                handlers.onThinking?.((event as { delta: string }).delta);
             } else if (event.type === 'response.completed') {
                 if (DEBUG_API_LOGGING) {
                     console.log(LOG, '[debug] full response', event.response);
@@ -124,11 +116,11 @@ export async function streamOpenAI(
         }
 
         console.log(LOG, 'openai: stream done');
-        onDone(usage);
+        handlers.onDone(usage);
     } catch (e) {
         if (signal?.aborted) return;
         const msg = e instanceof Error ? e.message : String(e);
         console.error(LOG, 'openai: error', msg);
-        onError(msg);
+        handlers.onError(msg);
     }
 }

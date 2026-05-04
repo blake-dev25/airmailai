@@ -7,6 +7,8 @@ export type {
     StorageRequest,
     StorageResponse,
     StoredChat,
+    StreamHandlers,
+    StreamUsage,
     UserSettings,
 } from './messages';
 export { SETTINGS_KEYS } from './messages';
