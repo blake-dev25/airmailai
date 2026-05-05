@@ -7,6 +7,7 @@
         type ModelTier,
         type ProviderOption,
     } from './constants';
+    import Icon from './Icon.svelte';
 
     let {
         providers,
@@ -291,22 +292,7 @@
                         <option value={provider.id}>{provider.name}</option>
                     {/each}
                 </select>
-                <svg
-                    class="select-arrow"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 12 12"
-                    fill="none"
-                    aria-hidden="true"
-                >
-                    <path
-                        d="M3 4.5l3 3 3-3"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                    />
-                </svg>
+                <Icon name="chevron-down" size={12} class="select-arrow" />
             </div>
         </div>
 
@@ -330,22 +316,7 @@
                         {/each}
                     {/if}
                 </select>
-                <svg
-                    class="select-arrow"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 12 12"
-                    fill="none"
-                    aria-hidden="true"
-                >
-                    <path
-                        d="M3 4.5l3 3 3-3"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                    />
-                </svg>
+                <Icon name="chevron-down" size={12} class="select-arrow" />
             </div>
         </div>
 
@@ -659,7 +630,7 @@
         border-color: var(--color-accent-3, var(--color-accent));
     }
 
-    .select-arrow {
+    :global(.select-arrow) {
         position: absolute;
         right: 10px;
         top: 50%;

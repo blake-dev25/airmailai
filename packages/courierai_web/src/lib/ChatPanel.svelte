@@ -264,21 +264,7 @@
         {#if demoMode}
             <button type="button" class="install-link">
                 <span>Install the extension</span>
-                <svg
-                    width="11"
-                    height="11"
-                    viewBox="0 0 11 11"
-                    fill="none"
-                    aria-hidden="true"
-                >
-                    <path
-                        d="M3.5 2h5.5v5.5M9 2L2 9"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                    />
-                </svg>
+                <Icon name="external-link" />
             </button>
         {/if}
         {#if systemExpanded}
@@ -311,7 +297,7 @@
                     </div>
                 {:else if messages.length === 0}
                     <div class="empty-state">
-                        <Icon name="inbox" />
+                        <Icon name="mail-plus" />
                         <p>Start a conversation</p>
                         <p class="sub">
                             Choose a provider and model on the right, then type

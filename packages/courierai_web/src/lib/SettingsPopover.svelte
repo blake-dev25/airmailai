@@ -7,6 +7,7 @@
         saveApiKey,
         waitForExtension,
     } from './extension';
+    import Icon from './Icon.svelte';
 
     let {
         theme = $bindable(),
@@ -129,40 +130,9 @@
                             <td class="provider-name">{provider.name}</td>
                             <td class="saved-cell">
                                 {#if savedKeys[provider.id]}
-                                    <svg
-                                        width="15"
-                                        height="15"
-                                        viewBox="0 0 15 15"
-                                        fill="none"
-                                        role="img"
-                                        aria-label="Saved"
-                                        class="icon-check"
-                                    >
-                                        <path
-                                            d="M2.5 7.5l3.5 3.5 6.5-6.5"
-                                            stroke="currentColor"
-                                            stroke-width="1.75"
-                                            stroke-linecap="round"
-                                            stroke-linejoin="round"
-                                        />
-                                    </svg>
+                                    <Icon name="check" class="icon-check" />
                                 {:else}
-                                    <svg
-                                        width="15"
-                                        height="15"
-                                        viewBox="0 0 15 15"
-                                        fill="none"
-                                        role="img"
-                                        aria-label="Not saved"
-                                        class="icon-x"
-                                    >
-                                        <path
-                                            d="M3 3l9 9M12 3l-9 9"
-                                            stroke="currentColor"
-                                            stroke-width="1.75"
-                                            stroke-linecap="round"
-                                        />
-                                    </svg>
+                                    <Icon name="close" size={15} class="icon-x" />
                                 {/if}
                             </td>
                             <td class="key-cell">
@@ -276,33 +246,7 @@
                         class="info-icon"
                         aria-label="About smooth text rendering"
                     >
-                        <svg
-                            width="13"
-                            height="13"
-                            viewBox="0 0 13 13"
-                            fill="none"
-                            aria-hidden="true"
-                        >
-                            <circle
-                                cx="6.5"
-                                cy="6.5"
-                                r="5.75"
-                                stroke="currentColor"
-                                stroke-width="1.25"
-                            />
-                            <path
-                                d="M6.5 5.5v4"
-                                stroke="currentColor"
-                                stroke-width="1.25"
-                                stroke-linecap="round"
-                            />
-                            <circle
-                                cx="6.5"
-                                cy="3.75"
-                                r="0.65"
-                                fill="currentColor"
-                            />
-                        </svg>
+                        <Icon name="info" />
                         <span class="info-tooltip"
                             >Changes how AI messages are displayed. Sorted from
                             slow/pretty to fast/less pretty.</span
@@ -728,16 +672,16 @@
         text-align: center;
     }
 
-    .saved-cell svg {
+    .saved-cell :global(svg) {
         display: block;
         margin: 0 auto;
     }
 
-    .icon-check {
+    :global(.icon-check) {
         color: #4caf6e;
     }
 
-    .icon-x {
+    :global(.icon-x) {
         color: var(--color-text-muted);
     }
 

@@ -52,7 +52,8 @@
 			"linter": {
 				"rules": {
 					"correctness": {
-						"noUnusedVariables": "off"
+						"noUnusedVariables": "off",
+						"noUnusedFunctionParameters": "off"
 					},
 					"suspicious": {
 						"noAssignInExpressions": "off"

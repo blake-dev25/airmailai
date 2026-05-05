@@ -76,7 +76,8 @@
         matchIndex: number | null;
     }
 
-    const PAGE_SIZE = 40;
+    const INITIAL_PAGE_SIZE = 40;
+    const LOAD_MORE_PAGE_SIZE = 15;
 
     // Theme
     let theme = $state('airmail-warm');
@@ -268,8 +269,8 @@
         const sorted = metas.sort((a, b) => b.createdAt - a.createdAt);
         console.log(LOG, 'chat metas loaded', `${sorted.length} chats`);
 
-        const firstPage = sorted.slice(0, PAGE_SIZE);
-        unloadedMetas = sorted.slice(PAGE_SIZE);
+        const firstPage = sorted.slice(0, INITIAL_PAGE_SIZE);
+        unloadedMetas = sorted.slice(INITIAL_PAGE_SIZE);
 
         if (firstPage.length > 0) {
             const fullChats = await loadChatsByIds(firstPage.map((m) => m.id));
@@ -292,7 +293,7 @@
     async function loadMoreChats() {
         if (isLoadingMore || unloadedMetas.length === 0) return;
         isLoadingMore = true;
-        const nextPage = unloadedMetas.slice(0, PAGE_SIZE);
+        const nextPage = unloadedMetas.slice(0, LOAD_MORE_PAGE_SIZE);
         const fullChats = await loadChatsByIds(nextPage.map((m) => m.id));
         const byId = new Map(fullChats.map((c) => [c.id, c]));
         const newChats = nextPage
@@ -307,7 +308,7 @@
             })
             .filter((c): c is Chat => c !== null);
         chats = [...chats, ...newChats];
-        unloadedMetas = unloadedMetas.slice(PAGE_SIZE);
+        unloadedMetas = unloadedMetas.slice(LOAD_MORE_PAGE_SIZE);
         console.log(
             LOG,
             'loaded more chats',

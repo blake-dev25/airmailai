@@ -11,11 +11,13 @@
     },
     "dependencies": {
         "@courier/shared": "workspace:*",
+        "@lucide/svelte": "^1.14.0",
         "@tailwindcss/typography": "^0.5.19",
         "dompurify": "^3.4.0",
         "marked": "^18.0.2",
         "marked-footnote": "^1.4.0",
-        "shiki": "^4.0.2"
+        "shiki": "^4.0.2",
+        "virtua": "^0.49.1"
     },
     "devDependencies": {
         "@sveltejs/vite-plugin-svelte": "^7.0.0",
