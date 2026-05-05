@@ -1,10 +1,14 @@
 import type {
+    BroadcastEvent,
     ChatMessage,
-    ExtensionRequest,
+    ChatMeta,
     ExtensionResponse,
     StorageRequest,
     StorageResponse,
+    StoredChat,
     StreamHandlers,
+    StreamUsage,
+    TurnRequest,
     UserSettings,
 } from '@courier/shared';
 import { SETTINGS_KEYS } from '@courier/shared';
@@ -38,6 +42,25 @@ const PROVIDERS: Record<string, StreamFn> = {
 };
 
 const LOG = '[courier:ext]';
+
+// Per-chat lock. While a chatId is in this map, another tab attempting to
+// stream the same chat is rejected so writes can't race.
+const inflightTurns = new Map<string, AbortController>();
+
+// Long-lived broadcast ports — one per connected tab. The extension fans out
+// turn lifecycle events to every port so tabs can mirror cross-tab streams.
+const broadcastPorts = new Set<chrome.runtime.Port>();
+
+function broadcast(event: BroadcastEvent) {
+    for (const port of broadcastPorts) {
+        try {
+            port.postMessage(event);
+        } catch {
+            // Port may have closed between the iteration and post; cleaned up
+            // by its onDisconnect listener.
+        }
+    }
+}
 
 async function handleStorage(
     message: StorageRequest
@@ -166,80 +189,268 @@ export default defineBackground(() => {
         }
     );
 
-    // Streaming chat over a port
+    // Streaming chat over a port. Lifecycle: web sends 'start' to begin a
+    // turn, may send 'stop' mid-stream. Extension owns lock + save end-to-end.
     chrome.runtime.onConnectExternal.addListener((port) => {
-        console.log(LOG, 'port connected');
+        // 'broadcast' ports are long-lived fan-out channels for cross-tab
+        // turn mirroring. They never receive turn requests; they just listen.
+        if (port.name === 'broadcast') {
+            console.log(LOG, 'broadcast port connected');
+            broadcastPorts.add(port);
+            port.onDisconnect.addListener(() => {
+                console.log(LOG, 'broadcast port disconnected');
+                broadcastPorts.delete(port);
+            });
+            return;
+        }
+
+        console.log(LOG, 'turn port connected');
         const controller = new AbortController();
+
+        // Disposition tracks how the turn ends. 'aborted' means web
+        // disconnected without a graceful stop (e.g. retry/delete) — we skip
+        // the save in that case.
+        type Disposition =
+            | 'pending'
+            | 'streaming'
+            | 'stopped'
+            | 'aborted'
+            | 'completed'
+            | 'errored';
+        let disposition: Disposition = 'pending';
+        let lockedChatId: string | null = null;
+        let assistantContent = '';
+        let assistantThinking = '';
+        let streamUsage: StreamUsage | undefined;
+        let streamErrorMsg: string | null = null;
+        let stopTruncated = '';
+        let saveCtx: {
+            meta: ChatMeta;
+            history: StoredChat['messages'];
+        } | null = null;
+        let portOpen = true;
+
+        const send = (response: ExtensionResponse) => {
+            if (portOpen) port.postMessage(response);
+        };
+
         port.onDisconnect.addListener(() => {
-            console.log(LOG, 'port disconnected, aborting stream');
+            portOpen = false;
+            console.log(LOG, 'port disconnected, disposition:', disposition);
+            if (disposition === 'pending' || disposition === 'streaming') {
+                disposition = 'aborted';
+                // Release the lock eagerly so a follow-up request (e.g. retry)
+                // can re-take it without racing the finally block.
+                if (lockedChatId) inflightTurns.delete(lockedChatId);
+            }
             controller.abort();
         });
 
-        port.onMessage.addListener(async (request: ExtensionRequest) => {
-            const send = (response: ExtensionResponse) =>
-                port.postMessage(response);
-
-            const keyResult = await chrome.storage.sync.get(
-                `apiKey_${request.provider}`
-            );
-            const apiKey = keyResult[`apiKey_${request.provider}`] as
-                | string
-                | undefined;
-
-            if (!apiKey) {
-                console.error(LOG, 'no API key for provider', request.provider);
-                send({
-                    type: 'error',
-                    message: `No API key saved for ${request.provider}. Add one in Settings.`,
-                });
+        port.onMessage.addListener(async (msg: TurnRequest) => {
+            if (msg.type === 'stop') {
+                if (disposition !== 'streaming') return;
+                console.log(
+                    LOG,
+                    'stop received, truncated len:',
+                    msg.truncatedContent.length
+                );
+                disposition = 'stopped';
+                stopTruncated = msg.truncatedContent;
+                controller.abort();
                 return;
             }
 
-            console.log(
-                LOG,
-                'api key found, routing to provider',
-                request.provider,
-                {
-                    model: request.model,
-                    messages: request.messages.length,
+            if (disposition !== 'pending') return;
+
+            // Take the lock first so a duplicate tab is rejected immediately.
+            if (inflightTurns.has(msg.chatId)) {
+                console.log(LOG, 'lock taken, rejecting', msg.chatId);
+                send({
+                    type: 'error',
+                    message: 'Conversation active in another tab.',
+                });
+                if (portOpen) port.disconnect();
+                return;
+            }
+            inflightTurns.set(msg.chatId, controller);
+            lockedChatId = msg.chatId;
+            saveCtx = { meta: msg.meta, history: msg.historyForSave };
+            disposition = 'streaming';
+
+            // Announce the turn to every other tab so they can mirror state.
+            // The originating tab filters this out by sourceTabId.
+            broadcast({
+                type: 'turn-start',
+                chatId: msg.chatId,
+                sourceTabId: msg.sourceTabId,
+                meta: msg.meta,
+                history: msg.historyForSave,
+            });
+
+            try {
+                const keyResult = await chrome.storage.sync.get(
+                    `apiKey_${msg.provider}`
+                );
+                const apiKey = keyResult[`apiKey_${msg.provider}`] as
+                    | string
+                    | undefined;
+
+                if (!apiKey) {
+                    console.error(LOG, 'no API key for provider', msg.provider);
+                    streamErrorMsg = `No API key saved for ${msg.provider}. Add one in Settings.`;
+                    disposition = 'errored';
+                    return;
                 }
-            );
 
-            if (DEBUG_API_LOGGING) {
-                console.log(LOG, '[debug] full request', {
-                    provider: request.provider,
-                    model: request.model,
-                    params: request.params,
-                    messages: request.messages,
+                const stream = PROVIDERS[msg.provider];
+                if (!stream) {
+                    console.error(LOG, 'unsupported provider', msg.provider);
+                    streamErrorMsg = `Unsupported provider: ${msg.provider}`;
+                    disposition = 'errored';
+                    return;
+                }
+
+                console.log(LOG, 'streaming', msg.chatId, {
+                    provider: msg.provider,
+                    model: msg.model,
+                    messages: msg.messages.length,
                 });
+
+                if (DEBUG_API_LOGGING) {
+                    console.log(LOG, '[debug] full request', {
+                        provider: msg.provider,
+                        model: msg.model,
+                        params: msg.params,
+                        messages: msg.messages,
+                    });
+                }
+
+                const handlers: StreamHandlers = {
+                    onChunk: (text) => {
+                        assistantContent += text;
+                        if (disposition === 'streaming') {
+                            send({ type: 'chunk', content: text });
+                            broadcast({
+                                type: 'turn-chunk',
+                                chatId: msg.chatId,
+                                kind: 'content',
+                                delta: text,
+                            });
+                        }
+                    },
+                    onThinking: (text) => {
+                        assistantThinking += text;
+                        if (disposition === 'streaming') {
+                            send({ type: 'thinking_chunk', content: text });
+                            broadcast({
+                                type: 'turn-chunk',
+                                chatId: msg.chatId,
+                                kind: 'thinking',
+                                delta: text,
+                            });
+                        }
+                    },
+                    onDone: (usage) => {
+                        streamUsage = usage;
+                    },
+                    onError: (m) => {
+                        streamErrorMsg = m;
+                    },
+                };
+
+                await stream(
+                    apiKey,
+                    msg.model,
+                    msg.messages,
+                    msg.params ?? {},
+                    handlers,
+                    controller.signal
+                );
+
+                if (disposition === 'streaming') {
+                    disposition = streamErrorMsg ? 'errored' : 'completed';
+                }
+            } catch (e: unknown) {
+                console.error(LOG, 'stream threw', e);
+                if (disposition === 'streaming') {
+                    streamErrorMsg = e instanceof Error ? e.message : String(e);
+                    disposition = 'errored';
+                }
+            } finally {
+                // Save phase. Skipped on 'aborted' (web bailed without stop).
+                if (disposition !== 'aborted' && saveCtx && lockedChatId) {
+                    const isStop = disposition === 'stopped';
+                    const finalContent = isStop
+                        ? stopTruncated
+                        : assistantContent;
+
+                    const newMessages: StoredChat['messages'] = [
+                        ...saveCtx.history,
+                    ];
+                    // Drop the assistant turn entirely if no visible content
+                    // landed (matches prior web-side behavior on error/empty stop).
+                    if (finalContent) {
+                        newMessages.push({
+                            role: 'assistant',
+                            content: finalContent,
+                            ...(assistantThinking
+                                ? { thinking: assistantThinking }
+                                : {}),
+                        });
+                    }
+
+                    const stored: StoredChat = {
+                        id: lockedChatId,
+                        messages: newMessages,
+                        ...(streamUsage
+                            ? {
+                                  tokens: {
+                                      input: streamUsage.inputTokens,
+                                      output: streamUsage.outputTokens,
+                                  },
+                              }
+                            : {}),
+                    };
+
+                    try {
+                        await dbSaveChat(stored, saveCtx.meta);
+                    } catch (err) {
+                        console.error(LOG, 'save failed', err);
+                    }
+                }
+
+                if (disposition === 'errored' && streamErrorMsg) {
+                    send({ type: 'error', message: streamErrorMsg });
+                } else if (disposition !== 'aborted') {
+                    send({ type: 'done', usage: streamUsage });
+                }
+
+                // Fan out the terminal lifecycle event. 'aborted' means the
+                // source tab bailed without saving — other tabs should roll
+                // back to IDB's pre-turn state.
+                if (lockedChatId) {
+                    if (disposition === 'errored' && streamErrorMsg) {
+                        broadcast({
+                            type: 'turn-error',
+                            chatId: lockedChatId,
+                            message: streamErrorMsg,
+                        });
+                    } else if (disposition === 'aborted') {
+                        broadcast({
+                            type: 'turn-aborted',
+                            chatId: lockedChatId,
+                        });
+                    } else {
+                        broadcast({
+                            type: 'turn-done',
+                            chatId: lockedChatId,
+                        });
+                    }
+                }
+
+                if (lockedChatId) inflightTurns.delete(lockedChatId);
+                if (portOpen) port.disconnect();
             }
-
-            const stream = PROVIDERS[request.provider];
-            if (!stream) {
-                console.error(LOG, 'unsupported provider', request.provider);
-                send({
-                    type: 'error',
-                    message: `Unsupported provider: ${request.provider}`,
-                });
-                return;
-            }
-
-            const handlers: StreamHandlers = {
-                onChunk: (text) => send({ type: 'chunk', content: text }),
-                onThinking: (text) =>
-                    send({ type: 'thinking_chunk', content: text }),
-                onDone: (usage) => send({ type: 'done', usage }),
-                onError: (msg) => send({ type: 'error', message: msg }),
-            };
-
-            await stream(
-                apiKey,
-                request.model,
-                request.messages,
-                request.params ?? {},
-                handlers,
-                controller.signal
-            );
         });
     });
 });

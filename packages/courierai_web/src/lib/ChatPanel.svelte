@@ -16,6 +16,7 @@
         messages,
         modelName,
         isStreaming = false,
+        streamingLocally = false,
         chatWidth = 100,
         streamError = null,
         loading = false,
@@ -25,6 +26,7 @@
         highlightMessageIndex = null,
         demoMode = false,
         onsend,
+        onstop,
         onretry,
         onedit,
         ondelete,
@@ -32,7 +34,11 @@
     }: {
         messages: Message[];
         modelName: string;
+        // True if any tab is streaming this chat (local or remote).
         isStreaming?: boolean;
+        // True only when *this* tab owns the stream — gates the stop button,
+        // since stop only works against the source tab's port.
+        streamingLocally?: boolean;
         chatWidth?: number;
         streamError?: string | null;
         loading?: boolean;
@@ -46,6 +52,7 @@
         highlightMessageIndex?: number | null;
         demoMode?: boolean;
         onsend: (content: string, attachments?: Attachment[]) => void;
+        onstop: (truncatedContent: string) => void;
         onretry: (index: number) => void;
         onedit: (index: number, content: string) => void;
         ondelete: (index: number) => void;
@@ -163,6 +170,13 @@
         onsend(text, atts.length ? atts : undefined);
         inputText = '';
         if (textareaEl) textareaEl.style.height = '';
+    }
+
+    // Stop the current stream. Pass smooth.display so the saved/visible text
+    // matches exactly what the user sees — characters queued in the smooth
+    // drain are discarded rather than rushed onto the screen.
+    function stop() {
+        onstop(smooth.display);
     }
 
     function openFilePicker() {
@@ -616,16 +630,27 @@
                 onkeydown={handleKeydown}
                 oninput={autoResize}
             ></textarea>
-            <button
-                type="button"
-                class="send-btn"
-                onclick={submit}
-                disabled={(!inputText.trim() && !pendingAttachments.length) ||
-                    isStreaming}
-                aria-label="Send message"
-            >
-                <Icon name="send" />
-            </button>
+            {#if isStreaming && streamingLocally}
+                <button
+                    type="button"
+                    class="send-btn stop-btn"
+                    onclick={stop}
+                    aria-label="Stop"
+                >
+                    <Icon name="stop" />
+                </button>
+            {:else}
+                <button
+                    type="button"
+                    class="send-btn"
+                    onclick={submit}
+                    disabled={isStreaming ||
+                        (!inputText.trim() && !pendingAttachments.length)}
+                    aria-label="Send message"
+                >
+                    <Icon name="send" />
+                </button>
+            {/if}
         </div>
     </div>
 </div>

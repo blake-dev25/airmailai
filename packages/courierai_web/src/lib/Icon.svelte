@@ -12,10 +12,11 @@
     import MailPlus from '@lucide/svelte/icons/mail-plus';
     import Pencil from '@lucide/svelte/icons/pencil';
     import Plus from '@lucide/svelte/icons/plus';
-    import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
+    import RefreshCw from '@lucide/svelte/icons/refresh-cw';
     import Search from '@lucide/svelte/icons/search';
     import Send from '@lucide/svelte/icons/send';
     import Settings from '@lucide/svelte/icons/settings';
+    import Square from '@lucide/svelte/icons/square';
     import Trash from '@lucide/svelte/icons/trash';
     import X from '@lucide/svelte/icons/x';
 
@@ -38,6 +39,7 @@
         | 'send'
         | 'settings'
         | 'spinner'
+        | 'stop'
         | 'trash';
 
     interface Props {
@@ -68,11 +70,12 @@
         mail: Mail,
         'mail-plus': MailPlus,
         plus: Plus,
-        retry: RotateCcw,
+        retry: RefreshCw,
         search: Search,
         send: Send,
         settings: Settings,
         spinner: LoaderCircle,
+        stop: Square,
         trash: Trash,
     } as const;
 
@@ -96,6 +99,7 @@
         send: 16,
         settings: 15,
         spinner: 12,
+        stop: 14,
         trash: 12,
     };
 

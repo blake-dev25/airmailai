@@ -1,13 +1,25 @@
 import type {
+    BroadcastEvent,
     ChatMeta,
-    ExtensionRequest,
     ExtensionResponse,
     StorageRequest,
     StorageResponse,
     StoredChat,
     StreamHandlers,
+    TurnStartRequest,
     UserSettings,
 } from '@courier/shared';
+
+export interface StreamHandle {
+    // Hard cancel: disconnect immediately, no save.
+    abort: () => void;
+    // Graceful stop: save with truncated visible content, then disconnect.
+    stop: (truncatedContent: string) => void;
+}
+
+// Stable per-tab identifier. Generated once per page load; broadcasted in
+// turn-start so the originating tab can ignore its own echo.
+export const tabId = crypto.randomUUID();
 
 const LOG = '[courier:web]';
 
@@ -152,18 +164,19 @@ export async function loadChat(chatId: string): Promise<StoredChat | null> {
 }
 
 export function sendToExtension(
-    request: ExtensionRequest,
+    request: Omit<TurnStartRequest, 'type'>,
     handlers: StreamHandlers
-): () => void {
+): StreamHandle {
     if (!extensionId) {
         console.error(LOG, 'chat: extension not detected');
         handlers.onError(
             'CourierAI extension not detected. Install it and refresh to start chatting.'
         );
-        return () => {};
+        return { abort: () => {}, stop: () => {} };
     }
 
     console.log(LOG, '→ chat request', {
+        chatId: request.chatId,
         provider: request.provider,
         model: request.model,
         messages: request.messages.length,
@@ -171,12 +184,14 @@ export function sendToExtension(
     });
 
     let done = false;
+    let stopped = false;
     let firstChunk = true;
     const port = chrome.runtime.connect(extensionId);
 
     port.onMessage.addListener((response: ExtensionResponse) => {
         switch (response.type) {
             case 'chunk':
+                if (stopped) break;
                 if (firstChunk) {
                     console.log(LOG, '← first chunk received');
                     firstChunk = false;
@@ -184,6 +199,7 @@ export function sendToExtension(
                 handlers.onChunk(response.content);
                 break;
             case 'thinking_chunk':
+                if (stopped) break;
                 handlers.onThinking?.(response.content);
                 break;
             case 'done':
@@ -211,9 +227,75 @@ export function sendToExtension(
         }
     });
 
-    port.postMessage(request);
+    port.postMessage({ type: 'start', ...request });
 
-    return () => {
-        if (!done) port.disconnect();
+    return {
+        abort: () => {
+            if (!done) port.disconnect();
+        },
+        stop: (truncatedContent: string) => {
+            if (done || stopped) return;
+            stopped = true;
+            port.postMessage({ type: 'stop', truncatedContent });
+        },
+    };
+}
+
+// Long-lived subscription to cross-tab turn lifecycle events. The extension
+// broadcasts turn-start/chunk/done/error/aborted to every tab; subscribers
+// route them into local state. The port auto-reconnects after disconnects
+// (e.g. service worker eviction); on reconnect, onReconnect fires so callers
+// can resync the active chat from IDB.
+export interface BroadcastSubscription {
+    unsubscribe: () => void;
+}
+
+export function subscribeToBroadcast(handlers: {
+    onEvent: (event: BroadcastEvent) => void;
+    onReconnect?: () => void;
+}): BroadcastSubscription {
+    let port: chrome.runtime.Port | null = null;
+    let unsubscribed = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let everConnected = false;
+
+    function connect() {
+        if (unsubscribed) return;
+        if (!extensionId) {
+            // Extension not detected yet — try again shortly.
+            reconnectTimer = setTimeout(connect, 1000);
+            return;
+        }
+        try {
+            port = chrome.runtime.connect(extensionId, { name: 'broadcast' });
+        } catch (err) {
+            console.error(LOG, 'broadcast: connect failed', err);
+            reconnectTimer = setTimeout(connect, 1000);
+            return;
+        }
+        console.log(LOG, 'broadcast: connected');
+
+        if (everConnected) handlers.onReconnect?.();
+        everConnected = true;
+
+        port.onMessage.addListener((event: BroadcastEvent) => {
+            handlers.onEvent(event);
+        });
+
+        port.onDisconnect.addListener(() => {
+            console.log(LOG, 'broadcast: disconnected, reconnecting in 1s');
+            port = null;
+            if (!unsubscribed) reconnectTimer = setTimeout(connect, 1000);
+        });
+    }
+
+    connect();
+
+    return {
+        unsubscribe: () => {
+            unsubscribed = true;
+            if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+            if (port) port.disconnect();
+        },
     };
 }

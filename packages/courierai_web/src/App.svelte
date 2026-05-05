@@ -1,6 +1,7 @@
 <script lang="ts">
     import type {
         Attachment,
+        BroadcastEvent,
         ChatMeta,
         StoredChat,
         UserSettings,
@@ -22,9 +23,12 @@
         loadChatMetas,
         loadChatsByIds,
         loadSettings,
+        type StreamHandle,
         saveChat,
         saveSettings,
         sendToExtension,
+        subscribeToBroadcast,
+        tabId,
         waitForExtension,
     } from './lib/extension';
     import ModelConfig from './lib/ModelConfig.svelte';
@@ -133,13 +137,29 @@
     let isLoadingMore = $state(false);
     let activeChatId = $state<string | null>(null);
     let streamingChatIds = $state<string[]>([]);
+    // Chats currently streaming in *other* tabs. Populated from broadcast
+    // turn-start events; subsequent chunks/done/error/aborted only apply if
+    // the chatId is in this set.
+    let remoteStreamingChatIds = $state<string[]>([]);
     let chatErrors = $state<Record<string, string>>({});
     let searchResults = $state<SearchResult[] | null>(null);
     let searchQuery = $state('');
     let highlightMessageIndex = $state<number | null>(null);
-    let isActiveStreaming = $derived(
+    let isActiveLocalStreaming = $derived(
         streamingChatIds.includes(activeChatId ?? ''),
     );
+    let isActiveRemoteStreaming = $derived(
+        remoteStreamingChatIds.includes(activeChatId ?? ''),
+    );
+    let isActiveStreaming = $derived(
+        isActiveLocalStreaming || isActiveRemoteStreaming,
+    );
+    // Sidebar gets the union — any chat being streamed by any tab gets the
+    // spinner indicator.
+    let allStreamingChatIds = $derived([
+        ...streamingChatIds,
+        ...remoteStreamingChatIds,
+    ]);
     let activeStreamError = $derived(chatErrors[activeChatId ?? ''] ?? null);
     let activeMessages = $derived(
         chats.find((c) => c.id === activeChatId)?.messages ?? [],
@@ -195,8 +215,9 @@
         'no-extension' | 'unsupported-browser' | 'mobile'
     >('no-extension');
 
-    // Disconnect functions for active streams — call to abort a stream early
-    const streamDisconnects = new Map<string, () => void>();
+    // Handles for active streams — abort() hard-cancels (no save), stop()
+    // gracefully halts and saves with truncated visible content.
+    const streamHandles = new Map<string, StreamHandle>();
 
     waitForExtension().then(async (detected) => {
         if (!detected) {
@@ -612,8 +633,8 @@
 
     function removeChat(id: string) {
         console.log(LOG, 'remove chat', id);
-        streamDisconnects.get(id)?.();
-        streamDisconnects.delete(id);
+        streamHandles.get(id)?.abort();
+        streamHandles.delete(id);
         chats = chats.filter((c) => c.id !== id);
         unloadedMetas = unloadedMetas.filter((t) => t.id !== id);
         if (activeChatId === id) {
@@ -682,7 +703,11 @@
     // Streams an assistant response into the trailing placeholder of `chatId`.
     // Caller is responsible for prepping the chat: messages must end with an
     // empty assistant message, streamingChatIds must include chatId, and any
-    // prior stream for this chat must be disconnected.
+    // prior stream for this chat must be aborted.
+    //
+    // The extension owns persistence end-to-end: it acquires a per-chatId
+    // lock, streams, and writes the final StoredChat. The web side only
+    // mirrors chunks into local state for live render.
     function streamForChat(chatId: string) {
         const snap = chats.find((c) => c.id === chatId);
         if (!snap) return;
@@ -701,6 +726,17 @@
               ]
             : history;
 
+        // What the extension persists at end-of-turn (no system prompt, no
+        // empty placeholder, with thinking preserved).
+        const historyForSave: StoredChat['messages'] = snap.messages
+            .slice(0, -1)
+            .map(({ role, content, thinking, attachments }) => ({
+                role,
+                content,
+                ...(thinking ? { thinking } : {}),
+                ...(attachments ? { attachments } : {}),
+            }));
+
         const modelParams = PROVIDERS.find(
             (p) => p.id === snap.providerId,
         )?.models.find((m) => m.id === snap.modelId)?.params;
@@ -714,19 +750,15 @@
             });
         };
 
-        const persistChat = () => {
-            const c = chats.find((c) => c.id === chatId);
-            if (c)
-                saveChat(chatToStored(c), chatToMeta(c)).catch(console.error);
-        };
-
         const finishStream = () => {
-            streamDisconnects.delete(chatId);
+            streamHandles.delete(chatId);
             streamingChatIds = streamingChatIds.filter((id) => id !== chatId);
         };
 
-        const disconnect = sendToExtension(
+        const handle = sendToExtension(
             {
+                chatId,
+                sourceTabId: tabId,
                 provider: snap.providerId,
                 model: snap.modelId,
                 messages: apiMessages,
@@ -738,6 +770,8 @@
                     thinkingLevel: snap.thinkingLevel,
                     adaptiveThinking: snap.adaptiveThinking,
                 },
+                meta: chatToMeta(snap),
+                historyForSave,
             },
             {
                 onChunk: (chunk) => {
@@ -767,7 +801,6 @@
                                 : c,
                         );
                     }
-                    persistChat();
                 },
                 onError: (msg) => {
                     finishStream();
@@ -784,12 +817,178 @@
                             ? c
                             : { ...c, messages: c.messages.slice(0, -1) };
                     });
-                    persistChat();
                 },
             },
         );
-        streamDisconnects.set(chatId, disconnect);
+        streamHandles.set(chatId, handle);
     }
+
+    // --- Cross-tab broadcast handlers ---
+    //
+    // When another tab streams a turn, the extension fans out lifecycle
+    // events to every connected tab. We mirror those into local state so the
+    // sidebar spinner and same-chat live-render work without any tab needing
+    // to poll. The originating tab ignores its own turn-start (sourceTabId
+    // matches our tabId); the source tab's turn port already feeds it chunks.
+
+    function applyRemoteTurnStart(
+        chatId: string,
+        meta: ChatMeta,
+        history: StoredChat['messages'],
+    ) {
+        // The source tab's local streamingChatIds already contains chatId by
+        // the time turn-start arrives — but we filter on sourceTabId at the
+        // event boundary, so by the time we reach here we know it's remote.
+        const placeholder: Message = { role: 'assistant', content: '' };
+        const existing = chats.find((c) => c.id === chatId);
+        if (existing) {
+            chats = chats.map((c) =>
+                c.id === chatId
+                    ? { ...c, messages: [...history, placeholder] }
+                    : c,
+            );
+        } else {
+            const fromUnloaded = unloadedMetas.find((m) => m.id === chatId);
+            const newChat: Chat = {
+                ...meta,
+                messages: [...history, placeholder],
+            };
+            chats = [newChat, ...chats];
+            if (fromUnloaded) {
+                unloadedMetas = unloadedMetas.filter((m) => m.id !== chatId);
+            }
+        }
+        if (!remoteStreamingChatIds.includes(chatId)) {
+            remoteStreamingChatIds = [...remoteStreamingChatIds, chatId];
+        }
+        clearChatError(chatId);
+    }
+
+    function applyRemoteTurnChunk(
+        chatId: string,
+        kind: 'content' | 'thinking',
+        delta: string,
+    ) {
+        if (!remoteStreamingChatIds.includes(chatId)) return;
+        chats = chats.map((c) => {
+            if (c.id !== chatId) return c;
+            if (c.messages.length === 0) return c;
+            const msgs = [...c.messages];
+            const last = msgs[msgs.length - 1];
+            msgs[msgs.length - 1] =
+                kind === 'content'
+                    ? { ...last, content: last.content + delta }
+                    : { ...last, thinking: (last.thinking ?? '') + delta };
+            return { ...c, messages: msgs };
+        });
+    }
+
+    async function applyRemoteTurnDone(chatId: string) {
+        if (!remoteStreamingChatIds.includes(chatId)) return;
+        remoteStreamingChatIds = remoteStreamingChatIds.filter(
+            (id) => id !== chatId,
+        );
+        // Refresh from IDB for canonical state — the extension just saved.
+        const stored = await loadChat(chatId);
+        if (stored) {
+            chats = chats.map((c) =>
+                c.id === chatId
+                    ? {
+                          ...c,
+                          messages: stored.messages,
+                          ...(stored.tokens ? { tokens: stored.tokens } : {}),
+                      }
+                    : c,
+            );
+        }
+    }
+
+    async function applyRemoteTurnAborted(chatId: string) {
+        if (!remoteStreamingChatIds.includes(chatId)) return;
+        remoteStreamingChatIds = remoteStreamingChatIds.filter(
+            (id) => id !== chatId,
+        );
+        // Source tab bailed without saving. IDB has the pre-turn state (or
+        // nothing if this was the chat's very first turn).
+        const stored = await loadChat(chatId);
+        if (stored) {
+            chats = chats.map((c) =>
+                c.id === chatId
+                    ? { ...c, messages: stored.messages }
+                    : c,
+            );
+        } else {
+            chats = chats.filter((c) => c.id !== chatId);
+            if (activeChatId === chatId) activeChatId = null;
+        }
+    }
+
+    async function applyRemoteTurnError(chatId: string, message: string) {
+        if (!remoteStreamingChatIds.includes(chatId)) return;
+        remoteStreamingChatIds = remoteStreamingChatIds.filter(
+            (id) => id !== chatId,
+        );
+        chatErrors = { ...chatErrors, [chatId]: `API Error: ${message}` };
+        const stored = await loadChat(chatId);
+        if (stored) {
+            chats = chats.map((c) =>
+                c.id === chatId
+                    ? {
+                          ...c,
+                          messages: stored.messages,
+                          ...(stored.tokens ? { tokens: stored.tokens } : {}),
+                      }
+                    : c,
+            );
+        }
+    }
+
+    function handleBroadcastEvent(event: BroadcastEvent) {
+        switch (event.type) {
+            case 'turn-start':
+                if (event.sourceTabId === tabId) return;
+                applyRemoteTurnStart(event.chatId, event.meta, event.history);
+                return;
+            case 'turn-chunk':
+                applyRemoteTurnChunk(event.chatId, event.kind, event.delta);
+                return;
+            case 'turn-done':
+                applyRemoteTurnDone(event.chatId);
+                return;
+            case 'turn-error':
+                applyRemoteTurnError(event.chatId, event.message);
+                return;
+            case 'turn-aborted':
+                applyRemoteTurnAborted(event.chatId);
+                return;
+        }
+    }
+
+    async function handleBroadcastReconnect() {
+        // The broadcast port reconnected (e.g. service worker came back from
+        // eviction). We may have missed events — at minimum, refresh the
+        // active chat from IDB so the user sees canonical state.
+        if (!activeChatId) return;
+        const stored = await loadChat(activeChatId);
+        if (!stored) return;
+        chats = chats.map((c) =>
+            c.id === activeChatId
+                ? {
+                      ...c,
+                      messages: stored.messages,
+                      ...(stored.tokens ? { tokens: stored.tokens } : {}),
+                  }
+                : c,
+        );
+    }
+
+    onMount(() => {
+        const sub = subscribeToBroadcast({
+            onEvent: handleBroadcastEvent,
+            onReconnect: handleBroadcastReconnect,
+        });
+        return () => sub.unsubscribe();
+    });
 
     function sendMessage(content: string, attachments?: Attachment[]) {
         if (demoMode) {
@@ -883,8 +1082,8 @@
         if (!chat) return;
 
         // Abort any in-progress stream for this chat
-        streamDisconnects.get(chatId)?.();
-        streamDisconnects.delete(chatId);
+        streamHandles.get(chatId)?.abort();
+        streamHandles.delete(chatId);
         streamingChatIds = streamingChatIds.filter((id) => id !== chatId);
 
         // If assistant message, treat as retrying the user message above it
@@ -907,6 +1106,33 @@
         clearChatError(chatId);
         streamingChatIds = [...streamingChatIds, chatId];
         streamForChat(chatId);
+    }
+
+    // Graceful stop. ChatPanel passes the currently-visible (smoothed) text
+    // so we save exactly what the user saw — any queued-but-not-drained
+    // characters are discarded. Empty stop discards the assistant turn entirely.
+    function stopMessage(truncated: string) {
+        if (!activeChatId) return;
+        const chatId = activeChatId;
+        const handle = streamHandles.get(chatId);
+        if (!handle) return;
+
+        handle.stop(truncated);
+        streamHandles.delete(chatId);
+        streamingChatIds = streamingChatIds.filter((id) => id !== chatId);
+
+        chats = chats.map((c) => {
+            if (c.id !== chatId) return c;
+            if (truncated === '') {
+                return { ...c, messages: c.messages.slice(0, -1) };
+            }
+            const msgs = [...c.messages];
+            msgs[msgs.length - 1] = {
+                ...msgs[msgs.length - 1],
+                content: truncated,
+            };
+            return { ...c, messages: msgs };
+        });
     }
 
     function editMessage(index: number, content: string) {
@@ -950,7 +1176,7 @@
         {activeChatId}
         {hasMoreChats}
         {isLoadingMore}
-        {streamingChatIds}
+        streamingChatIds={allStreamingChatIds}
         {chatErrors}
         {searchResults}
         {searchQuery}
@@ -975,6 +1201,7 @@
         messages={activeMessages}
         modelName={activeModelName}
         isStreaming={isActiveStreaming}
+        streamingLocally={isActiveLocalStreaming}
         streamError={activeStreamError}
         {chatWidth}
         {smoothTextMode}
@@ -984,6 +1211,7 @@
         {highlightMessageIndex}
         {demoMode}
         onsend={sendMessage}
+        onstop={stopMessage}
         onretry={retryMessage}
         onedit={editMessage}
         ondelete={deleteMessage}

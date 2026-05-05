@@ -10,19 +10,56 @@ export interface ChatMessage {
     attachments?: Attachment[];
 }
 
-// Sent over a port (chrome.runtime.connect) for streaming chat
-export interface ExtensionRequest {
+// Sent over a port (chrome.runtime.connect) for streaming chat. The 'start'
+// message kicks off a turn; the extension owns the turn lifecycle from here
+// (lock, stream, save). The web can send 'stop' mid-stream to cleanly halt
+// and save with truncated visible content.
+export interface TurnStartRequest {
+    type: 'start';
+    chatId: string;
+    sourceTabId: string;
     provider: string;
     model: string;
     messages: ChatMessage[];
     params?: Record<string, unknown>;
+    meta: ChatMeta;
+    historyForSave: StoredChat['messages'];
 }
+
+export interface TurnStopRequest {
+    type: 'stop';
+    truncatedContent: string;
+}
+
+export type TurnRequest = TurnStartRequest | TurnStopRequest;
 
 export type ExtensionResponse =
     | { type: 'chunk'; content: string }
     | { type: 'thinking_chunk'; content: string }
     | { type: 'done'; usage?: { inputTokens: number; outputTokens: number } }
     | { type: 'error'; message: string };
+
+// Sent on the long-lived 'broadcast' port from the extension to every
+// connected tab so tabs can mirror cross-tab turn lifecycle. The originating
+// tab ignores its own turn-start (sourceTabId === own tabId); other events
+// are classified by membership in remoteStreamingChatIds.
+export type BroadcastEvent =
+    | {
+          type: 'turn-start';
+          chatId: string;
+          sourceTabId: string;
+          meta: ChatMeta;
+          history: StoredChat['messages'];
+      }
+    | {
+          type: 'turn-chunk';
+          chatId: string;
+          kind: 'content' | 'thinking';
+          delta: string;
+      }
+    | { type: 'turn-done'; chatId: string }
+    | { type: 'turn-error'; chatId: string; message: string }
+    | { type: 'turn-aborted'; chatId: string };
 
 export interface StreamUsage {
     inputTokens: number;
