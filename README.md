@@ -1,2 +1,5 @@
 # ✉️CourierAI
-Chat with AI. No subscription rate limits. Pay as you go. Bring your own keys.
+<!-- permissions-test: README edit succeeded -->
+Chat with AI. No subscription rate limits. Bring your own keys. Pay as you go.
+
+TODO: finish

@@ -7,8 +7,8 @@ export type SmoothMode =
     | 'dump-on-complete'
     | 'raw';
 
-const DRAIN_CHARS_PER_SEC = 60;
-const DRAIN_CHARS_PER_SEC_BOOST = 300;
+const DRAIN_CHARS_PER_SEC = 300;
+const DRAIN_CHARS_PER_SEC_BOOST = 600;
 
 export interface SmoothTextOpts {
     mode: () => SmoothMode;

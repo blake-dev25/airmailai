@@ -112,6 +112,8 @@
 
     // Model tier — controls which models surface in the picker
     let modelTier = $state<ModelTier>('latest');
+    // Autoscroll — scroll to the bottom as text streams in
+    let autoscroll = $state(false);
 
     // Model config
     const defaultModel = PROVIDERS[0].models[1]; // Sonnet as default
@@ -261,6 +263,9 @@
             modelTier: (v) => {
                 modelTier = v;
             },
+            autoscroll: (v) => {
+                autoscroll = v;
+            },
             providerId: (v) => {
                 providerId = v;
             },
@@ -399,6 +404,7 @@
             smoothTextMode,
             submitKeystroke,
             modelTier,
+            autoscroll,
             providerId,
             modelId,
             temperature,
@@ -1187,6 +1193,7 @@
         bind:smoothTextMode
         bind:submitKeystroke
         bind:modelTier
+        bind:autoscroll
         onnewchat={newChat}
         onselectchat={selectChat}
         ondeletechat={removeChat}
@@ -1206,6 +1213,7 @@
         {chatWidth}
         {smoothTextMode}
         {submitKeystroke}
+        {autoscroll}
         loading={chatLoading}
         bind:systemPrompt
         {highlightMessageIndex}

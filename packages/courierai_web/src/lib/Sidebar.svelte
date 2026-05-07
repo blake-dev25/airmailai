@@ -27,6 +27,7 @@
         smoothTextMode = $bindable(),
         submitKeystroke = $bindable(),
         modelTier = $bindable(),
+        autoscroll = $bindable(),
         onnewchat,
         onselectchat,
         ondeletechat,
@@ -63,6 +64,7 @@
             | 'raw';
         submitKeystroke: 'enter' | 'ctrl+enter';
         modelTier: ModelTier;
+        autoscroll: boolean;
         onnewchat: () => void;
         onselectchat: (id: string, matchIndex?: number | null) => void;
         ondeletechat: (id: string) => void;
@@ -162,16 +164,23 @@
             red: i % 2 === 0,
         };
     });
+
+    const chatItemClass =
+        'flex-1 min-w-0 px-2.5 py-2 bg-transparent border-0 rounded-md cursor-pointer text-left';
+    const chatTitleClass =
+        'block text-sm text-fg overflow-hidden text-ellipsis whitespace-nowrap';
 </script>
 
 <svelte:window onclick={() => closeMenu()} />
 
-<aside class="sidebar">
+<aside
+    class="sidebar w-64 shrink-0 flex flex-col bg-canvas border-r border-border overflow-hidden select-none [&_input]:select-text"
+>
     <svg
         width={sidebarW}
         height={stripeH}
         viewBox="0 0 {sidebarW} {stripeH}"
-        class="airmail-stripe"
+        class="block shrink-0"
         aria-hidden="true"
     >
         <defs>
@@ -180,27 +189,41 @@
             </clipPath>
         </defs>
         <g clip-path="url(#stripe-clip)">
-            <rect width={sidebarW} height={stripeH} fill="var(--color-bg)" />
+            <rect
+                width={sidebarW}
+                height={stripeH}
+                fill="var(--color-canvas)"
+            />
             {#each stripes as stripe}
                 <polygon
                     points={stripe.points}
                     fill={stripe.red
-                        ? 'var(--color-accent)'
-                        : 'var(--color-accent-2)'}
+                        ? 'var(--color-accent-bg)'
+                        : 'var(--color-accent-2-bg)'}
                 />
             {/each}
         </g>
     </svg>
-    <div class="header">
+
+    <div
+        class="flex shrink-0 items-center justify-center gap-2.5 px-4 py-4.5 text-fg border-b border-border"
+    >
         <Icon name="mail" size={32} class="logo-mail" />
-        <span class="logo-text">CourierAI</span>
+        <span
+            class="text-[34px] font-semibold tracking-[-0.02em] font-[Courier,monospace]"
+            >CourierAI</span
+        >
     </div>
 
-    <div class="actions">
-        <div class="search-box">
+    <div
+        class="flex shrink-0 flex-col gap-1.5 p-3 border-b border-border"
+    >
+        <div
+            class="flex items-center gap-2 w-full px-2.5 py-1.75 bg-canvas border border-border rounded-lg box-border opacity-45 transition-[opacity,border-color] duration-150 focus-within:opacity-100 focus-within:border-fg-muted"
+        >
             <Icon name="search" class="search-icon" />
             <input
-                class="search-input"
+                class="flex-1 bg-transparent border-0 outline-none font-sans text-sm text-fg min-w-0 placeholder:text-fg-muted [&::-webkit-search-cancel-button]:appearance-none"
                 type="search"
                 placeholder="Search"
                 bind:value={searchValue}
@@ -219,7 +242,7 @@
             {#if searchValue}
                 <button
                     type="button"
-                    class="search-clear-btn"
+                    class="shrink-0 flex items-center justify-center w-4 h-4 p-0 bg-transparent border-0 rounded-[3px] text-fg-muted cursor-pointer opacity-60 transition-opacity duration-100 hover:opacity-100"
                     onclick={() => {
                         searchValue = '';
                         onclearsearch();
@@ -230,7 +253,11 @@
                 </button>
             {/if}
         </div>
-        <button type="button" class="new-chat-btn" onclick={onnewchat}>
+        <button
+            type="button"
+            class="flex items-center justify-center gap-2 w-full px-3 py-2.25 bg-accent-bg text-on-accent-bg border-0 rounded-lg text-sm font-medium cursor-pointer transition-[background-color] duration-150 hover:bg-accent-bg-hover"
+            onclick={onnewchat}
+        >
             <Icon name="plus" />
             New Chat
         </button>
@@ -238,40 +265,54 @@
 
     {#if searchResults !== null}
         <nav
-            class="history search-mode"
-            class:hovered={historyHovered}
+            class={[
+                'history search-mode flex-1 min-h-0 overflow-y-auto px-2 py-1',
+                historyHovered && 'hovered',
+            ]}
             aria-label="Search results"
             onmouseenter={() => (historyHovered = true)}
             onmouseleave={() => (historyHovered = false)}
         >
-            <p class="section-label">
+            <p
+                class="px-2.5 pt-2.5 pb-1 text-[0.6875rem] font-semibold tracking-[0.06em] uppercase text-fg-muted m-0"
+            >
                 {searchResults.length} result{searchResults.length === 1
                     ? ''
                     : 's'}
             </p>
             {#if searchResults.length === 0}
-                <p class="empty">No matches found</p>
+                <p class="px-2 pt-2 pb-5 text-sm text-fg text-center m-0">
+                    No matches found
+                </p>
             {:else}
                 {#each searchResults as result (result.id)}
                     <div
-                        class="chat-row"
-                        class:active={result.id === activeChatId}
+                        class={[
+                            'group flex items-center rounded-md mb-px transition-[background-color] duration-100 hover:bg-surface-raised',
+                            result.id === activeChatId && 'bg-surface-raised',
+                        ]}
                     >
                         <button
                             type="button"
-                            class="chat-item"
+                            class={chatItemClass}
                             onclick={() =>
                                 onselectchat(result.id, result.matchIndex)}
                             title={result.title}
                         >
-                            <span class="chat-title"
+                            <span
+                                class={[
+                                    chatTitleClass,
+                                    result.id === activeChatId &&
+                                        'text-accent-fg',
+                                ]}
                                 >{@html highlightSnippet(
                                     result.title,
                                     searchQuery,
                                 )}</span
                             >
                             {#if result.snippet}
-                                <span class="search-snippet"
+                                <span
+                                    class="block text-[0.6875rem] text-fg-muted overflow-hidden text-ellipsis whitespace-nowrap mt-px"
                                     >{@html highlightSnippet(
                                         result.snippet,
                                         searchQuery,
@@ -285,17 +326,25 @@
         </nav>
     {:else}
         <nav
-            class="history chat-mode"
-            class:hovered={historyHovered}
+            class={[
+                'history chat-mode flex-1 min-h-0 px-2 py-1 flex flex-col',
+                historyHovered && 'hovered',
+            ]}
             aria-label="Chat history"
             onmouseenter={() => (historyHovered = true)}
             onmouseleave={() => (historyHovered = false)}
         >
-            <p class="section-label">Recent Chats</p>
+            <p
+                class="px-2.5 pt-2.5 pb-1 text-[0.6875rem] font-semibold tracking-[0.06em] uppercase text-fg-muted m-0"
+            >
+                Recent Chats
+            </p>
             {#if chats.length === 0}
-                <p class="empty">No conversations yet</p>
+                <p class="px-2 pt-2 pb-5 text-sm text-fg text-center m-0">
+                    No conversations yet
+                </p>
             {:else}
-                <div class="chat-vlist-wrapper">
+                <div class="flex-1 min-h-0">
                     <VList
                         bind:this={listRef}
                         data={chats}
@@ -306,12 +355,15 @@
                     >
                         {#snippet children(chat: Chat)}
                             <div
-                                class="chat-row"
-                                class:active={chat.id === activeChatId}
+                                class={[
+                                    'group flex items-center rounded-md mb-px transition-[background-color] duration-100 hover:bg-surface-raised',
+                                    chat.id === activeChatId &&
+                                        'bg-surface-raised',
+                                ]}
                             >
                                 {#if renamingChatId === chat.id}
                                     <input
-                                        class="chat-rename-input"
+                                        class="flex-1 min-w-0 px-2.5 py-1.5 bg-canvas border border-accent-fg rounded-md outline-none font-sans text-sm text-fg"
                                         use:focusAndSelect
                                         bind:value={renameValue}
                                         onblur={commitRename}
@@ -330,32 +382,39 @@
                                 {:else}
                                     <button
                                         type="button"
-                                        class="chat-item"
+                                        class={chatItemClass}
                                         onclick={() => onselectchat(chat.id)}
                                         title={chat.title}
                                     >
-                                        <span class="chat-title"
-                                            >{chat.title}</span
+                                        <span
+                                            class={[
+                                                chatTitleClass,
+                                                chat.id === activeChatId &&
+                                                    'text-accent-fg',
+                                            ]}>{chat.title}</span
                                         >
                                     </button>
                                 {/if}
                                 {#if streamingChatIds.includes(chat.id) && chat.id !== activeChatId}
                                     <span
-                                        class="chat-status"
+                                        class="shrink-0 flex items-center justify-center w-5 h-5 mr-0.5 text-xs font-bold text-fg-muted"
                                         aria-label="Streaming"
                                     >
                                         <Icon name="spinner" />
                                     </span>
                                 {:else if chatErrors[chat.id]}
                                     <span
-                                        class="chat-status chat-status--error"
+                                        class="shrink-0 flex items-center justify-center w-5 h-5 mr-0.5 text-xs font-bold text-accent-fg"
                                         aria-label="Error">!</span
                                     >
                                 {/if}
                                 <button
                                     type="button"
-                                    class="menu-btn"
-                                    class:active={openMenuChat?.id === chat.id}
+                                    class={[
+                                        'menu-btn shrink-0 flex items-center justify-center w-5 h-5 p-0 mr-1.5 bg-transparent border-0 rounded cursor-pointer text-fg-muted opacity-0 transition-[opacity,color,background-color] duration-100 group-hover:opacity-100 hover:text-accent-fg hover:bg-surface-sunken',
+                                        openMenuChat?.id === chat.id &&
+                                            'opacity-100! text-accent-fg! bg-surface-sunken!',
+                                    ]}
                                     aria-label="Chat options"
                                     onclick={(e) => openMenu(e, chat)}
                                 >
@@ -369,11 +428,13 @@
         </nav>
     {/if}
 
-    <div class="footer">
+    <div class="shrink-0 px-3 py-3.25 border-t border-border">
         <button
             type="button"
-            class="settings-btn"
-            class:active={showSettings}
+            class={[
+                'flex items-center gap-2 w-full h-[calc(20px+0.875rem*1.5)] px-2.5 bg-transparent border-0 rounded-md text-sm text-fg cursor-pointer transition-[background-color,color] duration-100 hover:bg-surface-raised',
+                showSettings && 'bg-surface-raised text-accent-fg',
+            ]}
             onclick={() => {
                 if (demoMode) {
                     onextensionneeded();
@@ -390,12 +451,12 @@
 
 {#if openMenuChat}
     <div
-        class="chat-menu"
+        class="fixed z-200 min-w-35 flex flex-col bg-surface-raised border border-border rounded-lg shadow-[0_4px_16px_rgba(0,0,0,0.18)] p-1 select-none"
         style="top: {menuPos.top}px; left: {menuPos.left}px;"
     >
         <button
             type="button"
-            class="chat-menu-item"
+            class="flex items-center gap-2 w-full px-2.5 py-1.75 bg-transparent border-0 rounded text-sm font-sans text-fg cursor-pointer text-left transition-[background-color,color] duration-100 hover:bg-canvas"
             onclick={(e) => {
                 e.stopPropagation();
                 startRename(openMenuChat!.id, openMenuChat!.title);
@@ -406,7 +467,7 @@
         </button>
         <button
             type="button"
-            class="chat-menu-item"
+            class="flex items-center gap-2 w-full px-2.5 py-1.75 bg-transparent border-0 rounded text-sm font-sans text-fg cursor-pointer text-left transition-[background-color,color] duration-100 hover:bg-canvas"
             onclick={(e) => {
                 e.stopPropagation();
                 onexportchat(openMenuChat!.id);
@@ -416,10 +477,10 @@
             <Icon name="download" />
             Export
         </button>
-        <div class="chat-menu-divider"></div>
+        <div class="h-px bg-border my-0.75"></div>
         <button
             type="button"
-            class="chat-menu-item chat-menu-item--danger"
+            class="flex items-center gap-2 w-full px-2.5 py-1.75 bg-transparent border-0 rounded text-sm font-sans text-fg cursor-pointer text-left transition-[background-color,color] duration-100 hover:bg-canvas hover:text-accent-fg"
             onclick={(e) => {
                 e.stopPropagation();
                 ondeletechat(openMenuChat!.id);
@@ -440,418 +501,57 @@
         bind:smoothTextMode
         bind:submitKeystroke
         bind:modelTier
+        bind:autoscroll
         onclose={() => (showSettings = false)}
     />
 {/if}
 
 <style>
-    .sidebar {
-        width: 256px;
-        flex-shrink: 0;
-        display: flex;
-        flex-direction: column;
-        background-color: var(--color-bg);
-        border-right: 1px solid var(--color-border);
-        overflow: hidden;
-        -webkit-user-select: none;
-        user-select: none;
-    }
-
-    .sidebar input {
-        -webkit-user-select: text;
-        user-select: text;
-    }
-
-    .airmail-stripe {
-        display: block;
-        flex-shrink: 0;
-    }
-
-    .header {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 10px;
-        padding: 18px 16px;
-        color: var(--color-text);
-        border-bottom: 1px solid var(--color-border);
-        flex-shrink: 0;
-    }
-
-    .logo-text {
-        font-size: 34px;
-        font-weight: 600;
-        font-family: Courier, monospace;
-        letter-spacing: -0.02em;
-    }
-
-    .actions {
-        padding: 12px 12px 12px;
-        flex-shrink: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        border-bottom: 1px solid var(--color-border);
-    }
-
-    .search-box {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        width: 100%;
-        padding: 7px 10px;
-        background-color: var(--color-bg);
-        border: 1px solid var(--color-border);
-        border-radius: 8px;
-        box-sizing: border-box;
-        opacity: 0.45;
-        transition:
-            opacity 0.15s,
-            border-color 0.15s;
-    }
-
-    .search-box:focus-within {
-        opacity: 1;
-        border-color: var(--color-text-muted);
-    }
+    /* CSS islands — passed-through Icon classes + scrollbar pseudos with hover-driven visibility */
 
     :global(.search-icon) {
-        color: var(--color-text);
+        color: var(--color-fg);
     }
 
     :global(.logo-mail) {
         transform: translateY(-2px);
     }
 
-    .search-input {
-        flex: 1;
-        background: none;
-        border: none;
-        outline: none;
-        font-family: var(--font-sans);
-        font-size: 0.8125rem;
-        color: var(--color-text);
-        min-width: 0;
-    }
-
-    .search-input::placeholder {
-        color: var(--color-text);
-    }
-
-    .search-input::-webkit-search-cancel-button {
-        -webkit-appearance: none;
-    }
-
-    .search-clear-btn {
-        flex-shrink: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 16px;
-        height: 16px;
-        padding: 0;
-        background: none;
-        border: none;
-        border-radius: 3px;
-        color: var(--color-text-muted);
-        cursor: pointer;
-        opacity: 0.6;
-        transition: opacity 0.1s;
-    }
-
-    .search-clear-btn:hover {
-        opacity: 1;
-    }
-
-    .new-chat-btn {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 8px;
-        width: 100%;
-        padding: 9px 12px;
-        background-color: var(--color-accent);
-        color: var(--color-bg);
-        border: none;
-        border-radius: 8px;
-        font-size: 0.8125rem;
-        font-weight: 500;
-        cursor: pointer;
-        transition: background-color 0.15s;
-    }
-
-    .new-chat-btn:hover {
-        background-color: var(--color-accent-hover);
-    }
-
-    .history {
-        flex: 1;
-        min-height: 0;
-        padding: 4px 8px;
-    }
-
-    .history.search-mode {
-        overflow-y: auto;
-    }
-
+    /* Search-mode scrollbar — hidden until parent .history.hovered, then shows the thumb */
     .history.search-mode::-webkit-scrollbar {
         width: 3px;
     }
-
     .history.search-mode::-webkit-scrollbar-track {
         background: transparent;
     }
-
     .history.search-mode::-webkit-scrollbar-thumb {
         background-color: transparent;
         border-radius: 3px;
     }
-
     .history.search-mode.hovered::-webkit-scrollbar-thumb {
         background-color: var(--color-border);
     }
 
-    .history.chat-mode {
-        display: flex;
-        flex-direction: column;
-    }
-
-    .chat-vlist-wrapper {
-        flex: 1;
-        min-height: 0;
-    }
-
+    /* Chat-mode scrollbar — same hover-reveal, but on the inner virtua list (passed via class) */
     :global(.chat-vlist::-webkit-scrollbar) {
         width: 3px;
     }
-
     :global(.chat-vlist::-webkit-scrollbar-track) {
         background: transparent;
     }
-
     :global(.chat-vlist::-webkit-scrollbar-thumb) {
         background-color: transparent;
         border-radius: 3px;
     }
-
     .history.chat-mode.hovered :global(.chat-vlist::-webkit-scrollbar-thumb) {
         background-color: var(--color-border);
     }
 
-    .section-label {
-        padding: 10px 10px 4px;
-        font-size: 0.6875rem;
-        font-weight: 600;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        color: var(--color-text-muted);
-    }
-
-    .empty {
-        padding: 8px 8px 20px;
-        font-size: 0.8125rem;
-        color: var(--color-text);
-        text-align: center;
-    }
-
-    .chat-row {
-        display: flex;
-        align-items: center;
-        border-radius: 6px;
-        margin-bottom: 1px;
-        transition: background-color 0.1s;
-    }
-
-    .chat-row:hover {
-        background-color: var(--color-surface-raised);
-    }
-
-    .chat-row.active {
-        background-color: var(--color-surface-raised);
-    }
-
-    .chat-item {
-        flex: 1;
-        min-width: 0;
-        padding: 8px 10px;
-        background: none;
-        border: none;
-        border-radius: 6px;
-        cursor: pointer;
-        text-align: left;
-    }
-
-    .chat-title {
-        display: block;
-        font-size: 0.8125rem;
-        color: var(--color-text);
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-
-    .chat-row.active .chat-title {
-        color: var(--color-accent);
-    }
-
-    .menu-btn {
-        flex-shrink: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 20px;
-        height: 20px;
-        padding: 0;
-        margin-right: 6px;
-        background: none;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        color: var(--color-text-muted);
-        opacity: 0;
-        transition:
-            opacity 0.1s,
-            color 0.1s,
-            background-color 0.1s;
-    }
-
-    .chat-row:hover .menu-btn,
-    .menu-btn.active {
-        opacity: 1;
-    }
-
-    .menu-btn:hover,
-    .menu-btn.active {
-        color: var(--color-accent);
-        background-color: var(--color-surface-sunken, var(--color-bg));
-    }
-
-    .chat-rename-input {
-        flex: 1;
-        min-width: 0;
-        padding: 6px 10px;
-        background: var(--color-bg);
-        border: 1px solid var(--color-accent);
-        border-radius: 6px;
-        outline: none;
-        font-family: var(--font-sans);
-        font-size: 0.8125rem;
-        color: var(--color-text);
-    }
-
-    .chat-menu {
-        position: fixed;
-        z-index: 200;
-        min-width: 140px;
-        background-color: var(--color-surface-raised);
-        border: 1px solid var(--color-border);
-        border-radius: 8px;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
-        padding: 4px;
-        display: flex;
-        flex-direction: column;
-        -webkit-user-select: none;
-        user-select: none;
-    }
-
-    .chat-menu-divider {
-        height: 1px;
-        background-color: var(--color-border);
-        margin: 3px 0;
-    }
-
-    .chat-menu-item {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        width: 100%;
-        padding: 7px 10px;
-        background: none;
-        border: none;
-        border-radius: 5px;
-        font-size: 0.8125rem;
-        font-family: var(--font-sans);
-        color: var(--color-text);
-        cursor: pointer;
-        text-align: left;
-        transition:
-            background-color 0.1s,
-            color 0.1s;
-    }
-
-    .chat-menu-item:hover {
-        background-color: var(--color-bg);
-    }
-
-    .chat-menu-item--danger:hover {
-        color: var(--color-accent);
-    }
-
-    .chat-status {
-        flex-shrink: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 20px;
-        height: 20px;
-        margin-right: 2px;
-        font-size: 0.75rem;
-        font-weight: 700;
-        color: var(--color-text-muted);
-    }
-
-    .chat-status--error {
-        color: var(--color-accent);
-    }
-
-    .search-snippet {
-        display: block;
-        font-size: 0.6875rem;
-        color: var(--color-text-muted);
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        margin-top: 1px;
-    }
-
+    /* Search-mark — applied to {@html}-injected markup, can't take utility classes */
     :global(.search-mark) {
-        background-color: var(--color-accent-2);
-        color: var(--color-surface-sunken);
+        background-color: var(--color-accent-2-bg);
+        color: var(--color-on-accent-2-bg);
         border-radius: 2px;
         padding: 0 1px;
-    }
-
-    .footer {
-        padding: 13px 12px;
-        border-top: 1px solid var(--color-border);
-        flex-shrink: 0;
-    }
-
-    .settings-btn {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        width: 100%;
-        height: calc(20px + 0.875rem * 1.5);
-        padding: 0 10px;
-        background: none;
-        border: none;
-        border-radius: 6px;
-        font-size: 0.8125rem;
-        color: var(--color-text);
-        cursor: pointer;
-        transition:
-            background-color 0.1s,
-            color 0.1s;
-    }
-
-    .settings-btn:hover {
-        background-color: var(--color-surface-raised);
-        color: var(--color-text);
-    }
-
-    .settings-btn.active {
-        background-color: var(--color-surface-raised);
-        color: var(--color-accent);
     }
 </style>

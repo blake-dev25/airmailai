@@ -72,7 +72,7 @@
         font-family: var(--font-mono);
         font-size: 0.7rem;
         font-style: normal;
-        color: var(--color-text-muted);
+        color: var(--color-fg-muted);
         padding: 0 2px;
     }
 
@@ -80,7 +80,7 @@
         background: none;
         border: 1px solid var(--color-border);
         border-radius: 4px;
-        color: var(--color-text-muted);
+        color: var(--color-fg-muted);
         cursor: pointer;
         font-family: var(--font-mono);
         font-size: 0.7rem;
@@ -92,8 +92,8 @@
     }
 
     :global(.prose .code-copy:hover) {
-        border-color: var(--color-text-muted);
-        color: var(--color-text);
+        border-color: var(--color-fg-muted);
+        color: var(--color-fg);
     }
 
     /* Shiki outputs <pre> with inline background — give it our surface token as fallback */
@@ -120,12 +120,12 @@
     }
 
     :global(.prose blockquote) {
-        border-left-color: var(--color-accent);
-        color: var(--color-text-muted);
+        border-left-color: var(--color-accent-fg);
+        color: var(--color-fg-muted);
     }
 
     :global(.prose a) {
-        color: var(--color-accent);
+        color: var(--color-accent-fg);
     }
     :global(.prose hr) {
         border-color: var(--color-border);
@@ -142,7 +142,7 @@
     :global(.prose mark) {
         background-color: color-mix(
             in srgb,
-            var(--color-accent) 25%,
+            var(--color-accent-bg) 25%,
             transparent
         );
         color: inherit;
@@ -156,6 +156,6 @@
         padding-top: 0.5em;
         border-top: 1px solid var(--color-border);
         font-size: 0.8em;
-        color: var(--color-text-muted);
+        color: var(--color-fg-muted);
     }
 </style>

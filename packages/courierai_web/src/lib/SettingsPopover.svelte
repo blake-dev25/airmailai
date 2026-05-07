@@ -16,6 +16,7 @@
         smoothTextMode = $bindable(),
         submitKeystroke = $bindable(),
         modelTier = $bindable(),
+        autoscroll = $bindable(),
         onclose,
     }: {
         theme: string;
@@ -28,6 +29,7 @@
             | 'raw';
         submitKeystroke: 'enter' | 'ctrl+enter';
         modelTier: ModelTier;
+        autoscroll: boolean;
         onclose: () => void;
     } = $props();
 
@@ -48,12 +50,10 @@
         modelTier = checked ? 'legacy' : 'previous';
     }
 
-    // Input values (cleared after saving — we never display stored keys)
     let keyInputs = $state<Record<string, string>>(
         Object.fromEntries(PROVIDERS.map((p) => [p.id, ''])),
     );
 
-    // Which providers have a key saved in the extension
     let savedKeys = $state<Record<string, boolean>>(
         Object.fromEntries(PROVIDERS.map((p) => [p.id, false])),
     );
@@ -80,64 +80,131 @@
         const ok = await clearApiKey(providerId);
         if (ok) savedKeys[providerId] = false;
     }
+
+    const tabBase =
+        'flex-1 px-4 py-3 bg-transparent border-0 text-sm text-fg cursor-pointer transition-[color,background-color] duration-100 hover:bg-surface-raised';
+    const tabActive =
+        'text-accent-fg font-medium shadow-[inset_0_-2px_0_var(--color-accent-fg)]';
+
+    const rowBase = 'flex flex-col gap-2';
+    const themeRow = 'flex-row! items-center justify-between';
+
+    const labelClass = 'text-sm text-fg font-medium';
+
+    const selectClass =
+        'w-auto px-2.5 py-[7px] bg-surface-raised border border-border rounded-md text-sm text-fg cursor-pointer';
+
+    const rangeClass =
+        'range-styled appearance-none w-full h-1 bg-surface-raised border-0 rounded p-0 cursor-pointer outline-none';
+
+    const checkboxClass =
+        'shrink-0 w-4 h-4 m-0 cursor-pointer accent-accent-bg';
+
+    const tdBase = 'py-2 px-3 text-fg align-middle';
 </script>
 
-<div class="backdrop" onclick={onclose} aria-hidden="true"></div>
+<div
+    class="fixed inset-0 z-49 bg-black/30"
+    onclick={onclose}
+    aria-hidden="true"
+></div>
 
-<div class="popover" role="dialog" aria-label="Settings">
-    <div class="tabs">
+<div
+    class="popover fixed top-1/2 left-1/2 z-50 flex w-[min(560px,calc(100vw-48px))] max-h-[calc(100vh-96px)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-border bg-canvas shadow-[0_8px_40px_oklch(0%_0_0/20%)] select-none [&_input]:select-text"
+    role="dialog"
+    aria-label="Settings"
+>
+    <div class="flex border-b border-border">
         <button
             type="button"
-            class:active={activeTab === 'keys'}
+            class={[tabBase, activeTab === 'keys' && tabActive]}
             onclick={() => (activeTab = 'keys')}
         >
             API Keys
         </button>
         <button
             type="button"
-            class:active={activeTab === 'ui'}
+            class={[tabBase, activeTab === 'ui' && tabActive]}
             onclick={() => (activeTab = 'ui')}
         >
             UI
         </button>
         <button
             type="button"
-            class:active={activeTab === 'changelog'}
+            class={[tabBase, activeTab === 'changelog' && tabActive]}
             onclick={() => (activeTab = 'changelog')}
         >
             Changelog
         </button>
     </div>
 
-    <div class="content">
+    <div class="grid flex-1 overflow-y-auto p-5">
+        <!-- Tab panels share grid cell so popover height = tallest panel -->
         <div
-            class="tab-panel"
-            class:active={activeTab === 'keys'}
+            class={[
+                'col-start-1 row-start-1 flex flex-col gap-5 invisible',
+                activeTab === 'keys' && 'visible',
+            ]}
             aria-hidden={activeTab !== 'keys'}
         >
-            <table class="keys-table">
+            <table class="w-full border-collapse text-sm">
                 <thead>
                     <tr>
-                        <th>Provider</th>
-                        <th>Saved</th>
-                        <th>API Key</th>
-                        <th>Options</th>
+                        <th
+                            class="text-left font-medium text-fg px-3 pb-2.5 border-b border-border"
+                            >Provider</th
+                        >
+                        <th
+                            class="text-center font-medium text-fg px-3 pb-2.5 border-b border-border"
+                            >Saved</th
+                        >
+                        <th
+                            class="text-left font-medium text-fg px-3 pb-2.5 border-b border-border w-full"
+                            >API Key</th
+                        >
+                        <th
+                            class="text-left font-medium text-fg px-3 pb-2.5 border-b border-border whitespace-nowrap"
+                            >Options</th
+                        >
                     </tr>
                 </thead>
                 <tbody>
-                    {#each PROVIDERS as provider (provider.id)}
+                    {#each PROVIDERS as provider, i (provider.id)}
+                        {@const isLast = i === PROVIDERS.length - 1}
                         <tr>
-                            <td class="provider-name">{provider.name}</td>
-                            <td class="saved-cell">
+                            <td
+                                class={[
+                                    tdBase,
+                                    'font-medium whitespace-nowrap',
+                                    !isLast && 'border-b border-border',
+                                ]}>{provider.name}</td
+                            >
+                            <td
+                                class={[
+                                    tdBase,
+                                    'text-center [&_svg]:block [&_svg]:mx-auto',
+                                    !isLast && 'border-b border-border',
+                                ]}
+                            >
                                 {#if savedKeys[provider.id]}
                                     <Icon name="check" class="icon-check" />
                                 {:else}
-                                    <Icon name="close" size={15} class="icon-x" />
+                                    <Icon
+                                        name="close"
+                                        size={15}
+                                        class="icon-x"
+                                    />
                                 {/if}
                             </td>
-                            <td class="key-cell">
+                            <td
+                                class={[
+                                    tdBase,
+                                    'w-full',
+                                    !isLast && 'border-b border-border',
+                                ]}
+                            >
                                 <input
-                                    class="key-input"
+                                    class="w-full px-2.5 py-1.5 bg-surface-raised border border-border rounded-md text-sm text-fg font-mono box-border outline-none transition-[border-color] duration-150 focus:border-accent-fg placeholder:font-sans placeholder:text-fg-muted"
                                     type="password"
                                     placeholder="Paste key…"
                                     bind:value={keyInputs[provider.id]}
@@ -147,11 +214,17 @@
                                     }}
                                 />
                             </td>
-                            <td class="options-cell">
-                                <div class="options-btns">
+                            <td
+                                class={[
+                                    tdBase,
+                                    'whitespace-nowrap',
+                                    !isLast && 'border-b border-border',
+                                ]}
+                            >
+                                <div class="flex items-center gap-1.5">
                                     <button
                                         type="button"
-                                        class="action-btn save-btn"
+                                        class="shrink-0 px-2.5 py-1.25 border-0 rounded-md text-xs font-medium cursor-pointer whitespace-nowrap transition-[background-color,opacity] duration-150 disabled:opacity-[0.35] disabled:cursor-not-allowed bg-accent-bg text-on-accent-bg enabled:hover:bg-accent-bg-hover"
                                         disabled={!keyInputs[
                                             provider.id
                                         ].trim()}
@@ -161,7 +234,7 @@
                                     </button>
                                     <button
                                         type="button"
-                                        class="action-btn clear-btn"
+                                        class="shrink-0 px-2.5 py-1.25 border border-border rounded-md text-xs font-medium cursor-pointer whitespace-nowrap transition-[background-color,opacity] duration-150 disabled:opacity-[0.35] disabled:cursor-not-allowed bg-surface-raised text-fg enabled:hover:bg-surface-sunken"
                                         disabled={!savedKeys[provider.id]}
                                         onclick={() => handleClear(provider.id)}
                                     >
@@ -176,62 +249,90 @@
         </div>
 
         <div
-            class="tab-panel"
-            class:active={activeTab === 'ui'}
+            class={[
+                'col-start-1 row-start-1 flex flex-col gap-5 invisible',
+                activeTab === 'ui' && 'visible',
+            ]}
             aria-hidden={activeTab !== 'ui'}
         >
-            <div class="row theme-row">
-                <label for="theme-select">Theme</label>
-                <select id="theme-select" bind:value={theme}>
+            <div class={[rowBase, themeRow]}>
+                <label for="theme-select" class={labelClass}>Theme</label>
+                <select
+                    id="theme-select"
+                    class={selectClass}
+                    bind:value={theme}
+                >
                     {#each THEMES as t (t.id)}
                         <option value={t.id}>{t.name}</option>
                     {/each}
                 </select>
             </div>
-            <div class="row">
-                <label for="font-size">Text Size</label>
+            <div class={rowBase}>
+                <label for="font-size" class={labelClass}>Text Size</label>
                 <input
                     type="range"
                     id="font-size"
+                    class={rangeClass}
                     min="0"
                     max="5"
                     step="1"
                     bind:value={fontSizeIndex}
                 />
-                <div class="range-hints">
+                <div
+                    class="flex justify-between text-[0.6875rem] text-fg -mt-1"
+                >
                     <span>Smaller</span>
                     <span>Larger</span>
                 </div>
             </div>
-            <div class="row">
-                <label for="chat-width">Chat Width</label>
+            <div class={rowBase}>
+                <label for="chat-width" class={labelClass}>Chat Width</label>
                 <input
                     type="range"
                     id="chat-width"
+                    class={rangeClass}
                     min="0"
                     max="100"
                     step="1"
                     bind:value={chatWidth}
                 />
-                <div class="range-hints">
+                <div
+                    class="flex justify-between text-[0.6875rem] text-fg -mt-1"
+                >
                     <span>Narrower</span>
                     <span>Wider</span>
                 </div>
             </div>
-            <div class="row theme-row">
-                <label for="submit-keystroke">Submit Keystroke</label>
-                <select id="submit-keystroke" bind:value={submitKeystroke}>
+            <div class={[rowBase, themeRow]}>
+                <label for="submit-keystroke" class={labelClass}
+                    >Submit Keystroke</label
+                >
+                <select
+                    id="submit-keystroke"
+                    class={selectClass}
+                    bind:value={submitKeystroke}
+                >
                     <option value="enter">Enter</option>
                     <option value="ctrl+enter">Control+Enter</option>
                 </select>
             </div>
-            <div class="row theme-row">
-                <label for="show-previous"
+            <div class={[rowBase, themeRow]}>
+                <label for="autoscroll" class={labelClass}>Autoscroll</label>
+                <input
+                    id="autoscroll"
+                    type="checkbox"
+                    class={checkboxClass}
+                    bind:checked={autoscroll}
+                />
+            </div>
+            <div class={[rowBase, themeRow]}>
+                <label for="show-previous" class={labelClass}
                     >Show Previous Generation Models</label
                 >
                 <input
                     id="show-previous"
                     type="checkbox"
+                    class={checkboxClass}
                     checked={showPrevious}
                     onchange={(e) =>
                         togglePrevious(
@@ -239,21 +340,28 @@
                         )}
                 />
             </div>
-            <div class="row theme-row">
-                <div class="label-with-info">
-                    <label for="smooth-text-mode">Smooth Text Rendering</label>
+            <div class={[rowBase, themeRow]}>
+                <div class="flex items-center gap-1.25">
+                    <label for="smooth-text-mode" class={labelClass}
+                        >Smooth Text Rendering</label
+                    >
                     <span
-                        class="info-icon"
+                        class="info-icon relative flex items-center text-fg-muted opacity-60 cursor-default hover:opacity-100"
                         aria-label="About smooth text rendering"
                     >
                         <Icon name="info" />
-                        <span class="info-tooltip"
+                        <span
+                            class="info-tooltip hidden absolute bottom-[calc(100%+6px)] left-1/2 -translate-x-1/2 w-55 px-2.5 py-2 bg-surface-raised border border-border rounded-[7px] text-xs leading-normal text-fg font-normal shadow-[0_4px_16px_oklch(0%_0_0/15%)] pointer-events-none z-10"
                             >Changes how AI messages are displayed. Sorted from
                             slow/pretty to fast/less pretty.</span
                         >
                     </span>
                 </div>
-                <select id="smooth-text-mode" bind:value={smoothTextMode}>
+                <select
+                    id="smooth-text-mode"
+                    class={selectClass}
+                    bind:value={smoothTextMode}
+                >
                     <option value="smooth">Normal rendering</option>
                     <option value="boost-on-complete"
                         >Fast rendering upon message completion</option
@@ -267,13 +375,19 @@
                 </select>
             </div>
 
-            <details class="advanced">
-                <summary>Advanced</summary>
-                <div class="row theme-row">
-                    <label for="show-legacy">Show Legacy Models</label>
+            <details class="advanced -mt-2 border-t border-border pt-4">
+                <summary
+                    class="cursor-pointer text-xs font-medium text-fg-muted uppercase tracking-wider py-0.5 select-none"
+                    >Advanced</summary
+                >
+                <div class={[rowBase, themeRow, 'mt-3.5']}>
+                    <label for="show-legacy" class={labelClass}
+                        >Show Legacy Models</label
+                    >
                     <input
                         id="show-legacy"
                         type="checkbox"
+                        class={checkboxClass}
                         checked={showLegacy}
                         onchange={(e) =>
                             toggleLegacy(
@@ -285,213 +399,54 @@
         </div>
 
         <div
-            class="tab-panel changelog-panel"
-            class:active={activeTab === 'changelog'}
+            class={[
+                'col-start-1 row-start-1 flex flex-col gap-5 invisible select-text',
+                activeTab === 'changelog' && 'visible',
+            ]}
             aria-hidden={activeTab !== 'changelog'}
         >
-            <h3 class="version-heading">v{__APP_VERSION__}</h3>
-            <p class="todo">TODO - add changelog</p>
+            <h3 class="text-sm font-semibold text-fg m-0 py-1">
+                v{__APP_VERSION__}
+            </h3>
+            <p class="text-sm text-fg m-0 py-1">TODO - add changelog</p>
         </div>
     </div>
 </div>
 
 <style>
-    .backdrop {
-        position: fixed;
-        inset: 0;
-        z-index: 49;
-        background-color: oklch(0% 0 0 / 30%);
-    }
+    /* CSS islands — pseudo-element-heavy patterns that don't translate well to utilities */
 
-    .popover {
-        position: fixed;
-        top: 50%;
-        left: 50%;
-        translate: -50% -50%;
-        width: min(560px, calc(100vw - 48px));
-        max-height: calc(100vh - 96px);
-        z-index: 50;
-        background-color: var(--color-bg);
-        border: 1px solid var(--color-border);
-        border-radius: 12px;
-        box-shadow: 0 8px 40px oklch(0% 0 0 / 20%);
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-        -webkit-user-select: none;
-        user-select: none;
-    }
-
-    .popover input {
-        -webkit-user-select: text;
-        user-select: text;
-    }
-
-    .changelog-panel {
-        -webkit-user-select: text;
-        user-select: text;
-    }
-
-    .tabs {
-        display: flex;
-        border-bottom: 1px solid var(--color-border);
-    }
-
-    .tabs button {
-        flex: 1;
-        padding: 12px 16px;
-        background: none;
-        border: none;
-        font-size: 0.8125rem;
-        color: var(--color-text);
-        cursor: pointer;
-        transition:
-            color 0.1s,
-            background-color 0.1s;
-    }
-
-    .tabs button:hover {
-        color: var(--color-text);
-        background-color: var(--color-surface-raised);
-    }
-
-    .tabs button.active {
-        color: var(--color-accent);
-        font-weight: 500;
-        box-shadow: inset 0 -2px 0 var(--color-accent);
-    }
-
-    .content {
-        padding: 20px;
-        overflow-y: auto;
-        flex: 1;
-        display: grid;
-    }
-
-    /* All panels occupy the same grid cell — height = tallest panel */
-    .tab-panel {
-        grid-area: 1 / 1;
-        display: flex;
-        flex-direction: column;
-        gap: 20px;
-        visibility: hidden;
-    }
-
-    .tab-panel.active {
-        visibility: visible;
-    }
-
-    .row {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-    }
-
-    .row label {
-        font-size: 0.8125rem;
-        color: var(--color-text);
-        font-weight: 500;
-    }
-
-    /* Theme row — inline label + select */
-    .theme-row {
-        flex-direction: row;
-        align-items: center;
-        justify-content: space-between;
-    }
-
-    .theme-row select {
-        width: auto;
-    }
-
-    .row select {
-        width: 100%;
-        padding: 7px 10px;
-        background-color: var(--color-surface-raised);
-        border: 1px solid var(--color-border);
-        border-radius: 6px;
-        font-size: 0.8125rem;
-        color: var(--color-text);
-        cursor: pointer;
-    }
-
-    /* Text size slider */
-    input[type='range'] {
-        -webkit-appearance: none;
-        appearance: none;
-        width: 100%;
-        height: 4px;
-        background: var(--color-surface-raised);
-        border: none;
-        border-radius: 4px;
-        padding: 0;
-        cursor: pointer;
-        outline: none;
-    }
-
-    input[type='range']::-webkit-slider-thumb {
+    /* Range slider thumb (used on Text Size + Chat Width sliders) */
+    .range-styled::-webkit-slider-thumb {
         -webkit-appearance: none;
         appearance: none;
         width: 16px;
         height: 16px;
         border-radius: 50%;
-        background-color: var(--color-accent);
+        background-color: var(--color-accent-bg);
         cursor: pointer;
         transition:
             background-color 0.15s,
             transform 0.1s;
     }
 
-    input[type='range']::-webkit-slider-thumb:hover {
-        background-color: var(--color-accent-hover);
+    .range-styled::-webkit-slider-thumb:hover {
+        background-color: var(--color-accent-bg-hover);
         transform: scale(1.15);
     }
 
-    input[type='range']::-moz-range-thumb {
+    .range-styled::-moz-range-thumb {
         width: 16px;
         height: 16px;
         border: none;
         border-radius: 50%;
-        background-color: var(--color-accent);
+        background-color: var(--color-accent-bg);
         cursor: pointer;
     }
 
-    .range-hints {
-        display: flex;
-        justify-content: space-between;
-        font-size: 0.6875rem;
-        color: var(--color-text);
-        margin-top: -4px;
-    }
-
-    /* Checkbox — accent-tinted to match the rest of the UI */
-    input[type='checkbox'] {
-        flex-shrink: 0;
-        width: 16px;
-        height: 16px;
-        margin: 0;
-        accent-color: var(--color-accent);
-        cursor: pointer;
-    }
-
-    /* Advanced expando — sits at the bottom of the UI panel */
-    .advanced {
-        margin-top: -8px;
-        border-top: 1px solid var(--color-border);
-        padding-top: 16px;
-    }
-
+    /* Custom expando chevron — replaces default details-marker */
     .advanced > summary {
         list-style: none;
-        cursor: pointer;
-        font-size: 0.75rem;
-        font-weight: 500;
-        color: var(--color-text-muted);
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        padding: 2px 0;
-        user-select: none;
-        -webkit-user-select: none;
     }
 
     .advanced > summary::-webkit-details-marker {
@@ -509,194 +464,17 @@
         transform: rotate(90deg);
     }
 
-    .advanced > .row {
-        margin-top: 14px;
-    }
-
-    .label-with-info {
-        display: flex;
-        align-items: center;
-        gap: 5px;
-    }
-
-    .info-icon {
-        position: relative;
-        display: flex;
-        align-items: center;
-        color: var(--color-text-muted);
-        cursor: default;
-        opacity: 0.6;
-    }
-
-    .info-icon:hover {
-        opacity: 1;
-    }
-
-    .info-tooltip {
-        display: none;
-        position: absolute;
-        bottom: calc(100% + 6px);
-        left: 50%;
-        translate: -50% 0;
-        width: 220px;
-        padding: 8px 10px;
-        background-color: var(--color-surface-raised);
-        border: 1px solid var(--color-border);
-        border-radius: 7px;
-        font-size: 0.75rem;
-        line-height: 1.5;
-        color: var(--color-text);
-        font-weight: 400;
-        box-shadow: 0 4px 16px oklch(0% 0 0 / 15%);
-        pointer-events: none;
-        z-index: 10;
-    }
-
+    /* Info-icon tooltip: hover-driven visibility on a child via parent state */
     .info-icon:hover .info-tooltip {
         display: block;
     }
 
-    /* API Keys table */
-    .keys-table {
-        width: 100%;
-        table-layout: auto;
-        border-collapse: collapse;
-        font-size: 0.8125rem;
-    }
-
-    .keys-table th {
-        text-align: left;
-        font-weight: 500;
-        color: var(--color-text);
-        padding: 0 12px 10px;
-        border-bottom: 1px solid var(--color-border);
-    }
-
-    .keys-table th:nth-child(2),
-    .keys-table td:nth-child(2) {
-        text-align: center;
-    }
-
-    .keys-table td {
-        padding: 8px 12px;
-        border-bottom: 1px solid var(--color-border);
-        color: var(--color-text);
-        vertical-align: middle;
-    }
-
-    .keys-table tbody tr:last-child td {
-        border-bottom: none;
-    }
-
-    .provider-name {
-        font-weight: 500;
-        white-space: nowrap;
-    }
-
-    .key-cell {
-        width: 100%;
-    }
-
-    .options-cell {
-        white-space: nowrap;
-    }
-
-    .options-btns {
-        display: flex;
-        gap: 6px;
-        align-items: center;
-    }
-
-    .action-btn {
-        flex-shrink: 0;
-        padding: 5px 10px;
-        border: none;
-        border-radius: 6px;
-        font-size: 0.75rem;
-        font-weight: 500;
-        cursor: pointer;
-        transition:
-            background-color 0.15s,
-            opacity 0.15s;
-        white-space: nowrap;
-    }
-
-    .action-btn:disabled {
-        opacity: 0.35;
-        cursor: not-allowed;
-    }
-
-    .save-btn {
-        background-color: var(--color-accent);
-        color: var(--color-bg);
-    }
-
-    .save-btn:hover:not(:disabled) {
-        background-color: var(--color-accent-hover);
-    }
-
-    .clear-btn {
-        background-color: var(--color-surface-raised);
-        color: var(--color-text);
-        border: 1px solid var(--color-border);
-    }
-
-    .clear-btn:hover:not(:disabled) {
-        background-color: var(--color-surface-sunken);
-    }
-
-    .key-input {
-        width: 100%;
-        padding: 6px 10px;
-        background-color: var(--color-surface-raised);
-        border: 1px solid var(--color-border);
-        border-radius: 6px;
-        font-size: 0.8125rem;
-        color: var(--color-text);
-        font-family: var(--font-mono);
-        box-sizing: border-box;
-        outline: none;
-        transition: border-color 0.15s;
-    }
-
-    .key-input:focus {
-        border-color: var(--color-accent);
-    }
-
-    .key-input::placeholder {
-        font-family: var(--font-sans);
-        color: var(--color-text-muted);
-    }
-
-    .saved-cell {
-        text-align: center;
-    }
-
-    .saved-cell :global(svg) {
-        display: block;
-        margin: 0 auto;
-    }
-
+    /* Icon overrides for the API keys table */
     :global(.icon-check) {
         color: #4caf6e;
     }
 
     :global(.icon-x) {
-        color: var(--color-text-muted);
-    }
-
-    .version-heading {
-        font-size: 0.875rem;
-        font-weight: 600;
-        color: var(--color-text);
-        margin: 0;
-        padding: 4px 0;
-    }
-
-    .todo {
-        font-size: 0.8125rem;
-        color: var(--color-text);
-        margin: 0;
-        padding: 4px 0;
+        color: var(--color-fg-muted);
     }
 </style>

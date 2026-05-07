@@ -82,6 +82,7 @@ export interface UserSettings {
     smoothTextMode: 'smooth' | 'boost-on-complete' | 'dump-on-complete' | 'raw';
     submitKeystroke: 'enter' | 'ctrl+enter';
     modelTier: 'latest' | 'previous' | 'legacy';
+    autoscroll: boolean;
     providerId: string;
     modelId: string;
     temperature: number;
@@ -99,6 +100,7 @@ const SETTINGS_KEY_MAP: { [K in keyof UserSettings]: 0 } = {
     smoothTextMode: 0,
     submitKeystroke: 0,
     modelTier: 0,
+    autoscroll: 0,
     providerId: 0,
     modelId: 0,
     temperature: 0,

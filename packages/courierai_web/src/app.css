@@ -1,115 +1,290 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
+/* Default theme tokens live in @theme so each --color-* generates the matching
+ * Tailwind utility (bg-*, text-*, border-*, etc.). Other themes override the
+ * values via [data-theme="..."] selectors below.
+ *
+ * Token surface (25 colors per theme, all explicit — no cross-role fallbacks):
+ *   chrome:   bg, surface-raised, surface-sunken, border, text, text-muted
+ *   bubbles:  bubble-{user,assistant} + on-bubble-{user,assistant}
+ *   accents:  for each of accent / accent-2 / accent-3 →
+ *             {role}-fg, {role}-fg-hover, {role}-bg, {role}-bg-hover, on-{role}-bg
+ *
+ * Default theme is Airmail Warm — #F0E1C3 (beige), #26214D (navy), #C14227 (red). */
 @theme {
     --font-sans: system-ui, sans-serif;
     --font-mono: ui-monospace, monospace;
-}
 
-/* Airmail Warm — #F0E1C3 (beige), #26214D (navy), #C14227 (red) */
-:root,
-[data-theme="airmail-warm"] {
-    --color-bg: #f0e1c3;
+    /* Override Tailwind's default --spacing (0.25rem) so spacing utilities are
+     * px-based and DON'T scale with the runtime root font-size set by the
+     * text-size setting. Text utilities are still rem-based, so text scales
+     * but spacing stays fixed — matches the codebase's pre-migration behavior. */
+    --spacing: 4px;
+
+    --color-canvas: #f0e1c3;
     --color-surface-raised: #e5d2a8;
     --color-surface-sunken: #f7eedd;
     --color-border: #d4bc87;
-    --color-text: #26214d;
-    --color-text-muted: #4d3f72;
-    --color-accent: #c14227;
-    --color-accent-hover: #a33820;
-    --color-accent-2: #26214d;
+    --color-fg: #26214d;
+    --color-fg-muted: #4d3f72;
+
+    --color-bubble-user: #26214d;
+    --color-on-bubble-user: #f7eedd;
+    --color-bubble-assistant: #f7eedd;
+    --color-on-bubble-assistant: #26214d;
+
+    --color-accent-fg: #c14227;
+    --color-accent-fg-hover: #a33820;
+    --color-accent-bg: #c14227;
+    --color-accent-bg-hover: #a33820;
+    --color-on-accent-bg: #f0e1c3;
+
+    --color-accent-2-fg: #26214d;
+    --color-accent-2-fg-hover: #4d3f72;
+    --color-accent-2-bg: #26214d;
+    --color-accent-2-bg-hover: #4d3f72;
+    --color-on-accent-2-bg: #f7eedd;
+
+    --color-accent-3-fg: #c14227;
+    --color-accent-3-fg-hover: #a33820;
+    --color-accent-3-bg: #c14227;
+    --color-accent-3-bg-hover: #a33820;
+    --color-on-accent-3-bg: #f0e1c3;
+
+    /* Animations — @keyframes inside @theme generates animate-* utilities */
+    --animate-search-flash: searchFlash 1.5s ease-out;
+    --animate-actions-appear: actionsAppear 0.1s ease both;
+    --animate-fade-up: fadeUp 0.15s ease;
+
+    @keyframes searchFlash {
+        0%,
+        15% {
+            box-shadow: 0 0 0 3px var(--color-accent-fg);
+            border-radius: 8px;
+        }
+        100% {
+            box-shadow: 0 0 0 0 transparent;
+        }
+    }
+
+    @keyframes actionsAppear {
+        from {
+            opacity: 0;
+            transform: translateY(2px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    @keyframes fadeUp {
+        from {
+            opacity: 0;
+            transform: translateX(-50%) translateY(6px);
+        }
+        to {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+    }
+}
+
+/* Runtime-applied via classList (ChatPanel scrolls a search hit into view and
+ * flashes this class for 1.5s). Lives globally because it's added imperatively. */
+.search-highlight {
+    animation: var(--animate-search-flash);
 }
 
 /* Airmail Light — #DFE0DA (sage), #282C5C (navy), #BD3C2F (red) */
 [data-theme="airmail-light"] {
-    --color-bg: #dfe0da;
+    --color-canvas: #dfe0da;
     --color-surface-raised: #d2d3cd;
     --color-surface-sunken: #eaebe6;
     --color-border: #bfc0b9;
-    --color-text: #282c5c;
-    --color-text-muted: #4e5290;
-    --color-accent: #bd3c2f;
-    --color-accent-hover: #a03327;
-    --color-accent-2: #282c5c;
+    --color-fg: #282c5c;
+    --color-fg-muted: #4e5290;
+
+    --color-bubble-user: #282c5c;
+    --color-on-bubble-user: #eaebe6;
+    --color-bubble-assistant: #eaebe6;
+    --color-on-bubble-assistant: #282c5c;
+
+    --color-accent-fg: #bd3c2f;
+    --color-accent-fg-hover: #a03327;
+    --color-accent-bg: #bd3c2f;
+    --color-accent-bg-hover: #a03327;
+    --color-on-accent-bg: #dfe0da;
+
+    --color-accent-2-fg: #282c5c;
+    --color-accent-2-fg-hover: #4e5290;
+    --color-accent-2-bg: #282c5c;
+    --color-accent-2-bg-hover: #4e5290;
+    --color-on-accent-2-bg: #eaebe6;
+
+    --color-accent-3-fg: #bd3c2f;
+    --color-accent-3-fg-hover: #a03327;
+    --color-accent-3-bg: #bd3c2f;
+    --color-accent-3-bg-hover: #a03327;
+    --color-on-accent-3-bg: #dfe0da;
 }
 
 /* Solarized Light — Base3 bg, Base00 text, #DC322F red, #268BD2 blue */
 [data-theme="solarized-light"] {
-    --color-bg: #fdf6e3;
+    --color-canvas: #fdf6e3;
     --color-surface-raised: #eee8d5;
     --color-surface-sunken: #fffdf6;
     --color-border: #c4bba6;
-    --color-text: #657b83;
-    --color-text-muted: #93a1a1;
-    --color-accent: #dc322f;
-    --color-accent-hover: #b8271f;
-    --color-accent-2: #268bd2;
+    --color-fg: #657b83;
+    --color-fg-muted: #93a1a1;
+
+    --color-bubble-user: #268bd2;
+    --color-on-bubble-user: #fffdf6;
+    --color-bubble-assistant: #fffdf6;
+    --color-on-bubble-assistant: #657b83;
+
+    --color-accent-fg: #dc322f;
+    --color-accent-fg-hover: #b8271f;
+    --color-accent-bg: #dc322f;
+    --color-accent-bg-hover: #b8271f;
+    --color-on-accent-bg: #fdf6e3;
+
+    --color-accent-2-fg: #268bd2;
+    --color-accent-2-fg-hover: #1f6f9f;
+    --color-accent-2-bg: #268bd2;
+    --color-accent-2-bg-hover: #1f6f9f;
+    --color-on-accent-2-bg: #fffdf6;
+
+    --color-accent-3-fg: #dc322f;
+    --color-accent-3-fg-hover: #b8271f;
+    --color-accent-3-bg: #dc322f;
+    --color-accent-3-bg-hover: #b8271f;
+    --color-on-accent-3-bg: #fdf6e3;
 }
 
 /* Solarized Dark — Base02 bg, Base0 text, #DC322F red, #268BD2 blue */
 [data-theme="solarized-dark"] {
-    --color-bg: #073642;
+    --color-canvas: #073642;
     --color-surface-raised: #0d4759;
     --color-surface-sunken: #0e4a5e;
     --color-border: #1a5769;
-    --color-text: #839496;
-    --color-text-muted: #586e75;
-    --color-accent: #dc322f;
-    --color-accent-hover: #b8271f;
-    --color-accent-2: #268bd2;
+    --color-fg: #839496;
+    --color-fg-muted: #586e75;
+
+    --color-bubble-user: #268bd2;
+    --color-on-bubble-user: #0e4a5e;
+    --color-bubble-assistant: #0e4a5e;
+    --color-on-bubble-assistant: #839496;
+
+    --color-accent-fg: #dc322f;
+    --color-accent-fg-hover: #b8271f;
+    --color-accent-bg: #dc322f;
+    --color-accent-bg-hover: #b8271f;
+    --color-on-accent-bg: #073642;
+
+    --color-accent-2-fg: #268bd2;
+    --color-accent-2-fg-hover: #1f6f9f;
+    --color-accent-2-bg: #268bd2;
+    --color-accent-2-bg-hover: #1f6f9f;
+    --color-on-accent-2-bg: #0e4a5e;
+
+    --color-accent-3-fg: #dc322f;
+    --color-accent-3-fg-hover: #b8271f;
+    --color-accent-3-bg: #dc322f;
+    --color-accent-3-bg-hover: #b8271f;
+    --color-on-accent-3-bg: #073642;
 }
 
 /* Retro Sci-Fi HUD — #141D22 (deep dark teal), #DD513C (red-orange), #34A2DF (sky blue), #3DF2AD (mint) */
 [data-theme="retro-sci-fi-hud"] {
-    --color-bg: #141d22;
+    --color-canvas: #141d22;
     --color-surface-raised: #1c2a32;
     --color-surface-sunken: #1f3040;
     --color-border: #2a3f4a;
-    --color-text: #a5fbff;
-    --color-text-muted: #5cb8c0;
-    --color-accent: #dd513c;
-    --color-accent-hover: #ba4331;
-    --color-accent-2: #34a2df;
-    --color-accent-3: #3df2ad;
-    --color-accent-3-hover: #28d492;
+    --color-fg: #a5fbff;
+    --color-fg-muted: #5cb8c0;
+
+    --color-bubble-user: #34a2df;
+    --color-on-bubble-user: #1f3040;
+    --color-bubble-assistant: #1f3040;
+    --color-on-bubble-assistant: #a5fbff;
+
+    --color-accent-fg: #dd513c;
+    --color-accent-fg-hover: #ba4331;
+    --color-accent-bg: #dd513c;
+    --color-accent-bg-hover: #ba4331;
+    --color-on-accent-bg: #141d22;
+
+    --color-accent-2-fg: #34a2df;
+    --color-accent-2-fg-hover: #2987bb;
+    --color-accent-2-bg: #34a2df;
+    --color-accent-2-bg-hover: #2987bb;
+    --color-on-accent-2-bg: #1f3040;
+
+    --color-accent-3-fg: #3df2ad;
+    --color-accent-3-fg-hover: #28d492;
+    --color-accent-3-bg: #3df2ad;
+    --color-accent-3-bg-hover: #28d492;
+    --color-on-accent-3-bg: #141d22;
 }
 
-/* Digital Rain — #000000 (black), #00ff41 (neon green), #00b82e (darker green) */
+/* Digital Rain — #000000 (black), #00FF41 (neon green), #00B82E (darker green) */
 [data-theme="digital-rain"] {
-    --color-bg: #000000;
+    --color-canvas: #000000;
     --color-surface-raised: #0d1a0d;
     --color-surface-sunken: #0d150d;
     --color-border: #1a3d1a;
-    --color-text: #00ff41;
-    --color-text-muted: #008f11;
-    --color-accent: #00ff41;
-    --color-accent-hover: #00d936;
-    --color-accent-2: #00b82e;
+    --color-fg: #00ff41;
+    --color-fg-muted: #008f11;
+
+    --color-bubble-user: #00b82e;
+    --color-on-bubble-user: #0d150d;
+    --color-bubble-assistant: #0d150d;
+    --color-on-bubble-assistant: #00ff41;
+
+    --color-accent-fg: #00ff41;
+    --color-accent-fg-hover: #00d936;
+    --color-accent-bg: #00ff41;
+    --color-accent-bg-hover: #00d936;
+    --color-on-accent-bg: #000000;
+
+    --color-accent-2-fg: #00b82e;
+    --color-accent-2-fg-hover: #008f24;
+    --color-accent-2-bg: #00b82e;
+    --color-accent-2-bg-hover: #008f24;
+    --color-on-accent-2-bg: #0d150d;
+
+    --color-accent-3-fg: #00ff41;
+    --color-accent-3-fg-hover: #00d936;
+    --color-accent-3-bg: #00ff41;
+    --color-accent-3-bg-hover: #00d936;
+    --color-on-accent-3-bg: #000000;
 }
 
 /* Map prose colors to our theme tokens so all color themes work */
 .prose {
     white-space: normal; /* reset: parent .bubble has white-space: pre-wrap which would break rendering */
-    --tw-prose-body: var(--color-text);
-    --tw-prose-headings: var(--color-text);
-    --tw-prose-bold: var(--color-text);
-    --tw-prose-links: var(--color-accent);
-    --tw-prose-code: var(--color-text);
-    --tw-prose-pre-code: var(--color-text);
+    --tw-prose-body: var(--color-on-bubble-assistant);
+    --tw-prose-headings: var(--color-on-bubble-assistant);
+    --tw-prose-bold: var(--color-on-bubble-assistant);
+    --tw-prose-links: var(--color-accent-fg);
+    --tw-prose-code: var(--color-on-bubble-assistant);
+    --tw-prose-pre-code: var(--color-fg);
     --tw-prose-pre-bg: var(--color-surface-sunken);
-    --tw-prose-quotes: var(--color-text-muted);
-    --tw-prose-quote-borders: var(--color-accent);
-    --tw-prose-bullets: var(--color-text-muted);
-    --tw-prose-counters: var(--color-text-muted);
+    --tw-prose-quotes: var(--color-fg-muted);
+    --tw-prose-quote-borders: var(--color-accent-fg);
+    --tw-prose-bullets: var(--color-fg-muted);
+    --tw-prose-counters: var(--color-fg-muted);
     --tw-prose-hr: var(--color-border);
     --tw-prose-th-borders: var(--color-border);
     --tw-prose-td-borders: var(--color-border);
-    --tw-prose-captions: var(--color-text-muted);
+    --tw-prose-captions: var(--color-fg-muted);
 }
 
 body {
-    background-color: var(--color-bg);
-    color: var(--color-text);
+    background-color: var(--color-canvas);
+    color: var(--color-fg);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
 }

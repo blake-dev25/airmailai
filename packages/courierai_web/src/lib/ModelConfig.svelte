@@ -272,19 +272,45 @@
             else if (adaptiveSupport === undefined) adaptiveThinking = false;
         });
     });
+
+    const labelClass = 'text-sm font-medium text-fg';
+    const fieldClass = 'flex flex-col gap-2';
+    const labelRowClass = 'flex items-center justify-between';
+    const valueBadgeClass =
+        'text-xs font-semibold text-accent-3-fg [font-variant-numeric:tabular-nums] bg-[color-mix(in_srgb,var(--color-accent-3-bg)_12%,transparent)] px-[7px] py-0.5 rounded cursor-text outline-none min-w-[1ch]';
+    const selectClass =
+        'w-full pl-2.5 pr-8 py-[9px] appearance-none bg-canvas border border-border rounded-lg text-fg font-sans text-sm cursor-pointer box-border transition-[border-color] duration-150 focus:outline-none focus:border-accent-3-fg';
+    const rangeClass =
+        'range-styled appearance-none w-full h-1 bg-surface-raised border-0 rounded p-0 cursor-pointer outline-none';
+    const rangeHintsClass =
+        'flex justify-between text-[0.6875rem] text-fg -mt-1';
+    const detailRowClass = 'flex flex-col gap-[3px]';
+    const detailLabelClass =
+        'text-xs text-fg uppercase tracking-wider';
+    const detailValueClass =
+        'text-xs text-fg [font-variant-numeric:tabular-nums]';
 </script>
 
-<aside class="model-config">
-    <div class="config-header">
-        <h2>Configuration</h2>
+<aside
+    class="model-config thin-scrollbar shrink-0 flex w-68 flex-col bg-canvas border-l border-border overflow-x-hidden overflow-y-auto select-none [&_input]:select-text **:[[contenteditable=true]]:select-text"
+>
+    <div
+        class="flex shrink-0 items-center h-11.25 px-4 border-b border-border"
+    >
+        <h2
+            class="m-0 text-sm font-semibold text-fg uppercase tracking-widest leading-none"
+        >
+            Configuration
+        </h2>
     </div>
 
-    <div class="config-body">
-        <div class="field">
-            <label for="provider">Provider</label>
-            <div class="select-wrap">
+    <div class="px-4 py-5 flex flex-col gap-5.5">
+        <div class={fieldClass}>
+            <label for="provider" class={labelClass}>Provider</label>
+            <div class="relative">
                 <select
                     id="provider"
+                    class={selectClass}
                     value={providerId}
                     onchange={onProviderChange}
                 >
@@ -296,10 +322,15 @@
             </div>
         </div>
 
-        <div class="field">
-            <label for="model">Model</label>
-            <div class="select-wrap">
-                <select id="model" value={modelId} onchange={onModelChange}>
+        <div class={fieldClass}>
+            <label for="model" class={labelClass}>Model</label>
+            <div class="relative">
+                <select
+                    id="model"
+                    class={selectClass}
+                    value={modelId}
+                    onchange={onModelChange}
+                >
                     {#if modelGroups.length === 1}
                         {#each modelGroups[0].models as model}
                             <option value={model.id}>{model.name}</option>
@@ -321,11 +352,13 @@
         </div>
 
         {#if currentModel.params.temperatureMax !== undefined}
-            <div class="field">
-                <div class="label-row">
-                    <label for="temperature">Temperature</label>
+            <div class={fieldClass}>
+                <div class={labelRowClass}>
+                    <label for="temperature" class={labelClass}
+                        >Temperature</label
+                    >
                     <span
-                        class="value-badge"
+                        class={valueBadgeClass}
                         role="spinbutton"
                         tabindex="0"
                         contenteditable="true"
@@ -342,12 +375,13 @@
                 <input
                     id="temperature"
                     type="range"
+                    class={rangeClass}
                     min="0"
                     max={currentModel.params.temperatureMax}
                     step="0.01"
                     bind:value={temperature}
                 />
-                <div class="range-hints">
+                <div class={rangeHintsClass}>
                     <span>Precise</span>
                     <span>Creative</span>
                 </div>
@@ -355,14 +389,17 @@
         {/if}
 
         {#if thinkingConfig}
-            <div class="field">
-                <div class="label-row">
-                    <label for="thinking">Thinking</label>
-                    <span class="value-badge">{levelLabel(thinkingLevel)}</span>
+            <div class={fieldClass}>
+                <div class={labelRowClass}>
+                    <label for="thinking" class={labelClass}>Thinking</label>
+                    <span class={valueBadgeClass}
+                        >{levelLabel(thinkingLevel)}</span
+                    >
                 </div>
                 <input
                     id="thinking"
                     type="range"
+                    class={rangeClass}
                     min="0"
                     max={thinkingConfig.levels.length - 1}
                     step="1"
@@ -374,7 +411,7 @@
                             ];
                     }}
                 />
-                <div class="range-hints">
+                <div class={rangeHintsClass}>
                     <span>None</span>
                     <span
                         >{levelLabel(
@@ -389,15 +426,19 @@
 
         {#if thinkingConfig?.adaptive && thinkingLevel !== 'none'}
             {@const locked = thinkingConfig.adaptive === 'required'}
-            <div class="field">
-                <div class="label-row">
-                    <label for="adaptive-thinking">Adaptive Thinking</label>
+            <div class={fieldClass}>
+                <div class={labelRowClass}>
+                    <label for="adaptive-thinking" class={labelClass}
+                        >Adaptive Thinking</label
+                    >
                     <button
                         id="adaptive-thinking"
                         type="button"
-                        class="ios-switch"
+                        class={[
+                            'ios-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
+                            locked && 'cursor-not-allowed opacity-60',
+                        ]}
                         class:on={adaptiveThinking}
-                        class:locked
                         role="switch"
                         aria-checked={adaptiveThinking}
                         aria-label="Adaptive Thinking"
@@ -415,11 +456,13 @@
             </div>
         {/if}
 
-        <div class="field">
-            <div class="label-row">
-                <label for="max-tokens">Max Output Tokens</label>
+        <div class={fieldClass}>
+            <div class={labelRowClass}>
+                <label for="max-tokens" class={labelClass}
+                    >Max Output Tokens</label
+                >
                 <span
-                    class="value-badge"
+                    class={valueBadgeClass}
                     role="spinbutton"
                     tabindex="0"
                     contenteditable="true"
@@ -435,6 +478,7 @@
             <input
                 id="max-tokens"
                 type="range"
+                class={rangeClass}
                 min="0"
                 max={maxTokensSnaps.length - 1}
                 step="1"
@@ -446,7 +490,7 @@
                         ];
                 }}
             />
-            <div class="range-hints">
+            <div class={rangeHintsClass}>
                 <span>1</span>
                 <span
                     >{abbreviateTokens(
@@ -457,14 +501,18 @@
         </div>
     </div>
 
-    <div class="model-details">
-        <div class="details-header">
-            <h2>Model Details</h2>
+    <div class="border-t border-border mt-auto">
+        <div class="pt-4.5 px-4">
+            <h2
+                class="m-0 text-sm font-semibold text-fg uppercase tracking-widest"
+            >
+                Model Details
+            </h2>
         </div>
-        <div class="details-body">
-            <div class="detail-row">
-                <span class="detail-label">Context Window</span>
-                <span class="detail-value">
+        <div class="p-4 flex flex-col gap-3">
+            <div class={detailRowClass}>
+                <span class={detailLabelClass}>Context Window</span>
+                <span class={detailValueClass}>
                     {#if tokens}
                         {(tokens.input + tokens.output).toLocaleString()} / {currentModel.params.contextWindow.toLocaleString()}
                     {:else}
@@ -473,9 +521,9 @@
                 </span>
             </div>
             {#if currentModel.params.knowledgeCutoff}
-                <div class="detail-row">
-                    <span class="detail-label">Knowledge Cutoff</span>
-                    <span class="detail-value"
+                <div class={detailRowClass}>
+                    <span class={detailLabelClass}>Knowledge Cutoff</span>
+                    <span class={detailValueClass}
                         >{currentModel.params.knowledgeCutoff}</span
                     >
                 </div>
@@ -483,13 +531,17 @@
         </div>
     </div>
 
-    <div class="made-by">Made with &lt;3 by @blake__dev + AI</div>
+    <div
+        class="py-2 text-[12px] text-fg opacity-40 text-center border-t border-border"
+    >
+        Made with &lt;3 by @blake__dev + AI
+    </div>
 
     <svg
         width={mcW}
         height={mcStripeH}
         viewBox="0 0 {mcW} {mcStripeH}"
-        class="airmail-stripe"
+        class="block shrink-0"
         aria-hidden="true"
     >
         <defs>
@@ -498,13 +550,13 @@
             </clipPath>
         </defs>
         <g clip-path="url(#mc-stripe-clip)">
-            <rect width={mcW} height={mcStripeH} fill="var(--color-bg)" />
+            <rect width={mcW} height={mcStripeH} fill="var(--color-canvas)" />
             {#each mcStripes as stripe}
                 <polygon
                     points={stripe.points}
                     fill={stripe.red
-                        ? 'var(--color-accent)'
-                        : 'var(--color-accent-2)'}
+                        ? 'var(--color-accent-bg)'
+                        : 'var(--color-accent-2-bg)'}
                 />
             {/each}
         </g>
@@ -512,204 +564,59 @@
 </aside>
 
 <style>
-    .model-config {
-        width: 272px;
-        flex-shrink: 0;
-        display: flex;
-        flex-direction: column;
-        background-color: var(--color-bg);
-        border-left: 1px solid var(--color-border);
-        overflow-x: hidden;
-        overflow-y: auto;
-        -webkit-user-select: none;
-        user-select: none;
-    }
+    /* CSS islands — pseudo-element-heavy patterns */
 
-    .model-config input,
-    .model-config [contenteditable='true'] {
-        -webkit-user-select: text;
-        user-select: text;
-    }
-
-    .model-config::-webkit-scrollbar {
+    /* Custom scrollbar for the panel */
+    .thin-scrollbar::-webkit-scrollbar {
         width: 3px;
     }
-
-    .model-config::-webkit-scrollbar-track {
+    .thin-scrollbar::-webkit-scrollbar-track {
         background: transparent;
     }
-
-    .model-config::-webkit-scrollbar-thumb {
+    .thin-scrollbar::-webkit-scrollbar-thumb {
         background-color: var(--color-border);
         border-radius: 3px;
     }
 
-    .config-header {
-        display: flex;
-        align-items: center;
-        height: 45px;
-        padding: 0 16px;
-        border-bottom: 1px solid var(--color-border);
-        flex-shrink: 0;
-    }
-
-    .config-header h2 {
-        margin: 0;
-        font-size: 0.8125rem;
-        font-weight: 600;
-        color: var(--color-text);
-        text-transform: uppercase;
-        letter-spacing: 0.1em;
-        line-height: 1;
-    }
-
-    .config-body {
-        padding: 20px 16px;
-        display: flex;
-        flex-direction: column;
-        gap: 22px;
-    }
-
-    .field {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-    }
-
-    label {
-        font-size: 0.8125rem;
-        font-weight: 500;
-        color: var(--color-text);
-    }
-
-    .label-row {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-    }
-
-    .value-badge {
-        font-size: 0.75rem;
-        font-weight: 600;
-        color: var(--color-accent-3, var(--color-accent));
-        font-variant-numeric: tabular-nums;
-        background-color: color-mix(
-            in srgb,
-            var(--color-accent-3, var(--color-accent)) 12%,
-            transparent
-        );
-        padding: 2px 7px;
-        border-radius: 4px;
-        cursor: text;
-        outline: none;
-        min-width: 1ch;
-    }
-
-    /* Select */
-    .select-wrap {
-        position: relative;
-    }
-
-    select {
-        width: 100%;
-        padding: 9px 32px 9px 10px;
-        appearance: none;
-        background-color: var(--color-bg);
-        border: 1px solid var(--color-border);
-        border-radius: 8px;
-        color: var(--color-text);
-        font-family: var(--font-sans);
-        font-size: 0.8125rem;
-        cursor: pointer;
-        box-sizing: border-box;
-        transition: border-color 0.15s;
-    }
-
-    select:focus {
-        outline: none;
-        border-color: var(--color-accent-3, var(--color-accent));
-    }
-
-    :global(.select-arrow) {
-        position: absolute;
-        right: 10px;
-        top: 50%;
-        transform: translateY(-50%);
-        pointer-events: none;
-        color: var(--color-text);
-    }
-
-    /* Range slider */
-    input[type='range'] {
-        -webkit-appearance: none;
-        appearance: none;
-        width: 100%;
-        height: 4px;
-        background: var(--color-surface-raised);
-        border: none;
-        border-radius: 4px;
-        padding: 0;
-        cursor: pointer;
-        outline: none;
-    }
-
-    input[type='range']::-webkit-slider-thumb {
+    /* Range slider thumb (uses accent-3 — the "action" highlight) */
+    .range-styled::-webkit-slider-thumb {
         -webkit-appearance: none;
         appearance: none;
         width: 16px;
         height: 16px;
         border-radius: 50%;
-        background-color: var(--color-accent-3, var(--color-accent));
+        background-color: var(--color-accent-3-bg);
         cursor: pointer;
         transition:
             background-color 0.15s,
             transform 0.1s;
     }
 
-    input[type='range']::-webkit-slider-thumb:hover {
-        background-color: var(
-            --color-accent-3-hover,
-            var(--color-accent-hover)
-        );
+    .range-styled::-webkit-slider-thumb:hover {
+        background-color: var(--color-accent-3-bg-hover);
         transform: scale(1.15);
     }
 
-    input[type='range']::-moz-range-thumb {
+    .range-styled::-moz-range-thumb {
         width: 16px;
         height: 16px;
         border: none;
         border-radius: 50%;
-        background-color: var(--color-accent-3, var(--color-accent));
+        background-color: var(--color-accent-3-bg);
         cursor: pointer;
     }
 
-    .range-hints {
-        display: flex;
-        justify-content: space-between;
-        font-size: 0.6875rem;
-        color: var(--color-text);
-        margin-top: -4px;
-    }
-
-    /* iOS-style switch */
+    /* iOS-style switch — base + on state + thumb. Pseudo-element-free but
+     * the on-state styling and thumb slide are simpler to express here than
+     * across the markup's class array. */
     .ios-switch {
-        position: relative;
-        width: 34px;
-        height: 20px;
-        padding: 0;
         background-color: var(--color-surface-raised);
         border: 1px solid var(--color-border);
-        border-radius: 999px;
-        cursor: pointer;
-        transition:
-            background-color 0.18s ease,
-            border-color 0.18s ease;
-        flex-shrink: 0;
     }
 
     .ios-switch.on {
-        background-color: var(--color-accent-3, var(--color-accent));
-        border-color: var(--color-accent-3, var(--color-accent));
+        background-color: var(--color-accent-3-bg);
+        border-color: var(--color-accent-3-bg);
     }
 
     .ios-switch-thumb {
@@ -718,7 +625,7 @@
         left: 1px;
         width: 16px;
         height: 16px;
-        background-color: var(--color-bg);
+        background-color: var(--color-canvas);
         border-radius: 50%;
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
         transition: transform 0.18s ease;
@@ -728,67 +635,13 @@
         transform: translateX(14px);
     }
 
-    .ios-switch.locked {
-        cursor: not-allowed;
-        opacity: 0.6;
-    }
-
-    /* Model Details */
-    .model-details {
-        border-top: 1px solid var(--color-border);
-        margin-top: auto;
-    }
-
-    .details-header {
-        padding: 18px 16px 0px;
-    }
-
-    .details-header h2 {
-        margin: 0;
-        font-size: 0.8125rem;
-        font-weight: 600;
-        color: var(--color-text);
-        text-transform: uppercase;
-        letter-spacing: 0.1em;
-    }
-
-    .details-body {
-        padding: 16px;
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-    }
-
-    .detail-row {
-        display: flex;
-        flex-direction: column;
-        gap: 3px;
-    }
-
-    .detail-label {
-        font-size: 0.75rem;
-        color: var(--color-text);
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-    }
-
-    .detail-value {
-        font-size: 0.75rem;
-        color: var(--color-text);
-        font-variant-numeric: tabular-nums;
-    }
-
-    .made-by {
-        padding: 8px 0px;
-        font-size: 12px;
-        color: var(--color-text);
-        opacity: 0.4;
-        text-align: center;
-        border-top: 1px solid var(--color-border);
-    }
-
-    .airmail-stripe {
-        display: block;
-        flex-shrink: 0;
+    /* The chevron icon overlaid on selects — passed to Icon component */
+    :global(.select-arrow) {
+        position: absolute;
+        right: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        pointer-events: none;
+        color: var(--color-fg);
     }
 </style>

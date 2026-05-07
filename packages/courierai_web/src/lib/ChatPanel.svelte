@@ -22,6 +22,7 @@
         loading = false,
         smoothTextMode = 'smooth',
         submitKeystroke = 'enter',
+        autoscroll = false,
         systemPrompt = $bindable(),
         highlightMessageIndex = null,
         demoMode = false,
@@ -48,6 +49,7 @@
             | 'dump-on-complete'
             | 'raw';
         submitKeystroke?: 'enter' | 'ctrl+enter';
+        autoscroll?: boolean;
         systemPrompt: string;
         highlightMessageIndex?: number | null;
         demoMode?: boolean;
@@ -63,6 +65,7 @@
     let expandedThinking = $state(new Set<number>());
     let inputText = $state('');
     let messagesEl = $state<HTMLElement | null>(null);
+    let lastScrollTop = 0;
     let textareaEl = $state<HTMLTextAreaElement | null>(null);
     let fileInputEl = $state<HTMLInputElement | null>(null);
     let isAtBottom = $state(true);
@@ -80,12 +83,13 @@
         mode: () => smoothTextMode,
         streaming: () => untrack(() => isStreaming),
         onReset: () => {
-            isAtBottom = true;
+            if (autoscroll) isAtBottom = true;
         },
     });
 
     $effect(() => {
         void smooth.display;
+        if (!untrack(() => autoscroll)) return;
         tick().then(() => {
             if (messagesEl && untrack(() => isAtBottom))
                 messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -136,7 +140,13 @@
     function handleMessagesScroll() {
         if (!messagesEl) return;
         const { scrollTop, scrollHeight, clientHeight } = messagesEl;
-        isAtBottom = scrollHeight - scrollTop - clientHeight < 80;
+        // Any upward movement immediately pauses autoscroll — no threshold fight
+        if (scrollTop < lastScrollTop) {
+            isAtBottom = false;
+        } else {
+            isAtBottom = scrollHeight - scrollTop - clientHeight < 80;
+        }
+        lastScrollTop = scrollTop;
         isAtTop = scrollTop < 20;
     }
 
@@ -255,36 +265,61 @@
     async function copyMessage(content: string) {
         await navigator.clipboard.writeText(content);
     }
+
+    // Shared class strings — kept here to dedupe long lists at callsites
+    const bubbleBase =
+        'max-w-full px-3.5 py-2.5 rounded-[14px] text-sm leading-[1.65] whitespace-pre-wrap wrap-break-word';
+    const bubbleAssistant = `${bubbleBase} bg-bubble-assistant text-on-bubble-assistant rounded-bl-[4px]`;
+    const bubbleUser = `${bubbleBase} bg-bubble-user text-on-bubble-user rounded-br-[4px]`;
+
+    const msgActionBtnClass =
+        'msg-action-btn relative flex items-center justify-center w-6 h-6 p-0 bg-transparent border-0 rounded-md text-fg opacity-40 cursor-pointer transition-[opacity,background-color] duration-[120ms] enabled:hover:opacity-100 enabled:hover:bg-surface-sunken disabled:opacity-[0.18] disabled:cursor-not-allowed';
+
+    const editTextareaClass =
+        'w-full min-h-15 px-3.5 py-2.5 bg-canvas border border-border rounded-xl text-fg font-sans text-sm leading-[1.65] resize-y box-border outline-none transition-[border-color] duration-150 focus:border-accent-fg';
+
+    const editBtnBase =
+        'px-3.5 py-1.25 rounded-lg border-0 font-sans text-sm font-medium cursor-pointer transition-[background-color,opacity] duration-150';
+
+    const sendStyleBase =
+        'w-[calc(22px+0.875rem*1.5)] h-[calc(22px+0.875rem*1.5)] flex items-center justify-center rounded-lg border-0 cursor-pointer shrink-0 transition-[background-color,opacity] duration-150';
 </script>
 
-<div class="chat-panel">
+<div class="flex-1 flex flex-col overflow-hidden bg-canvas min-w-0">
     <!-- System prompt -->
-    <div class="system-section">
+    <div class="relative shrink-0 bg-canvas border-b border-border">
         <button
             type="button"
-            class="system-header"
+            class="flex items-center gap-2 w-full h-11 px-4 bg-transparent border-0 text-sm font-medium text-fg cursor-pointer text-left transition-[color] duration-100 box-border"
             onclick={() => (systemExpanded = !systemExpanded)}
         >
             <Icon
                 name="chevron-down"
-                class="chevron {systemExpanded ? 'expanded' : ''}"
+                class="transition-transform duration-200 {systemExpanded
+                    ? 'rotate-180'
+                    : ''}"
             />
             <span>System Prompt</span>
             {#if systemPrompt.trim()}
-                <span class="prompt-dot" aria-label="System prompt is set"
+                <span
+                    class="w-1.5 h-1.5 rounded-full bg-accent-bg shrink-0"
+                    aria-label="System prompt is set"
                 ></span>
             {/if}
         </button>
         {#if demoMode}
-            <button type="button" class="install-link">
+            <button
+                type="button"
+                class="absolute top-0 right-4 h-11 flex items-center gap-1.25 px-2 bg-transparent border-0 font-sans text-xs font-medium text-accent-fg cursor-pointer rounded transition-[color,background-color] duration-150 hover:text-accent-fg-hover hover:underline"
+            >
                 <span>Install the extension</span>
                 <Icon name="external-link" />
             </button>
         {/if}
         {#if systemExpanded}
-            <div class="system-body">
+            <div class="px-4 pb-3">
                 <textarea
-                    class="system-textarea"
+                    class="w-full min-h-20 max-h-45 px-3 py-2.5 bg-canvas border border-border rounded-lg text-fg font-sans text-sm leading-[1.6] resize-y box-border outline-none transition-[border-color] duration-150 focus:border-accent-fg placeholder:text-fg-muted"
                     placeholder="Give the model a persona, instructions, or context..."
                     bind:value={systemPrompt}
                 ></textarea>
@@ -293,27 +328,46 @@
     </div>
 
     <!-- Messages -->
-    <div class="messages-wrapper">
-        <div class="top-fade" class:visible={!isAtTop} aria-hidden="true"></div>
+    <div class="flex-1 relative min-h-0">
         <div
-            class="messages"
+            class="absolute top-0 left-0 right-0 h-16 bg-linear-to-b from-canvas to-transparent pointer-events-none z-2 transition-opacity duration-200 {!isAtTop
+                ? 'opacity-100'
+                : 'opacity-0'}"
+            aria-hidden="true"
+        ></div>
+        <div
+            class="messages-scroll h-full overflow-y-auto"
             bind:this={messagesEl}
             onscroll={handleMessagesScroll}
         >
             <div
-                class="messages-inner"
-                style="max-width: min(100vw, calc(var(--narrow-chat-width) + (100vw - var(--narrow-chat-width)) * {chatWidth /
+                class="[--narrow-chat-width:744px] mx-auto px-5 py-7 flex flex-col gap-7 min-h-full box-border"
+                style="max-width: min(100vw, calc(744px + (100vw - 744px) * {chatWidth /
                     100}));"
             >
                 {#if loading}
-                    <div class="empty-state">
-                        <p class="sub">Loading…</p>
+                    <div
+                        class="flex flex-col items-center justify-center flex-1 h-full gap-2.5 text-fg"
+                    >
+                        <p
+                            class="text-[0.8125rem] font-normal text-center max-w-70"
+                        >
+                            Loading…
+                        </p>
                     </div>
                 {:else if messages.length === 0}
-                    <div class="empty-state">
+                    <div
+                        class="flex flex-col items-center justify-center flex-1 h-full gap-2.5 text-fg"
+                    >
                         <Icon name="mail-plus" />
-                        <p>Start a conversation</p>
-                        <p class="sub">
+                        <p
+                            class="text-[0.9375rem] font-medium text-fg m-0"
+                        >
+                            Start a conversation
+                        </p>
+                        <p
+                            class="text-[0.8125rem] font-normal text-center max-w-70 m-0"
+                        >
                             Choose a provider and model on the right, then type
                             below.
                         </p>
@@ -323,19 +377,28 @@
                         {@const isLastStreaming =
                             isStreaming && i === messages.length - 1}
                         <div
-                            class="message"
-                            class:user={message.role === 'user'}
+                            class={[
+                                'flex',
+                                message.role === 'user'
+                                    ? 'justify-end'
+                                    : 'justify-start',
+                            ]}
                             data-msg-index={i}
                             role="group"
                             onmouseenter={() => setHovered(i)}
                             onmouseleave={() => setHovered(null)}
                         >
                             {#if message.role === 'user'}
-                                <div class="user-group">
+                                <div
+                                    class="user-group flex flex-col items-end gap-1.5 max-w-[calc(50%+var(--narrow-chat-width)*0.3)] relative"
+                                >
                                     {#if message.attachments?.length}
-                                        <div class="attachment-chips">
+                                        <div
+                                            class="flex flex-wrap gap-1.5 justify-end"
+                                        >
                                             {#each message.attachments as att}
-                                                <span class="attachment-chip"
+                                                <span
+                                                    class="inline-flex items-center px-2.5 py-1 bg-bubble-user text-on-bubble-user rounded-lg text-xs font-medium max-w-60 overflow-hidden text-ellipsis whitespace-nowrap"
                                                     >{att.name}</span
                                                 >
                                             {/each}
@@ -343,35 +406,37 @@
                                     {/if}
                                     {#if editingIndex === i}
                                         <textarea
-                                            class="edit-textarea"
+                                            class={editTextareaClass}
                                             style={editingDims
                                                 ? `width: ${editingDims.w}px; min-height: ${editingDims.h}px;`
                                                 : ''}
                                             bind:value={editingText}
                                         ></textarea>
-                                        <div class="edit-btns">
+                                        <div class="flex gap-1.5">
                                             <button
                                                 type="button"
-                                                class="edit-save"
+                                                class="{editBtnBase} bg-accent-3-bg text-on-accent-3-bg hover:bg-accent-3-bg-hover"
                                                 onclick={saveEdit}>Save</button
                                             >
                                             <button
                                                 type="button"
-                                                class="edit-cancel"
+                                                class="{editBtnBase} bg-surface-sunken text-fg border! border-border! hover:bg-border"
                                                 onclick={cancelEdit}
                                                 >Cancel</button
                                             >
                                         </div>
                                     {:else if message.content}
-                                        <div class="bubble">
+                                        <div class="bubble {bubbleUser}">
                                             {message.content}
                                         </div>
                                     {/if}
                                     {#if hoveredIndex === i && editingIndex !== i}
-                                        <div class="msg-actions">
+                                        <div
+                                            class="absolute top-full mt-0.5 right-0 flex flex-row gap-px animate-actions-appear z-1"
+                                        >
                                             <button
                                                 type="button"
-                                                class="msg-action-btn"
+                                                class={msgActionBtnClass}
                                                 onclick={() => onretry(i)}
                                                 disabled={isStreaming}
                                                 aria-label="Retry"
@@ -380,7 +445,7 @@
                                             </button>
                                             <button
                                                 type="button"
-                                                class="msg-action-btn"
+                                                class={msgActionBtnClass}
                                                 onclick={(e) =>
                                                     startEdit(
                                                         i,
@@ -402,7 +467,7 @@
                                             </button>
                                             <button
                                                 type="button"
-                                                class="msg-action-btn"
+                                                class={msgActionBtnClass}
                                                 onclick={() =>
                                                     copyMessage(
                                                         message.content,
@@ -413,7 +478,7 @@
                                             </button>
                                             <button
                                                 type="button"
-                                                class="msg-action-btn"
+                                                class={msgActionBtnClass}
                                                 onclick={() => ondelete(i)}
                                                 disabled={isStreaming}
                                                 aria-label="Delete"
@@ -431,17 +496,23 @@
                                         smooth.display !== message.content)
                                         ? smooth.display
                                         : message.content}
-                                <div class="assistant-group">
+                                <div
+                                    class="assistant-group flex flex-col gap-2 max-w-[calc(50%+var(--narrow-chat-width)/2)] relative"
+                                >
                                     {#if isStreaming && i === messages.length - 1 && !message.content && !message.thinking}
-                                        <div class="waiting-spinner">
+                                        <div
+                                            class="flex items-center px-3.5 py-2.5 text-fg-muted"
+                                        >
                                             <Icon name="spinner" size={16} />
                                         </div>
                                     {/if}
                                     {#if message.thinking}
-                                        <div class="thinking-block">
+                                        <div
+                                            class="border border-border rounded-lg overflow-hidden"
+                                        >
                                             <button
                                                 type="button"
-                                                class="thinking-toggle"
+                                                class="flex items-center gap-1.5 w-full px-2.5 py-1.5 bg-transparent border-0 text-fg font-sans text-xs font-medium opacity-60 cursor-pointer text-left transition-opacity duration-150 hover:opacity-100"
                                                 onclick={() => {
                                                     const next = new Set(
                                                         expandedThinking,
@@ -458,15 +529,17 @@
                                                 <span>Thinking</span>
                                                 <Icon
                                                     name="chevron-right"
-                                                    class="thinking-chevron {expandedThinking.has(
+                                                    class="transition-transform duration-200 {expandedThinking.has(
                                                         i,
                                                     )
-                                                        ? 'expanded'
+                                                        ? 'rotate-90'
                                                         : ''}"
                                                 />
                                             </button>
                                             {#if expandedThinking.has(i)}
-                                                <div class="thinking-content">
+                                                <div
+                                                    class="px-2.5 pt-2 pb-2.5 border-t border-border text-xs leading-[1.6] text-fg opacity-70 whitespace-pre-wrap wrap-break-word"
+                                                >
                                                     {message.thinking}
                                                 </div>
                                             {/if}
@@ -474,37 +547,39 @@
                                     {/if}
                                     {#if editingIndex === i}
                                         <textarea
-                                            class="edit-textarea"
+                                            class={editTextareaClass}
                                             style={editingDims
                                                 ? `width: ${editingDims.w}px; min-height: ${editingDims.h}px;`
                                                 : ''}
                                             bind:value={editingText}
                                         ></textarea>
-                                        <div class="edit-btns">
+                                        <div class="flex gap-1.5">
                                             <button
                                                 type="button"
-                                                class="edit-save"
+                                                class="{editBtnBase} bg-accent-3-bg text-on-accent-3-bg hover:bg-accent-3-bg-hover"
                                                 onclick={saveEdit}>Save</button
                                             >
                                             <button
                                                 type="button"
-                                                class="edit-cancel"
+                                                class="{editBtnBase} bg-surface-sunken text-fg border! border-border! hover:bg-border"
                                                 onclick={cancelEdit}
                                                 >Cancel</button
                                             >
                                         </div>
                                     {:else if msgContent}
-                                        <div class="bubble">
+                                        <div class="bubble {bubbleAssistant}">
                                             <MarkdownMessage
                                                 content={msgContent}
                                             />
                                         </div>
                                     {/if}
                                     {#if hoveredIndex === i && editingIndex !== i && !isLastStreaming}
-                                        <div class="msg-actions">
+                                        <div
+                                            class="absolute top-full mt-0.5 left-0 flex flex-row gap-px animate-actions-appear z-1"
+                                        >
                                             <button
                                                 type="button"
-                                                class="msg-action-btn"
+                                                class={msgActionBtnClass}
                                                 onclick={() => onretry(i)}
                                                 disabled={isStreaming}
                                                 aria-label="Retry"
@@ -513,7 +588,7 @@
                                             </button>
                                             <button
                                                 type="button"
-                                                class="msg-action-btn"
+                                                class={msgActionBtnClass}
                                                 onclick={(e) =>
                                                     startEdit(
                                                         i,
@@ -535,7 +610,7 @@
                                             </button>
                                             <button
                                                 type="button"
-                                                class="msg-action-btn"
+                                                class={msgActionBtnClass}
                                                 onclick={() =>
                                                     copyMessage(
                                                         message.content,
@@ -546,7 +621,7 @@
                                             </button>
                                             <button
                                                 type="button"
-                                                class="msg-action-btn"
+                                                class={msgActionBtnClass}
                                                 onclick={() => ondelete(i)}
                                                 disabled={isStreaming}
                                                 aria-label="Delete"
@@ -565,7 +640,7 @@
         {#if !isAtBottom}
             <button
                 type="button"
-                class="scroll-bottom-btn"
+                class="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center justify-center w-7.5 h-7.5 bg-surface-sunken border border-border rounded-full text-fg cursor-pointer z-5 transition-[background-color] duration-150 animate-fade-up hover:bg-border"
                 onclick={scrollToBottom}
                 aria-label="Scroll to bottom"
             >
@@ -576,20 +651,30 @@
 
     <!-- Stream error -->
     {#if streamError}
-        <div class="stream-error" role="alert">{streamError}</div>
+        <div
+            class="shrink-0 px-4 py-2 text-sm text-accent-fg border-t border-border bg-canvas"
+            role="alert"
+        >
+            {streamError}
+        </div>
     {/if}
 
     <!-- Input -->
-    <div class="input-wrapper">
+    <div class="shrink-0 border-t border-border bg-canvas">
         {#if pendingAttachments.length}
-            <div class="file-tab-row">
+            <div class="flex flex-wrap gap-1 px-4 pt-2">
                 {#each pendingAttachments as att, i}
-                    <div class="file-tab">
+                    <div
+                        class="inline-flex items-center gap-1.5 pl-2.5 pr-2 py-1.25 bg-surface-sunken border border-border rounded-lg text-xs text-fg max-w-60"
+                    >
                         <Icon name="file" />
-                        <span class="file-tab-name">{att.name}</span>
+                        <span
+                            class="overflow-hidden text-ellipsis whitespace-nowrap max-w-45"
+                            >{att.name}</span
+                        >
                         <button
                             type="button"
-                            class="file-tab-remove"
+                            class="flex items-center justify-center w-4 h-4 bg-transparent border-0 p-0 text-fg opacity-50 cursor-pointer shrink-0 transition-opacity duration-150 hover:opacity-100"
                             onclick={() =>
                                 (pendingAttachments = pendingAttachments.filter(
                                     (_, j) => j !== i,
@@ -602,18 +687,20 @@
                 {/each}
             </div>
         {/if}
-        <div class="input-area">
+        <div
+            class="flex items-end gap-2 px-4 py-3 bg-canvas shrink-0"
+        >
             <input
                 type="file"
                 accept=".pdf,image/*"
                 multiple
-                class="file-input"
+                class="hidden"
                 bind:this={fileInputEl}
                 onchange={handleFileChange}
             />
             <button
                 type="button"
-                class="attach-btn"
+                class="{sendStyleBase} bg-surface-sunken text-fg border! border-border! enabled:hover:bg-border disabled:opacity-[0.35] disabled:cursor-not-allowed"
                 onclick={openFilePicker}
                 disabled={isStreaming ||
                     pendingAttachments.length >= MAX_ATTACHMENTS}
@@ -622,7 +709,7 @@
                 <Icon name="plus" />
             </button>
             <textarea
-                class="input"
+                class="flex-1 max-h-50 px-3.5 py-2.5 bg-canvas border border-border rounded-lg text-fg font-sans text-sm leading-normal resize-none box-border outline-none transition-[border-color] duration-150 focus:border-accent-fg placeholder:text-fg-muted [&::-webkit-scrollbar]:hidden"
                 placeholder="Message {modelName}…"
                 rows="1"
                 bind:value={inputText}
@@ -633,7 +720,7 @@
             {#if isStreaming && streamingLocally}
                 <button
                     type="button"
-                    class="send-btn stop-btn"
+                    class="{sendStyleBase} bg-accent-3-bg text-on-accent-3-bg hover:bg-accent-3-bg-hover"
                     onclick={stop}
                     aria-label="Stop"
                 >
@@ -642,7 +729,7 @@
             {:else}
                 <button
                     type="button"
-                    class="send-btn"
+                    class="{sendStyleBase} bg-accent-3-bg text-on-accent-3-bg enabled:hover:bg-accent-3-bg-hover disabled:opacity-[0.35] disabled:cursor-not-allowed"
                     onclick={submit}
                     disabled={isStreaming ||
                         (!inputText.trim() && !pendingAttachments.length)}
@@ -656,412 +743,22 @@
 </div>
 
 <style>
-    .chat-panel {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-        background-color: var(--color-bg);
-        min-width: 0;
-    }
+    /* CSS islands — scrollbar pseudos + tooltip ::after pattern */
 
-    /* System Prompt */
-    .system-section {
-        position: relative;
-        flex-shrink: 0;
-        background-color: var(--color-bg);
-        border-bottom: 1px solid var(--color-border);
-    }
-
-    .install-link {
-        position: absolute;
-        top: 0;
-        right: 16px;
-        height: 44px;
-        display: flex;
-        align-items: center;
-        gap: 5px;
-        padding: 0 8px;
-        background: none;
-        border: none;
-        font-family: var(--font-sans);
-        font-size: 0.75rem;
-        font-weight: 500;
-        color: var(--color-accent);
-        cursor: pointer;
-        border-radius: 4px;
-        transition:
-            color 0.15s,
-            background-color 0.15s;
-    }
-
-    .install-link:hover {
-        color: var(--color-accent-hover);
-        text-decoration: underline;
-    }
-
-    .system-header {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        width: 100%;
-        height: 44px;
-        padding: 0 16px;
-        background: none;
-        border: none;
-        font-size: 0.8125rem;
-        font-weight: 500;
-        color: var(--color-text);
-        cursor: pointer;
-        text-align: left;
-        transition: color 0.1s;
-        box-sizing: border-box;
-    }
-
-    .system-header:hover {
-        color: var(--color-text);
-    }
-
-    .system-header :global(.chevron) {
-        transition: transform 0.2s ease;
-    }
-
-    .system-header :global(.chevron.expanded) {
-        transform: rotate(180deg);
-    }
-
-    .prompt-dot {
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        background-color: var(--color-accent);
-        flex-shrink: 0;
-    }
-
-    .system-body {
-        padding: 0 16px 12px;
-    }
-
-    .system-textarea {
-        width: 100%;
-        min-height: 80px;
-        max-height: 180px;
-        padding: 10px 12px;
-        background-color: var(--color-bg);
-        border: 1px solid var(--color-border);
-        border-radius: 8px;
-        color: var(--color-text);
-        font-family: var(--font-sans);
-        font-size: 0.8125rem;
-        line-height: 1.6;
-        resize: vertical;
-        box-sizing: border-box;
-        transition: border-color 0.15s;
-    }
-
-    .system-textarea::placeholder {
-        color: var(--color-text);
-    }
-
-    .system-textarea:focus {
-        outline: none;
-        border-color: var(--color-accent);
-    }
-
-    /* Messages */
-    .top-fade {
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        height: 64px;
-        background: linear-gradient(to bottom, var(--color-bg), transparent);
-        pointer-events: none;
-        z-index: 2;
-        opacity: 0;
-        transition: opacity 0.2s ease;
-    }
-
-    .top-fade.visible {
-        opacity: 1;
-    }
-
-    .messages-wrapper {
-        flex: 1;
-        position: relative;
-        min-height: 0;
-    }
-
-    .scroll-bottom-btn {
-        position: absolute;
-        bottom: 16px;
-        left: 50%;
-        transform: translateX(-50%);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 30px;
-        height: 30px;
-        background-color: var(--color-surface-sunken);
-        border: 1px solid var(--color-border);
-        border-radius: 50%;
-        color: var(--color-text);
-        cursor: pointer;
-        z-index: 5;
-        transition: background-color 0.15s;
-        animation: fadeUp 0.15s ease;
-    }
-
-    .scroll-bottom-btn:hover {
-        background-color: var(--color-border);
-    }
-
-    @keyframes fadeUp {
-        from {
-            opacity: 0;
-            transform: translateX(-50%) translateY(6px);
-        }
-        to {
-            opacity: 1;
-            transform: translateX(-50%) translateY(0);
-        }
-    }
-
-    .messages {
-        height: 100%;
-        overflow-y: auto;
-    }
-
-    .messages-inner {
-        --narrow-chat-width: 744px;
-        margin: 0 auto;
-        padding: 28px 20px;
-        display: flex;
-        flex-direction: column;
-        gap: 28px;
-        min-height: 100%;
-        box-sizing: border-box;
-    }
-
-    .messages::-webkit-scrollbar {
+    /* Messages scrollbar — always visible, thin */
+    .messages-scroll::-webkit-scrollbar {
         width: 3px;
     }
-
-    .messages::-webkit-scrollbar-track {
+    .messages-scroll::-webkit-scrollbar-track {
         background: transparent;
     }
-
-    .messages::-webkit-scrollbar-thumb {
+    .messages-scroll::-webkit-scrollbar-thumb {
         background-color: var(--color-border);
         border-radius: 3px;
     }
 
-    .empty-state {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        flex: 1;
-        height: 100%;
-        gap: 10px;
-        color: var(--color-text);
-    }
-
-    .empty-state p {
-        margin: 0;
-        font-size: 0.9375rem;
-        font-weight: 500;
-        color: var(--color-text);
-    }
-
-    .empty-state .sub {
-        font-size: 0.8125rem;
-        font-weight: 400;
-        text-align: center;
-        max-width: 280px;
-    }
-
-    .message {
-        display: flex;
-        justify-content: flex-start;
-    }
-
-    .message.user {
-        justify-content: flex-end;
-    }
-
-    .bubble {
-        max-width: 70%;
-        padding: 10px 14px;
-        border-radius: 14px;
-        font-size: 0.875rem;
-        line-height: 1.65;
-        white-space: pre-wrap;
-        word-break: break-word;
-        background-color: var(--color-surface-sunken);
-        color: var(--color-text);
-        border-bottom-left-radius: 4px;
-    }
-
-    .user-group .bubble {
-        max-width: 100%;
-        background-color: var(--color-accent-2);
-        color: var(--color-surface-sunken);
-        border-bottom-left-radius: 14px;
-        border-bottom-right-radius: 4px;
-    }
-
-    .assistant-group .bubble {
-        max-width: 100%;
-    }
-
-    /* Assistant message group (thinking + bubble stacked) */
-    /* Right edge stays anchored to the narrow chat's right edge; left edge expands as the chat widens */
-    .assistant-group {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        max-width: calc(50% + var(--narrow-chat-width) / 2);
-        position: relative;
-    }
-
-    /* Thinking block */
-    .thinking-block {
-        border: 1px solid var(--color-border);
-        border-radius: 8px;
-        overflow: hidden;
-    }
-
-    .thinking-toggle {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        width: 100%;
-        padding: 6px 10px;
-        background: none;
-        border: none;
-        color: var(--color-text);
-        font-family: var(--font-sans);
-        font-size: 0.75rem;
-        font-weight: 500;
-        opacity: 0.6;
-        cursor: pointer;
-        text-align: left;
-        transition: opacity 0.15s;
-    }
-
-    .thinking-toggle:hover {
-        opacity: 1;
-    }
-
-    .thinking-toggle :global(.thinking-chevron) {
-        transition: transform 0.2s ease;
-    }
-
-    .thinking-toggle :global(.thinking-chevron.expanded) {
-        transform: rotate(90deg);
-    }
-
-    .thinking-content {
-        padding: 8px 10px 10px;
-        border-top: 1px solid var(--color-border);
-        font-size: 0.75rem;
-        line-height: 1.6;
-        color: var(--color-text);
-        opacity: 0.7;
-        white-space: pre-wrap;
-        word-break: break-word;
-    }
-
-    .waiting-spinner {
-        display: flex;
-        align-items: center;
-        padding: 10px 14px;
-        color: var(--color-text-muted);
-    }
-
-    /* User group (attachment chips + bubble) */
-    /* Left edge stays anchored to the narrow chat's user-bubble left edge (80% from left); right edge expands as the chat widens */
-    .user-group {
-        display: flex;
-        flex-direction: column;
-        align-items: flex-end;
-        gap: 6px;
-        max-width: calc(50% + var(--narrow-chat-width) * 0.3);
-        position: relative;
-    }
-
-    .attachment-chips {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-        justify-content: flex-end;
-    }
-
-    .attachment-chip {
-        display: inline-flex;
-        align-items: center;
-        padding: 4px 10px;
-        background-color: var(--color-accent-2);
-        color: var(--color-surface-sunken);
-        border-radius: 8px;
-        font-size: 0.75rem;
-        font-weight: 500;
-        max-width: 240px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-
-    /* Message action buttons */
-    .msg-actions {
-        position: absolute;
-        top: calc(100% + 2px);
-        display: flex;
-        flex-direction: row;
-        gap: 1px;
-        animation: actionsAppear 0.1s ease both;
-        z-index: 1;
-    }
-
-    .user-group .msg-actions {
-        right: 0;
-    }
-
-    .assistant-group .msg-actions {
-        left: 0;
-    }
-
-    @keyframes actionsAppear {
-        from {
-            opacity: 0;
-            transform: translateY(2px);
-        }
-        to {
-            opacity: 1;
-            transform: translateY(0);
-        }
-    }
-
-    .msg-action-btn {
-        position: relative;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 24px;
-        height: 24px;
-        padding: 0;
-        background: none;
-        border: none;
-        border-radius: 6px;
-        color: var(--color-text);
-        opacity: 0.4;
-        cursor: pointer;
-        transition:
-            opacity 0.12s,
-            background-color 0.12s;
-    }
-
+    /* Per-button tooltip (uses aria-label as the content). Density makes
+     * inline utilities for ::after a wall — keep here. */
     .msg-action-btn::after {
         content: attr(aria-label);
         position: absolute;
@@ -1069,7 +766,7 @@
         left: 50%;
         transform: translateX(-50%);
         background: var(--color-surface-raised);
-        color: var(--color-text);
+        color: var(--color-fg);
         border: 1px solid var(--color-border);
         padding: 2px 7px;
         border-radius: 5px;
@@ -1084,255 +781,5 @@
 
     .msg-action-btn:hover:not(:disabled)::after {
         opacity: 1;
-    }
-
-    .msg-action-btn:hover:not(:disabled) {
-        opacity: 1;
-        background-color: var(--color-surface-sunken);
-    }
-
-    .msg-action-btn:disabled {
-        opacity: 0.18;
-        cursor: not-allowed;
-    }
-
-    /* Edit mode */
-    .edit-textarea {
-        width: 100%;
-        min-height: 60px;
-        padding: 10px 14px;
-        background-color: var(--color-bg);
-        border: 1px solid var(--color-border);
-        border-radius: 12px;
-        color: var(--color-text);
-        font-family: var(--font-sans);
-        font-size: 0.875rem;
-        line-height: 1.65;
-        resize: vertical;
-        box-sizing: border-box;
-        transition: border-color 0.15s;
-    }
-
-    .edit-textarea:focus {
-        outline: none;
-        border-color: var(--color-accent);
-    }
-
-    .edit-btns {
-        display: flex;
-        gap: 6px;
-    }
-
-    .edit-save,
-    .edit-cancel {
-        padding: 5px 14px;
-        border-radius: 8px;
-        border: none;
-        font-family: var(--font-sans);
-        font-size: 0.8125rem;
-        font-weight: 500;
-        cursor: pointer;
-        transition:
-            opacity 0.15s,
-            background-color 0.15s;
-    }
-
-    .edit-save {
-        background-color: var(--color-accent-3, var(--color-accent));
-        color: var(--color-bg);
-    }
-
-    .edit-save:hover {
-        background-color: var(
-            --color-accent-3-hover,
-            var(--color-accent-hover)
-        );
-    }
-
-    .edit-cancel {
-        background-color: var(--color-surface-sunken);
-        color: var(--color-text);
-        border: 1px solid var(--color-border);
-    }
-
-    .edit-cancel:hover {
-        background-color: var(--color-border);
-    }
-
-    /* Input wrapper (file tab + input row) */
-    .input-wrapper {
-        flex-shrink: 0;
-        border-top: 1px solid var(--color-border);
-        background-color: var(--color-bg);
-    }
-
-    /* File tab */
-    .file-tab-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 4px;
-        padding: 8px 16px 0;
-    }
-
-    .file-tab {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        padding: 5px 8px 5px 10px;
-        background-color: var(--color-surface-sunken);
-        border: 1px solid var(--color-border);
-        border-radius: 8px;
-        font-size: 0.75rem;
-        color: var(--color-text);
-        max-width: 240px;
-    }
-
-    .file-tab-name {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        max-width: 180px;
-    }
-
-    .file-tab-remove {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 16px;
-        height: 16px;
-        background: none;
-        border: none;
-        padding: 0;
-        color: var(--color-text);
-        opacity: 0.5;
-        cursor: pointer;
-        flex-shrink: 0;
-        transition: opacity 0.15s;
-    }
-
-    .file-tab-remove:hover {
-        opacity: 1;
-    }
-
-    /* Input */
-    .input-area {
-        display: flex;
-        align-items: flex-end;
-        gap: 8px;
-        padding: 12px 16px;
-        background-color: var(--color-bg);
-        flex-shrink: 0;
-    }
-
-    .file-input {
-        display: none;
-    }
-
-    .attach-btn {
-        width: calc(22px + 0.875rem * 1.5);
-        height: calc(22px + 0.875rem * 1.5);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background-color: var(--color-surface-sunken);
-        color: var(--color-text);
-        border: 1px solid var(--color-border);
-        border-radius: 10px;
-        cursor: pointer;
-        flex-shrink: 0;
-        transition:
-            background-color 0.15s,
-            opacity 0.15s;
-    }
-
-    .attach-btn:hover:not(:disabled) {
-        background-color: var(--color-border);
-    }
-
-    .attach-btn:disabled {
-        opacity: 0.35;
-        cursor: not-allowed;
-    }
-
-    .input {
-        flex: 1;
-        max-height: 200px;
-        padding: 10px 14px;
-        background-color: var(--color-bg);
-        border: 1px solid var(--color-border);
-        border-radius: 10px;
-        color: var(--color-text);
-        font-family: var(--font-sans);
-        font-size: 0.875rem;
-        line-height: 1.5;
-        resize: none;
-        box-sizing: border-box;
-        transition: border-color 0.15s;
-    }
-
-    .input::placeholder {
-        color: var(--color-text);
-    }
-
-    .input:focus {
-        outline: none;
-        border-color: var(--color-accent);
-    }
-
-    .input::-webkit-scrollbar {
-        display: none;
-    }
-
-    .send-btn {
-        width: calc(22px + 0.875rem * 1.5);
-        height: calc(22px + 0.875rem * 1.5);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background-color: var(--color-accent-3, var(--color-accent));
-        color: var(--color-bg);
-        border: none;
-        border-radius: 10px;
-        cursor: pointer;
-        flex-shrink: 0;
-        transition:
-            background-color 0.15s,
-            opacity 0.15s;
-    }
-
-    .send-btn:hover:not(:disabled) {
-        background-color: var(
-            --color-accent-3-hover,
-            var(--color-accent-hover)
-        );
-    }
-
-    .send-btn:disabled {
-        opacity: 0.35;
-        cursor: not-allowed;
-    }
-
-    @keyframes searchFlash {
-        0%,
-        15% {
-            box-shadow: 0 0 0 3px var(--color-accent);
-            border-radius: 8px;
-        }
-        100% {
-            box-shadow: 0 0 0 0 transparent;
-        }
-    }
-
-    :global(.search-highlight) {
-        animation: searchFlash 1.5s ease-out;
-    }
-
-    .stream-error {
-        flex-shrink: 0;
-        padding: 8px 16px;
-        font-size: 0.8125rem;
-        color: var(--color-accent);
-        border-top: 1px solid var(--color-border);
-        background-color: var(--color-bg);
     }
 </style>

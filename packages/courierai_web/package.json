@@ -13,22 +13,22 @@
         "@courier/shared": "workspace:*",
         "@lucide/svelte": "^1.14.0",
         "@tailwindcss/typography": "^0.5.19",
-        "dompurify": "^3.4.0",
-        "marked": "^18.0.2",
+        "dompurify": "^3.4.2",
+        "marked": "^18.0.3",
         "marked-footnote": "^1.4.0",
         "shiki": "^4.0.2",
         "virtua": "^0.49.1"
     },
     "devDependencies": {
-        "@sveltejs/vite-plugin-svelte": "^7.0.0",
-        "@tailwindcss/vite": "^4.2.3",
+        "@sveltejs/vite-plugin-svelte": "^7.1.1",
+        "@tailwindcss/vite": "^4.2.4",
         "@tsconfig/svelte": "^5.0.8",
         "@types/chrome": "^0.1.40",
         "@types/node": "^25.6.0",
-        "svelte": "^5.55.4",
-        "svelte-check": "^4.4.6",
-        "tailwindcss": "^4.2.3",
+        "svelte": "^5.55.5",
+        "svelte-check": "^4.4.8",
+        "tailwindcss": "^4.2.4",
         "typescript": "~6.0.3",
-        "vite": "^8.0.9"
+        "vite": "^8.0.10"
     }
 }
