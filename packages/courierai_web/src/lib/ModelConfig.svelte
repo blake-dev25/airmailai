@@ -12,6 +12,7 @@
     let {
         providers,
         modelTier,
+        initialized,
         providerId = $bindable(),
         modelId = $bindable(),
         temperature = $bindable(),
@@ -22,6 +23,7 @@
     }: {
         providers: ProviderOption[];
         modelTier: ModelTier;
+        initialized: boolean;
         providerId: string;
         modelId: string;
         temperature: number;
@@ -314,9 +316,13 @@
                     value={providerId}
                     onchange={onProviderChange}
                 >
-                    {#each providerOptions as provider}
-                        <option value={provider.id}>{provider.name}</option>
-                    {/each}
+                    {#if initialized}
+                        {#each providerOptions as provider}
+                            <option value={provider.id}
+                                >{provider.name}</option
+                            >
+                        {/each}
+                    {/if}
                 </select>
                 <Icon name="chevron-down" size={12} class="select-arrow" />
             </div>
@@ -331,7 +337,9 @@
                     value={modelId}
                     onchange={onModelChange}
                 >
-                    {#if modelGroups.length === 1}
+                    {#if !initialized}
+                        <!-- No options until init — select renders blank since `value` matches nothing. -->
+                    {:else if modelGroups.length === 1}
                         {#each modelGroups[0].models as model}
                             <option value={model.id}>{model.name}</option>
                         {/each}
@@ -351,6 +359,7 @@
             </div>
         </div>
 
+        {#if initialized}
         {#if currentModel.params.temperatureMax !== undefined}
             <div class={fieldClass}>
                 <div class={labelRowClass}>
@@ -499,6 +508,7 @@
                 >
             </div>
         </div>
+        {/if}
     </div>
 
     <div class="border-t border-border mt-auto">
@@ -513,18 +523,22 @@
             <div class={detailRowClass}>
                 <span class={detailLabelClass}>Context Window</span>
                 <span class={detailValueClass}>
-                    {#if tokens}
+                    {#if !initialized}
+                        &nbsp;
+                    {:else if tokens}
                         {(tokens.input + tokens.output).toLocaleString()} / {currentModel.params.contextWindow.toLocaleString()}
                     {:else}
                         {currentModel.params.contextWindow.toLocaleString()}
                     {/if}
                 </span>
             </div>
-            {#if currentModel.params.knowledgeCutoff}
+            {#if !initialized || currentModel.params.knowledgeCutoff}
                 <div class={detailRowClass}>
                     <span class={detailLabelClass}>Knowledge Cutoff</span>
                     <span class={detailValueClass}
-                        >{currentModel.params.knowledgeCutoff}</span
+                        >{initialized
+                            ? currentModel.params.knowledgeCutoff
+                            : ' '}</span
                     >
                 </div>
             {/if}

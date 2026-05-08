@@ -3,13 +3,7 @@
     import type { ModelTier } from './constants';
     import Icon from './Icon.svelte';
     import SettingsPopover from './SettingsPopover.svelte';
-
-    interface Chat {
-        id: string;
-        title: string;
-        messages: { role: string; content: string }[];
-        createdAt: number;
-    }
+    import type { Chat, SearchResult } from './types';
 
     let {
         chats,
@@ -21,6 +15,7 @@
         searchResults,
         searchQuery,
         demoMode = false,
+        initialized,
         theme = $bindable(),
         fontSizeIndex = $bindable(),
         chatWidth = $bindable(),
@@ -44,16 +39,10 @@
         isLoadingMore: boolean;
         streamingChatIds: string[];
         chatErrors: Record<string, string>;
-        searchResults:
-            | {
-                  id: string;
-                  title: string;
-                  snippet: string;
-                  matchIndex: number | null;
-              }[]
-            | null;
+        searchResults: SearchResult[] | null;
         searchQuery: string;
         demoMode?: boolean;
+        initialized: boolean;
         theme: string;
         fontSizeIndex: number;
         chatWidth: number;
@@ -255,7 +244,7 @@
         </div>
         <button
             type="button"
-            class="flex items-center justify-center gap-2 w-full px-3 py-2.25 bg-accent-bg text-on-accent-bg border-0 rounded-lg text-sm font-medium cursor-pointer transition-[background-color] duration-150 hover:bg-accent-bg-hover"
+            class="flex items-center justify-center gap-2 w-full px-3 py-2.25 bg-accent-bg text-on-accent-bg border-0 rounded-lg text-sm font-medium cursor-pointer transition-[background-color,color] duration-150 hover:bg-accent-bg-hover hover:text-on-accent-bg-hover"
             onclick={onnewchat}
         >
             <Icon name="plus" />
@@ -339,7 +328,9 @@
             >
                 Recent Chats
             </p>
-            {#if chats.length === 0}
+            {#if !initialized}
+                <!-- Blank until extension responds — avoids "No conversations yet" flash on refresh. -->
+            {:else if chats.length === 0}
                 <p class="px-2 pt-2 pb-5 text-sm text-fg text-center m-0">
                     No conversations yet
                 </p>

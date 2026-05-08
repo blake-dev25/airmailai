@@ -1,11 +1,16 @@
 // Broadcasts the extension ID to the host page so it can initiate port connections.
-// Uses a ping/pong in case the page listener isn't ready when this fires.
+// Two channels:
+//  1. Synchronous DOM marker at document_start — page JS can read it without
+//     waiting (immune to CPU throttling that delays message round-trips).
+//  2. window.postMessage — kept as a fallback / re-announce path.
 const LOG = '[courier:ext]';
 
 export default defineContentScript({
     matches: ['http://localhost:*/*', 'https://*.courierai.net/*'],
-    runAt: 'document_idle',
+    runAt: 'document_start',
     main() {
+        document.documentElement.dataset.courieraiExtId = chrome.runtime.id;
+
         const announce = () => {
             console.log(
                 LOG,

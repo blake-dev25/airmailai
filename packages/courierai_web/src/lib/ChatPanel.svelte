@@ -2,19 +2,12 @@
     import type { Attachment } from '@courier/shared';
     import { tick, untrack } from 'svelte';
     import Icon from './Icon.svelte';
-    import MarkdownMessage from './MarkdownMessage.svelte';
+    import MessageItem from './MessageItem.svelte';
     import { createSmoothText } from './smoothText.svelte';
-
-    interface Message {
-        role: 'user' | 'assistant';
-        content: string;
-        thinking?: string;
-        attachments?: Attachment[];
-    }
+    import type { Message } from './types';
 
     let {
         messages,
-        modelName,
         isStreaming = false,
         streamingLocally = false,
         chatWidth = 100,
@@ -34,7 +27,6 @@
         onextensionneeded,
     }: {
         messages: Message[];
-        modelName: string;
         // True if any tab is streaming this chat (local or remote).
         isStreaming?: boolean;
         // True only when *this* tab owns the stream — gates the stop button,
@@ -262,27 +254,8 @@
         }
     }
 
-    async function copyMessage(content: string) {
-        await navigator.clipboard.writeText(content);
-    }
-
-    // Shared class strings — kept here to dedupe long lists at callsites
-    const bubbleBase =
-        'max-w-full px-3.5 py-2.5 rounded-[14px] text-sm leading-[1.65] whitespace-pre-wrap wrap-break-word';
-    const bubbleAssistant = `${bubbleBase} bg-bubble-assistant text-on-bubble-assistant rounded-bl-[4px]`;
-    const bubbleUser = `${bubbleBase} bg-bubble-user text-on-bubble-user rounded-br-[4px]`;
-
-    const msgActionBtnClass =
-        'msg-action-btn relative flex items-center justify-center w-6 h-6 p-0 bg-transparent border-0 rounded-md text-fg opacity-40 cursor-pointer transition-[opacity,background-color] duration-[120ms] enabled:hover:opacity-100 enabled:hover:bg-surface-sunken disabled:opacity-[0.18] disabled:cursor-not-allowed';
-
-    const editTextareaClass =
-        'w-full min-h-15 px-3.5 py-2.5 bg-canvas border border-border rounded-xl text-fg font-sans text-sm leading-[1.65] resize-y box-border outline-none transition-[border-color] duration-150 focus:border-accent-fg';
-
-    const editBtnBase =
-        'px-3.5 py-1.25 rounded-lg border-0 font-sans text-sm font-medium cursor-pointer transition-[background-color,opacity] duration-150';
-
     const sendStyleBase =
-        'w-[calc(22px+0.875rem*1.5)] h-[calc(22px+0.875rem*1.5)] flex items-center justify-center rounded-lg border-0 cursor-pointer shrink-0 transition-[background-color,opacity] duration-150';
+        'w-[calc(22px+0.875rem*1.5)] h-[calc(22px+0.875rem*1.5)] flex items-center justify-center rounded-lg border-0 cursor-pointer shrink-0 transition-[background-color,color,opacity] duration-150';
 </script>
 
 <div class="flex-1 flex flex-col overflow-hidden bg-canvas min-w-0">
@@ -376,263 +349,39 @@
                     {#each messages as message, i (i)}
                         {@const isLastStreaming =
                             isStreaming && i === messages.length - 1}
-                        <div
-                            class={[
-                                'flex',
-                                message.role === 'user'
-                                    ? 'justify-end'
-                                    : 'justify-start',
-                            ]}
-                            data-msg-index={i}
-                            role="group"
-                            onmouseenter={() => setHovered(i)}
-                            onmouseleave={() => setHovered(null)}
-                        >
-                            {#if message.role === 'user'}
-                                <div
-                                    class="user-group flex flex-col items-end gap-1.5 max-w-[calc(50%+var(--narrow-chat-width)*0.3)] relative"
-                                >
-                                    {#if message.attachments?.length}
-                                        <div
-                                            class="flex flex-wrap gap-1.5 justify-end"
-                                        >
-                                            {#each message.attachments as att}
-                                                <span
-                                                    class="inline-flex items-center px-2.5 py-1 bg-bubble-user text-on-bubble-user rounded-lg text-xs font-medium max-w-60 overflow-hidden text-ellipsis whitespace-nowrap"
-                                                    >{att.name}</span
-                                                >
-                                            {/each}
-                                        </div>
-                                    {/if}
-                                    {#if editingIndex === i}
-                                        <textarea
-                                            class={editTextareaClass}
-                                            style={editingDims
-                                                ? `width: ${editingDims.w}px; min-height: ${editingDims.h}px;`
-                                                : ''}
-                                            bind:value={editingText}
-                                        ></textarea>
-                                        <div class="flex gap-1.5">
-                                            <button
-                                                type="button"
-                                                class="{editBtnBase} bg-accent-3-bg text-on-accent-3-bg hover:bg-accent-3-bg-hover"
-                                                onclick={saveEdit}>Save</button
-                                            >
-                                            <button
-                                                type="button"
-                                                class="{editBtnBase} bg-surface-sunken text-fg border! border-border! hover:bg-border"
-                                                onclick={cancelEdit}
-                                                >Cancel</button
-                                            >
-                                        </div>
-                                    {:else if message.content}
-                                        <div class="bubble {bubbleUser}">
-                                            {message.content}
-                                        </div>
-                                    {/if}
-                                    {#if hoveredIndex === i && editingIndex !== i}
-                                        <div
-                                            class="absolute top-full mt-0.5 right-0 flex flex-row gap-px animate-actions-appear z-1"
-                                        >
-                                            <button
-                                                type="button"
-                                                class={msgActionBtnClass}
-                                                onclick={() => onretry(i)}
-                                                disabled={isStreaming}
-                                                aria-label="Retry"
-                                            >
-                                                <Icon name="retry" />
-                                            </button>
-                                            <button
-                                                type="button"
-                                                class={msgActionBtnClass}
-                                                onclick={(e) =>
-                                                    startEdit(
-                                                        i,
-                                                        message.content,
-                                                        (
-                                                            e.currentTarget as HTMLElement
-                                                        )
-                                                            .closest(
-                                                                '.user-group',
-                                                            )
-                                                            ?.querySelector(
-                                                                '.bubble',
-                                                            ) as HTMLElement | null,
-                                                    )}
-                                                disabled={isStreaming}
-                                                aria-label="Edit"
-                                            >
-                                                <Icon name="edit" />
-                                            </button>
-                                            <button
-                                                type="button"
-                                                class={msgActionBtnClass}
-                                                onclick={() =>
-                                                    copyMessage(
-                                                        message.content,
-                                                    )}
-                                                aria-label="Copy"
-                                            >
-                                                <Icon name="copy" />
-                                            </button>
-                                            <button
-                                                type="button"
-                                                class={msgActionBtnClass}
-                                                onclick={() => ondelete(i)}
-                                                disabled={isStreaming}
-                                                aria-label="Delete"
-                                            >
-                                                <Icon name="trash" />
-                                            </button>
-                                        </div>
-                                    {/if}
-                                </div>
-                            {:else}
-                                {@const msgContent =
-                                    i === messages.length - 1 &&
-                                    message.role === 'assistant' &&
-                                    (isStreaming ||
-                                        smooth.display !== message.content)
-                                        ? smooth.display
-                                        : message.content}
-                                <div
-                                    class="assistant-group flex flex-col gap-2 max-w-[calc(50%+var(--narrow-chat-width)/2)] relative"
-                                >
-                                    {#if isStreaming && i === messages.length - 1 && !message.content && !message.thinking}
-                                        <div
-                                            class="flex items-center px-3.5 py-2.5 text-fg-muted"
-                                        >
-                                            <Icon name="spinner" size={16} />
-                                        </div>
-                                    {/if}
-                                    {#if message.thinking}
-                                        <div
-                                            class="border border-border rounded-lg overflow-hidden"
-                                        >
-                                            <button
-                                                type="button"
-                                                class="flex items-center gap-1.5 w-full px-2.5 py-1.5 bg-transparent border-0 text-fg font-sans text-xs font-medium opacity-60 cursor-pointer text-left transition-opacity duration-150 hover:opacity-100"
-                                                onclick={() => {
-                                                    const next = new Set(
-                                                        expandedThinking,
-                                                    );
-                                                    if (next.has(i))
-                                                        next.delete(i);
-                                                    else next.add(i);
-                                                    expandedThinking = next;
-                                                }}
-                                            >
-                                                {#if isStreaming && i === messages.length - 1 && !message.content}
-                                                    <Icon name="spinner" />
-                                                {/if}
-                                                <span>Thinking</span>
-                                                <Icon
-                                                    name="chevron-right"
-                                                    class="transition-transform duration-200 {expandedThinking.has(
-                                                        i,
-                                                    )
-                                                        ? 'rotate-90'
-                                                        : ''}"
-                                                />
-                                            </button>
-                                            {#if expandedThinking.has(i)}
-                                                <div
-                                                    class="px-2.5 pt-2 pb-2.5 border-t border-border text-xs leading-[1.6] text-fg opacity-70 whitespace-pre-wrap wrap-break-word"
-                                                >
-                                                    {message.thinking}
-                                                </div>
-                                            {/if}
-                                        </div>
-                                    {/if}
-                                    {#if editingIndex === i}
-                                        <textarea
-                                            class={editTextareaClass}
-                                            style={editingDims
-                                                ? `width: ${editingDims.w}px; min-height: ${editingDims.h}px;`
-                                                : ''}
-                                            bind:value={editingText}
-                                        ></textarea>
-                                        <div class="flex gap-1.5">
-                                            <button
-                                                type="button"
-                                                class="{editBtnBase} bg-accent-3-bg text-on-accent-3-bg hover:bg-accent-3-bg-hover"
-                                                onclick={saveEdit}>Save</button
-                                            >
-                                            <button
-                                                type="button"
-                                                class="{editBtnBase} bg-surface-sunken text-fg border! border-border! hover:bg-border"
-                                                onclick={cancelEdit}
-                                                >Cancel</button
-                                            >
-                                        </div>
-                                    {:else if msgContent}
-                                        <div class="bubble {bubbleAssistant}">
-                                            <MarkdownMessage
-                                                content={msgContent}
-                                            />
-                                        </div>
-                                    {/if}
-                                    {#if hoveredIndex === i && editingIndex !== i && !isLastStreaming}
-                                        <div
-                                            class="absolute top-full mt-0.5 left-0 flex flex-row gap-px animate-actions-appear z-1"
-                                        >
-                                            <button
-                                                type="button"
-                                                class={msgActionBtnClass}
-                                                onclick={() => onretry(i)}
-                                                disabled={isStreaming}
-                                                aria-label="Retry"
-                                            >
-                                                <Icon name="retry" />
-                                            </button>
-                                            <button
-                                                type="button"
-                                                class={msgActionBtnClass}
-                                                onclick={(e) =>
-                                                    startEdit(
-                                                        i,
-                                                        message.content,
-                                                        (
-                                                            e.currentTarget as HTMLElement
-                                                        )
-                                                            .closest(
-                                                                '.assistant-group',
-                                                            )
-                                                            ?.querySelector(
-                                                                '.bubble',
-                                                            ) as HTMLElement | null,
-                                                    )}
-                                                disabled={isStreaming}
-                                                aria-label="Edit"
-                                            >
-                                                <Icon name="edit" />
-                                            </button>
-                                            <button
-                                                type="button"
-                                                class={msgActionBtnClass}
-                                                onclick={() =>
-                                                    copyMessage(
-                                                        message.content,
-                                                    )}
-                                                aria-label="Copy"
-                                            >
-                                                <Icon name="copy" />
-                                            </button>
-                                            <button
-                                                type="button"
-                                                class={msgActionBtnClass}
-                                                onclick={() => ondelete(i)}
-                                                disabled={isStreaming}
-                                                aria-label="Delete"
-                                            >
-                                                <Icon name="trash" />
-                                            </button>
-                                        </div>
-                                    {/if}
-                                </div>
-                            {/if}
-                        </div>
+                        {@const displayContent =
+                            i === messages.length - 1 &&
+                            message.role === 'assistant' &&
+                            (isStreaming ||
+                                smooth.display !== message.content)
+                                ? smooth.display
+                                : message.content}
+                        <MessageItem
+                            {message}
+                            index={i}
+                            {displayContent}
+                            {isStreaming}
+                            {isLastStreaming}
+                            editing={editingIndex === i}
+                            bind:editingText
+                            {editingDims}
+                            hovered={hoveredIndex === i}
+                            thinkingExpanded={expandedThinking.has(i)}
+                            onhoverenter={() => setHovered(i)}
+                            onhoverleave={() => setHovered(null)}
+                            onstartedit={(content, bubbleEl) =>
+                                startEdit(i, content, bubbleEl)}
+                            onsaveedit={saveEdit}
+                            oncanceledit={cancelEdit}
+                            onthinkingtoggle={() => {
+                                const next = new Set(expandedThinking);
+                                if (next.has(i)) next.delete(i);
+                                else next.add(i);
+                                expandedThinking = next;
+                            }}
+                            onretry={() => onretry(i)}
+                            ondelete={() => ondelete(i)}
+                        />
                     {/each}
                 {/if}
             </div>
@@ -710,7 +459,7 @@
             </button>
             <textarea
                 class="flex-1 max-h-50 px-3.5 py-2.5 bg-canvas border border-border rounded-lg text-fg font-sans text-sm leading-normal resize-none box-border outline-none transition-[border-color] duration-150 focus:border-accent-fg placeholder:text-fg-muted [&::-webkit-scrollbar]:hidden"
-                placeholder="Message {modelName}…"
+                placeholder="Write a message"
                 rows="1"
                 bind:value={inputText}
                 bind:this={textareaEl}
@@ -720,7 +469,7 @@
             {#if isStreaming && streamingLocally}
                 <button
                     type="button"
-                    class="{sendStyleBase} bg-accent-3-bg text-on-accent-3-bg hover:bg-accent-3-bg-hover"
+                    class="{sendStyleBase} bg-accent-3-bg text-on-accent-3-bg hover:bg-accent-3-bg-hover hover:text-on-accent-3-bg-hover"
                     onclick={stop}
                     aria-label="Stop"
                 >
@@ -729,7 +478,7 @@
             {:else}
                 <button
                     type="button"
-                    class="{sendStyleBase} bg-accent-3-bg text-on-accent-3-bg enabled:hover:bg-accent-3-bg-hover disabled:opacity-[0.35] disabled:cursor-not-allowed"
+                    class="{sendStyleBase} bg-accent-3-bg text-on-accent-3-bg enabled:hover:bg-accent-3-bg-hover enabled:hover:text-on-accent-3-bg-hover disabled:opacity-[0.35] disabled:cursor-not-allowed"
                     onclick={submit}
                     disabled={isStreaming ||
                         (!inputText.trim() && !pendingAttachments.length)}
@@ -743,9 +492,6 @@
 </div>
 
 <style>
-    /* CSS islands — scrollbar pseudos + tooltip ::after pattern */
-
-    /* Messages scrollbar — always visible, thin */
     .messages-scroll::-webkit-scrollbar {
         width: 3px;
     }
@@ -755,31 +501,5 @@
     .messages-scroll::-webkit-scrollbar-thumb {
         background-color: var(--color-border);
         border-radius: 3px;
-    }
-
-    /* Per-button tooltip (uses aria-label as the content). Density makes
-     * inline utilities for ::after a wall — keep here. */
-    .msg-action-btn::after {
-        content: attr(aria-label);
-        position: absolute;
-        bottom: calc(100% + 5px);
-        left: 50%;
-        transform: translateX(-50%);
-        background: var(--color-surface-raised);
-        color: var(--color-fg);
-        border: 1px solid var(--color-border);
-        padding: 2px 7px;
-        border-radius: 5px;
-        font-size: 11px;
-        font-weight: 500;
-        white-space: nowrap;
-        pointer-events: none;
-        opacity: 0;
-        transition: opacity 0.1s;
-        z-index: 10;
-    }
-
-    .msg-action-btn:hover:not(:disabled)::after {
-        opacity: 1;
     }
 </style>

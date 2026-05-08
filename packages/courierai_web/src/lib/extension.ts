@@ -23,9 +23,19 @@ export const tabId = crypto.randomUUID();
 
 const LOG = '[courier:web]';
 
-let extensionId: string | null = null;
+// The content script runs at document_start and writes
+// `document.documentElement.dataset.courieraiExtId` before any page script
+// runs. Reading it synchronously at module load gives us a CPU-throttle-proof
+// presence check — no message round-trip required.
+//
+// TODO: once the extension is published with a static ID, verify the dataset
+// value matches the expected ID before trusting it — defends against another
+// installed extension impersonating ours by writing the same dataset key.
+let extensionId: string | null =
+    document.documentElement.dataset.courieraiExtId ?? null;
+if (extensionId) console.log(LOG, 'extension ID from DOM marker', extensionId);
 
-// Listen for content script to broadcast the extension ID
+// Still listen for postMessage as a fallback (e.g. content script re-announces).
 window.addEventListener('message', (e: MessageEvent) => {
     if (e.data?.type === 'COURIER_EXT_READY' && typeof e.data.id === 'string') {
         extensionId = e.data.id;
@@ -33,33 +43,15 @@ window.addEventListener('message', (e: MessageEvent) => {
     }
 });
 
-// Ping in case this module loads after the content script already fired
-window.postMessage({ type: 'COURIER_EXT_PING' }, '*');
-
 export function isExtensionReady(): boolean {
     return extensionId !== null;
 }
 
-// Resolves true when the extension is detected, false on timeout
-export function waitForExtension(timeoutMs = 2000): Promise<boolean> {
-    if (extensionId) return Promise.resolve(true);
-    return new Promise((resolve) => {
-        const timer = setTimeout(() => {
-            window.removeEventListener('message', handler);
-            resolve(false);
-        }, timeoutMs);
-        function handler(e: MessageEvent) {
-            if (
-                e.data?.type === 'COURIER_EXT_READY' &&
-                typeof e.data.id === 'string'
-            ) {
-                clearTimeout(timer);
-                window.removeEventListener('message', handler);
-                resolve(true);
-            }
-        }
-        window.addEventListener('message', handler);
-    });
+// Synchronous because the document_start content script guarantees the DOM
+// marker is set before this module ever runs. If it's not there, the
+// extension isn't installed.
+export function waitForExtension(): Promise<boolean> {
+    return Promise.resolve(extensionId !== null);
 }
 
 async function sendStorageMessage(

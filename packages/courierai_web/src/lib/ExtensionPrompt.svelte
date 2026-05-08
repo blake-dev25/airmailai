@@ -24,7 +24,7 @@
     aria-label={titles[variant]}
     aria-modal="true"
 >
-    <h2 class="m-0 text-base font-semibold text-text">{titles[variant]}</h2>
+    <h2 class="m-0 text-base font-semibold text-fg">{titles[variant]}</h2>
 
     {#if variant === 'no-extension'}
         <p class="m-0 text-sm leading-normal text-fg-muted">
@@ -33,12 +33,12 @@
         </p>
         <button
             type="button"
-            class="mt-2 cursor-pointer rounded-md border-0 bg-accent-bg px-6 py-2 text-sm font-medium text-on-accent-bg transition-colors hover:bg-accent-bg-hover"
+            class="mt-2 cursor-pointer rounded-md border-0 bg-accent-bg px-6 py-2 text-sm font-medium text-on-accent-bg transition-colors hover:bg-accent-bg-hover hover:text-on-accent-bg-hover"
             onclick={() => window.location.reload()}>Reload</button
         >
         <button
             type="button"
-            class="mt-2 cursor-pointer rounded-md border-0 bg-accent-bg px-6 py-2 text-sm font-medium text-on-accent-bg transition-colors hover:bg-accent-bg-hover"
+            class="mt-2 cursor-pointer rounded-md border-0 bg-accent-bg px-6 py-2 text-sm font-medium text-on-accent-bg transition-colors hover:bg-accent-bg-hover hover:text-on-accent-bg-hover"
             onclick={onlookaround}>Let me look around first</button
         >
         <p class="-mt-1 text-xs text-fg-muted">
@@ -54,7 +54,7 @@
         </p>
         <button
             type="button"
-            class="mt-2 cursor-pointer rounded-md border-0 bg-accent-bg px-6 py-2 text-sm font-medium text-on-accent-bg transition-colors hover:bg-accent-bg-hover"
+            class="mt-2 cursor-pointer rounded-md border-0 bg-accent-bg px-6 py-2 text-sm font-medium text-on-accent-bg transition-colors hover:bg-accent-bg-hover hover:text-on-accent-bg-hover"
             onclick={onlookaround}>Let me look around first</button
         >
         <p class="-mt-1 text-xs text-fg-muted">

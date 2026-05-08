@@ -5,11 +5,12 @@
  * Tailwind utility (bg-*, text-*, border-*, etc.). Other themes override the
  * values via [data-theme="..."] selectors below.
  *
- * Token surface (25 colors per theme, all explicit — no cross-role fallbacks):
+ * Token surface (28 colors per theme, all explicit — no cross-role fallbacks):
  *   chrome:   bg, surface-raised, surface-sunken, border, text, text-muted
  *   bubbles:  bubble-{user,assistant} + on-bubble-{user,assistant}
  *   accents:  for each of accent / accent-2 / accent-3 →
- *             {role}-fg, {role}-fg-hover, {role}-bg, {role}-bg-hover, on-{role}-bg
+ *             {role}-fg, {role}-fg-hover, {role}-bg, {role}-bg-hover,
+ *             on-{role}-bg, on-{role}-bg-hover
  *
  * Default theme is Airmail Warm — #F0E1C3 (beige), #26214D (navy), #C14227 (red). */
 @theme {
@@ -39,18 +40,21 @@
     --color-accent-bg: #c14227;
     --color-accent-bg-hover: #a33820;
     --color-on-accent-bg: #f0e1c3;
+    --color-on-accent-bg-hover: #f0e1c3;
 
     --color-accent-2-fg: #26214d;
     --color-accent-2-fg-hover: #4d3f72;
     --color-accent-2-bg: #26214d;
     --color-accent-2-bg-hover: #4d3f72;
     --color-on-accent-2-bg: #f7eedd;
+    --color-on-accent-2-bg-hover: #f7eedd;
 
     --color-accent-3-fg: #c14227;
     --color-accent-3-fg-hover: #a33820;
     --color-accent-3-bg: #c14227;
     --color-accent-3-bg-hover: #a33820;
     --color-on-accent-3-bg: #f0e1c3;
+    --color-on-accent-3-bg-hover: #f0e1c3;
 
     /* Animations — @keyframes inside @theme generates animate-* utilities */
     --animate-search-flash: searchFlash 1.5s ease-out;
@@ -116,18 +120,93 @@
     --color-accent-bg: #bd3c2f;
     --color-accent-bg-hover: #a03327;
     --color-on-accent-bg: #dfe0da;
+    --color-on-accent-bg-hover: #dfe0da;
 
     --color-accent-2-fg: #282c5c;
     --color-accent-2-fg-hover: #4e5290;
     --color-accent-2-bg: #282c5c;
     --color-accent-2-bg-hover: #4e5290;
     --color-on-accent-2-bg: #eaebe6;
+    --color-on-accent-2-bg-hover: #eaebe6;
 
     --color-accent-3-fg: #bd3c2f;
     --color-accent-3-fg-hover: #a03327;
     --color-accent-3-bg: #bd3c2f;
     --color-accent-3-bg-hover: #a03327;
     --color-on-accent-3-bg: #dfe0da;
+    --color-on-accent-3-bg-hover: #dfe0da;
+}
+
+/* Absolutely — #1F1F1E charcoal, #D97757 warm accent */
+[data-theme="absolutely"] {
+    --color-canvas: #1f1f1e;
+    --color-surface-raised: #252524;
+    --color-surface-sunken: #121212;
+    --color-border: #3c3c3b;
+    --color-fg: #f8f8f6;
+    --color-fg-muted: #c3c2b7;
+
+    --color-bubble-user: #121212;
+    --color-on-bubble-user: #f8f8f6;
+    --color-bubble-assistant: #1f1f1e;
+    --color-on-bubble-assistant: #f8f8f6;
+
+    --color-accent-fg: #d97757;
+    --color-accent-fg-hover: #bd6145;
+    --color-accent-bg: #d97757;
+    --color-accent-bg-hover: #bd6145;
+    --color-on-accent-bg: #f8f8f6;
+    --color-on-accent-bg-hover: #f8f8f6;
+
+    --color-accent-2-fg: #252524;
+    --color-accent-2-fg-hover: #252524;
+    --color-accent-2-bg: #252524;
+    --color-accent-2-bg-hover: #121212;
+    --color-on-accent-2-bg: #f8f8f6;
+    --color-on-accent-2-bg-hover: #f8f8f6;
+
+    --color-accent-3-fg: #d97757;
+    --color-accent-3-fg-hover: #bd6145;
+    --color-accent-3-bg: #d97757;
+    --color-accent-3-bg-hover: #bd6145;
+    --color-on-accent-3-bg: #f8f8f6;
+    --color-on-accent-3-bg-hover: #f8f8f6;
+}
+
+/* Tapestry — #000000 black, #FFFFFF white */
+[data-theme="tapestry"] {
+    --color-canvas: #000000;
+    --color-surface-raised: #2f2f2f;
+    --color-surface-sunken: #171717;
+    --color-border: #1a1a1a;
+    --color-fg: #ffffff;
+    --color-fg-muted: #bfbfbf;
+
+    --color-bubble-user: #2f2f2f;
+    --color-on-bubble-user: #ffffff;
+    --color-bubble-assistant: #000000;
+    --color-on-bubble-assistant: #ffffff;
+
+    --color-accent-fg: #ffffff;
+    --color-accent-fg-hover: #bfbfbf;
+    --color-accent-bg: #ffffff;
+    --color-accent-bg-hover: #171717;
+    --color-on-accent-bg: #000000;
+    --color-on-accent-bg-hover: #ffffff;
+
+    --color-accent-2-fg: #2f2f2f;
+    --color-accent-2-fg-hover: #2f2f2f;
+    --color-accent-2-bg: #2f2f2f;
+    --color-accent-2-bg-hover: #171717;
+    --color-on-accent-2-bg: #ffffff;
+    --color-on-accent-2-bg-hover: #ffffff;
+
+    --color-accent-3-fg: #ffffff;
+    --color-accent-3-fg-hover: #bfbfbf;
+    --color-accent-3-bg: #ffffff;
+    --color-accent-3-bg-hover: #171717;
+    --color-on-accent-3-bg: #000000;
+    --color-on-accent-3-bg-hover: #ffffff;
 }
 
 /* Solarized Light — Base3 bg, Base00 text, #DC322F red, #268BD2 blue */
@@ -149,18 +228,21 @@
     --color-accent-bg: #dc322f;
     --color-accent-bg-hover: #b8271f;
     --color-on-accent-bg: #fdf6e3;
+    --color-on-accent-bg-hover: #fdf6e3;
 
     --color-accent-2-fg: #268bd2;
     --color-accent-2-fg-hover: #1f6f9f;
     --color-accent-2-bg: #268bd2;
     --color-accent-2-bg-hover: #1f6f9f;
     --color-on-accent-2-bg: #fffdf6;
+    --color-on-accent-2-bg-hover: #fffdf6;
 
     --color-accent-3-fg: #dc322f;
     --color-accent-3-fg-hover: #b8271f;
     --color-accent-3-bg: #dc322f;
     --color-accent-3-bg-hover: #b8271f;
     --color-on-accent-3-bg: #fdf6e3;
+    --color-on-accent-3-bg-hover: #fdf6e3;
 }
 
 /* Solarized Dark — Base02 bg, Base0 text, #DC322F red, #268BD2 blue */
@@ -182,18 +264,21 @@
     --color-accent-bg: #dc322f;
     --color-accent-bg-hover: #b8271f;
     --color-on-accent-bg: #073642;
+    --color-on-accent-bg-hover: #073642;
 
     --color-accent-2-fg: #268bd2;
     --color-accent-2-fg-hover: #1f6f9f;
     --color-accent-2-bg: #268bd2;
     --color-accent-2-bg-hover: #1f6f9f;
     --color-on-accent-2-bg: #0e4a5e;
+    --color-on-accent-2-bg-hover: #0e4a5e;
 
     --color-accent-3-fg: #dc322f;
     --color-accent-3-fg-hover: #b8271f;
     --color-accent-3-bg: #dc322f;
     --color-accent-3-bg-hover: #b8271f;
     --color-on-accent-3-bg: #073642;
+    --color-on-accent-3-bg-hover: #073642;
 }
 
 /* Retro Sci-Fi HUD — #141D22 (deep dark teal), #DD513C (red-orange), #34A2DF (sky blue), #3DF2AD (mint) */
@@ -215,18 +300,21 @@
     --color-accent-bg: #dd513c;
     --color-accent-bg-hover: #ba4331;
     --color-on-accent-bg: #141d22;
+    --color-on-accent-bg-hover: #141d22;
 
     --color-accent-2-fg: #34a2df;
     --color-accent-2-fg-hover: #2987bb;
     --color-accent-2-bg: #34a2df;
     --color-accent-2-bg-hover: #2987bb;
     --color-on-accent-2-bg: #1f3040;
+    --color-on-accent-2-bg-hover: #1f3040;
 
     --color-accent-3-fg: #3df2ad;
     --color-accent-3-fg-hover: #28d492;
     --color-accent-3-bg: #3df2ad;
     --color-accent-3-bg-hover: #28d492;
     --color-on-accent-3-bg: #141d22;
+    --color-on-accent-3-bg-hover: #141d22;
 }
 
 /* Digital Rain — #000000 (black), #00FF41 (neon green), #00B82E (darker green) */
@@ -248,18 +336,21 @@
     --color-accent-bg: #00ff41;
     --color-accent-bg-hover: #00d936;
     --color-on-accent-bg: #000000;
+    --color-on-accent-bg-hover: #000000;
 
     --color-accent-2-fg: #00b82e;
     --color-accent-2-fg-hover: #008f24;
     --color-accent-2-bg: #00b82e;
     --color-accent-2-bg-hover: #008f24;
     --color-on-accent-2-bg: #0d150d;
+    --color-on-accent-2-bg-hover: #0d150d;
 
     --color-accent-3-fg: #00ff41;
     --color-accent-3-fg-hover: #00d936;
     --color-accent-3-bg: #00ff41;
     --color-accent-3-bg-hover: #00d936;
     --color-on-accent-3-bg: #000000;
+    --color-on-accent-3-bg-hover: #000000;
 }
 
 /* Map prose colors to our theme tokens so all color themes work */
