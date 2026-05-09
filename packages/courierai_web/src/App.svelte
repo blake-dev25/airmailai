@@ -90,6 +90,12 @@
     let modelTier = $state<ModelTier>('latest');
     // Autoscroll — scroll to the bottom as text streams in
     let autoscroll = $state(false);
+    // Tag OpenRouter requests with appTitle/httpReferer for app tracking
+    let tagOpenRouterRequests = $state(false);
+    // OpenRouter free-model handling: show all, only free, or hide free
+    let openRouterFreeModels = $state<'show' | 'only' | 'hide'>('show');
+    // API keys stay on this device unless the user opts into browser-account sync.
+    let syncApiKeys = $state(false);
 
     // Model config
     // OpenRouter's catalog hydrates async; the rest are static. The local
@@ -177,6 +183,7 @@
                 return;
             }
             if (!provider.models.find((m) => m.id === modelId)) {
+                if (!provider.models[0]) return;
                 modelId = provider.models[0].id;
             }
         });
@@ -222,9 +229,11 @@
         console.log(LOG, 'extension detected:', detected);
 
         // Fire-and-forget: doesn't gate `initialized` since the rest of the UI
-        // works without OpenRouter. The picker shows a loading state for that
-        // provider until this resolves.
-        if (detected) hydrateOpenRouterModels().catch(console.error);
+        // works without OpenRouter. Without a key this is cache-only, so it
+        // never makes an unauthenticated OpenRouter request.
+        if (detected) {
+            hydrateOpenRouterModels().catch(console.error);
+        }
 
         const [settings, metas] = await Promise.all([
             loadSettings(),
@@ -275,6 +284,15 @@
             },
             adaptiveThinking: (v) => {
                 adaptiveThinking = v;
+            },
+            tagOpenRouterRequests: (v) => {
+                tagOpenRouterRequests = v;
+            },
+            openRouterFreeModels: (v) => {
+                openRouterFreeModels = v;
+            },
+            syncApiKeys: (v) => {
+                syncApiKeys = v;
             },
         };
         for (const key of SETTINGS_KEYS) {
@@ -389,27 +407,43 @@
         highlightMessageIndex = null;
     }
 
-    // Debounced save — fires 300ms after any settings change (but not during initial load)
+    function shouldSaveSettings(): boolean {
+        return untrack(() => settingsLoaded) && !untrack(() => demoMode);
+    }
+
+    // Immediate save for discrete controls. Sliders get their own debounced
+    // path below so drag gestures don't spam extension storage.
     $effect(() => {
-        const snapshot: UserSettings = {
+        const snapshot: Partial<UserSettings> = {
             theme,
-            fontSizeIndex,
-            chatWidth,
             smoothTextMode,
             submitKeystroke,
             modelTier,
             autoscroll,
             providerId,
             modelId,
+            adaptiveThinking,
+            tagOpenRouterRequests,
+            openRouterFreeModels,
+            syncApiKeys,
+        };
+        if (!shouldSaveSettings()) return;
+        console.log(LOG, 'settings save', snapshot);
+        saveSettings(snapshot);
+    });
+
+    // Debounced save for range-backed controls.
+    $effect(() => {
+        const snapshot: Partial<UserSettings> = {
+            fontSizeIndex,
+            chatWidth,
             temperature,
             maxTokens,
             thinkingLevel,
-            adaptiveThinking,
         };
-        if (!untrack(() => settingsLoaded)) return;
-        if (untrack(() => demoMode)) return;
+        if (!shouldSaveSettings()) return;
         const timer = setTimeout(() => {
-            console.log(LOG, 'settings save (debounced)', snapshot);
+            console.log(LOG, 'settings save (slider debounce)', snapshot);
             saveSettings(snapshot);
         }, 300);
         return () => clearTimeout(timer);
@@ -458,6 +492,22 @@
 
     function requestExtension() {
         showExtensionPrompt = true;
+    }
+
+    function hasOpenRouterModels() {
+        return (
+            providers.find((p) => p.id === 'openrouter')?.models.length ?? 0
+        ) > 0;
+    }
+
+    function handleApiKeySaved(providerId: string) {
+        if (providerId === 'openrouter' && !hasOpenRouterModels()) {
+            hydrateOpenRouterModels().catch(console.error);
+        }
+    }
+
+    function handleApiKeyCleared() {
+        // Keep any downloaded OpenRouter catalog available; only the key goes away.
     }
 
     // --- Chat actions ---
@@ -674,6 +724,7 @@
                     maxTokens: snap.maxTokens,
                     thinkingLevel: snap.thinkingLevel,
                     adaptiveThinking: snap.adaptiveThinking,
+                    tagOpenRouterRequests,
                 },
                 meta: chatToMeta(snap),
                 historyForSave,
@@ -1102,6 +1153,9 @@
         bind:submitKeystroke
         bind:modelTier
         bind:autoscroll
+        bind:tagOpenRouterRequests
+        bind:openRouterFreeModels
+        bind:syncApiKeys
         onnewchat={newChat}
         onselectchat={selectChat}
         ondeletechat={removeChat}
@@ -1111,6 +1165,8 @@
         onsearch={search}
         onclearsearch={clearSearch}
         onextensionneeded={requestExtension}
+        onapikeysaved={handleApiKeySaved}
+        onapikeycleared={handleApiKeyCleared}
     />
     <ChatPanel
         messages={activeMessages}
@@ -1136,6 +1192,7 @@
         {providers}
         {modelTier}
         {initialized}
+        {openRouterFreeModels}
         bind:providerId
         bind:modelId
         bind:temperature

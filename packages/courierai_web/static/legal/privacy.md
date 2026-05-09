@@ -1,25 +1,25 @@
 # Privacy Policy
 
-**Last updated:** April 24, 2026
+**Last updated:** May 9, 2026
 
 ## The short version
 
 CourierAI is a browser-based client for third-party Large Language Model
 (LLM) APIs. You bring your own API keys, and the app lets you chat with
-the providers you choose (Anthropic, OpenAI, Google, and others).
+the providers you choose.
 
 **We do not operate a backend. We do not see your chats. We do not see
 your API keys.** Your API keys and chat history live in your browser
-storage. Your messages go from your browser — by way of the CourierAI
-extension, which handles the HTTPS request on the browser's behalf —
+storage. Your messages go from your browser - by way of the CourierAI
+extension, which handles the HTTPS request on the browser's behalf -
 directly to the LLM provider you selected, using the API key you
 provided. No intermediate server operated by us is involved.
 
 The only personal data we touch is your IP address, which our CDN
 (Amazon CloudFront) necessarily processes in transit to route requests,
 and data which appears in aggregate analytics (country, browser, OS mix)
-that CloudFront provides. We don't retain per-request logs. Details
-below.
+that CloudFront provides. We do not enable or retain per-request CDN
+logs. Details below.
 
 ## Who we are
 
@@ -46,10 +46,11 @@ us.
 
 CloudFront does process your IP address in transit in order to route
 requests, as any CDN or web server necessarily does. CloudFront also
-provides us with aggregate analytics in its console — for example, the
-mix of browsers, operating systems, and countries across all visitors —
-retained for a rolling 60 days. These reports do not contain
-per-request data or identify individual users.
+provides us with aggregate analytics in its console - for example, the
+mix of browsers, operating systems, and countries across all visitors -
+retained for a rolling 60 days. These reports are aggregate viewer
+reports, not per-request logging. They do not contain per-request data
+or identify individual users.
 
 Under GDPR, an IP address is considered personal data, so although our
 processing is minimal, we want to be specific about it:
@@ -75,43 +76,47 @@ operated by us.
 
 ## What lives in your browser
 
-The following data lives only in your own browser storage and is not
-sent to any server operated by us:
+The following user data lives only in your own browser storage and is
+not sent to any server operated by us:
 
 | Data | Storage location |
 |---|---|
-| API keys | `chrome.storage.sync` (synced by your Google account across browsers) |
-| Chat history | IndexedDB (local to each browser profile) |
+| API keys | `chrome.storage.local` for use by the extension; optional backup copy in `chrome.storage.sync` if you enable API-key sync |
+| Chat history, attachments, system prompts, and token counts | IndexedDB (local to each browser profile) |
 | Theme, model, and UI preferences | `chrome.storage.sync` |
 
 You can delete any of this at any time by uninstalling the extension or
 clearing the extension's storage through your browser.
 
-**Note on `chrome.storage.sync`:** data placed in `chrome.storage.sync`
-is synchronized by Google across browsers where you are signed into the
-same Google account. This sync is provided by Google and governed by
-Google's privacy policy. We do not receive or see this data.
+**Note on browser sync:** data placed in `chrome.storage.sync` may be
+synchronized by your browser account across browsers where you are
+signed in and have sync enabled. The sync provider depends on your
+browser and account setup. Browser sync is provided by your browser
+vendor and governed by its privacy policy. We do not receive or see
+this data.
 
 ## Third-party LLM providers
+
+Some third-party providers offer model catalogs. After you add an API
+key for a provider with a model catalog, CourierAI may use that key to
+download the provider's catalog directly from the provider and cache it
+in your browser.
 
 When you send a message, it is transmitted from your browser to the LLM
 provider whose API key you configured. That provider receives your
 messages and returns responses. Each provider has its own privacy
-practices, which apply to the content you send them. Providers currently
-supported include, among others:
-
-- Anthropic - <https://www.anthropic.com/legal/privacy>
-- OpenAI - <https://openai.com/policies/privacy-policy>
-- Google (Gemini API) - <https://policies.google.com/privacy>
-
-We encourage you to review the policy of each provider whose API you use
-through CourierAI. We do not act as an intermediary, processor, or
-controller of this content.
+practices, which apply to the content you send them. We encourage you to
+review the policy of each provider whose API you use through CourierAI.
+We do not act as an intermediary, processor, or controller of this
+content.
 
 ## Cookies and tracking
 
-We do not use cookies. We do not use web analytics. We do not use
-tracking pixels, fingerprinting, or advertising identifiers.
+We do not use cookies. We do not use client-side web analytics,
+tracking pixels, fingerprinting, or advertising identifiers. We do not
+enable per-request CDN access logs or real-time logs. The only CDN
+metrics we receive are the aggregate CloudFront viewer reports
+described above.
 
 ## Children
 
@@ -167,10 +172,12 @@ rights.
 
 ## Security
 
-Your API keys are stored using the browser's extension storage APIs,
-which isolate them from web pages — only the CourierAI extension can
-read them from your browser. They are transmitted only to the LLM
-provider you choose, over HTTPS.
+Your API keys stay in browser-managed extension storage, not on servers
+operated by us. By default, they remain only in the browser profile
+where you saved them. If you enable API-key sync, your browser may keep
+a synced copy through your browser account so other signed-in browsers
+can restore it. When you make a request, the relevant key is sent over
+HTTPS only to the provider you chose.
 
 You should treat any API key as a sensitive credential. If you suspect
 a key has been compromised, revoke it in the provider's dashboard.

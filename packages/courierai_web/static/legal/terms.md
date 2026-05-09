@@ -1,6 +1,6 @@
 # Terms of Service
 
-**Last updated:** April 24, 2026
+**Last updated:** May 9, 2026
 
 ## 1. Acceptance
 
@@ -51,14 +51,9 @@ charged by LLM providers.
 The Service connects to LLM providers that are independent of
 CourierAI. We do not control their availability, pricing, model
 behavior, training data, retention practices, or output. Your use of
-each provider is governed by that provider's own terms:
-
-- Anthropic - <https://www.anthropic.com/legal/consumer-terms>
-- OpenAI - <https://openai.com/policies/terms-of-use>
-- Google - <https://policies.google.com/terms>
-
-Other providers may be added over time. You are responsible for
-reviewing and accepting the terms of each provider you use.
+each provider is governed by that provider's own terms. You are
+responsible for reviewing and accepting the terms of each provider you
+use.
 
 **Provider enforcement actions.** Each LLM provider independently sets
 and enforces its own policies. If a provider warns you, restricts your

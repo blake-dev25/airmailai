@@ -54,5 +54,5 @@ export function filterProvidersByTier(
                 ),
             };
         })
-        .filter((p) => p.models.length > 0);
+        .filter((p) => p.marketplace || p.models.length > 0);
 }

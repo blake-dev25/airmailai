@@ -89,6 +89,9 @@ export interface UserSettings {
     maxTokens: number;
     thinkingLevel: string;
     adaptiveThinking: boolean;
+    tagOpenRouterRequests: boolean;
+    openRouterFreeModels: 'show' | 'only' | 'hide';
+    syncApiKeys: boolean;
 }
 
 // The mapped-type constraint forces every UserSettings field to appear here —
@@ -107,6 +110,9 @@ const SETTINGS_KEY_MAP: { [K in keyof UserSettings]: 0 } = {
     maxTokens: 0,
     thinkingLevel: 0,
     adaptiveThinking: 0,
+    tagOpenRouterRequests: 0,
+    openRouterFreeModels: 0,
+    syncApiKeys: 0,
 };
 export const SETTINGS_KEYS = Object.keys(
     SETTINGS_KEY_MAP
@@ -153,7 +159,12 @@ export interface OpenRouterModel {
 
 // Sent via chrome.runtime.sendMessage for one-off storage operations
 export type StorageRequest =
-    | { type: 'save_key'; provider: string; apiKey: string }
+    | {
+          type: 'save_key';
+          provider: string;
+          apiKey: string;
+          syncApiKeys: boolean;
+      }
     | { type: 'clear_key'; provider: string }
     | { type: 'has_keys'; providers: string[] }
     | { type: 'save_settings'; settings: Partial<UserSettings> }

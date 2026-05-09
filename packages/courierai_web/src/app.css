@@ -209,80 +209,93 @@
     --color-on-accent-3-bg-hover: #ffffff;
 }
 
-/* Solarized Light — Base3 bg, Base00 text, #DC322F red, #268BD2 blue */
+/* Solarized Light — Base3 canvas, Base01 fg (emphasized variant for stronger
+ * readability); bubbles use Solarized base bg tones (Base2/Base3) per spec,
+ * accents are Red / Blue / Red with Base03 dark text for AA contrast on
+ * mid-luminance accent surfaces. Accent hover variants are the only
+ * non-palette values — Solarized has no Red/Blue tints. */
 [data-theme="solarized-light"] {
-    --color-canvas: #fdf6e3;
-    --color-surface-raised: #eee8d5;
-    --color-surface-sunken: #fffdf6;
-    --color-border: #c4bba6;
-    --color-fg: #657b83;
-    --color-fg-muted: #93a1a1;
+    --color-canvas: #fdf6e3; /* Base3 */
+    --color-surface-raised: #eee8d5; /* Base2 */
+    --color-surface-sunken: #eee8d5; /* Base2 — palette has no third light bg tone */
+    --color-border: #93a1a1; /* Base1 */
+    --color-fg: #586e75; /* Base01 */
+    --color-fg-muted: #93a1a1; /* Base1 */
 
-    --color-bubble-user: #268bd2;
-    --color-on-bubble-user: #fffdf6;
-    --color-bubble-assistant: #fffdf6;
-    --color-on-bubble-assistant: #657b83;
+    --color-bubble-user: #eee8d5; /* Base2 */
+    --color-on-bubble-user: #586e75; /* Base01 */
+    --color-bubble-assistant: #fdf6e3; /* Base3 — bubbleless */
+    --color-on-bubble-assistant: #586e75; /* Base01 */
 
+    /* Red */
     --color-accent-fg: #dc322f;
     --color-accent-fg-hover: #b8271f;
     --color-accent-bg: #dc322f;
     --color-accent-bg-hover: #b8271f;
-    --color-on-accent-bg: #fdf6e3;
-    --color-on-accent-bg-hover: #fdf6e3;
+    --color-on-accent-bg: #002b36; /* Base03 */
+    --color-on-accent-bg-hover: #002b36;
 
+    /* Blue */
     --color-accent-2-fg: #268bd2;
     --color-accent-2-fg-hover: #1f6f9f;
     --color-accent-2-bg: #268bd2;
     --color-accent-2-bg-hover: #1f6f9f;
-    --color-on-accent-2-bg: #fffdf6;
-    --color-on-accent-2-bg-hover: #fffdf6;
+    --color-on-accent-2-bg: #002b36;
+    --color-on-accent-2-bg-hover: #002b36;
 
+    /* Red */
     --color-accent-3-fg: #dc322f;
     --color-accent-3-fg-hover: #b8271f;
     --color-accent-3-bg: #dc322f;
     --color-accent-3-bg-hover: #b8271f;
-    --color-on-accent-3-bg: #fdf6e3;
-    --color-on-accent-3-bg-hover: #fdf6e3;
+    --color-on-accent-3-bg: #002b36;
+    --color-on-accent-3-bg-hover: #002b36;
 }
 
-/* Solarized Dark — Base02 bg, Base0 text, #DC322F red, #268BD2 blue */
+/* Solarized Dark — Base03 canvas, Base1 fg (emphasized variant for stronger
+ * readability); bubbles use Solarized base bg tones (Base02/Base03), accents
+ * are Red / Blue / Red with Base03 dark text. Accent hover variants are the
+ * only non-palette values. */
 [data-theme="solarized-dark"] {
-    --color-canvas: #073642;
-    --color-surface-raised: #0d4759;
-    --color-surface-sunken: #0e4a5e;
-    --color-border: #1a5769;
-    --color-fg: #839496;
-    --color-fg-muted: #586e75;
+    --color-canvas: #002b36; /* Base03 */
+    --color-surface-raised: #073642; /* Base02 */
+    --color-surface-sunken: #073642; /* Base02 — palette has no third dark bg tone */
+    --color-border: #586e75; /* Base01 */
+    --color-fg: #93a1a1; /* Base1 */
+    --color-fg-muted: #586e75; /* Base01 */
 
-    --color-bubble-user: #268bd2;
-    --color-on-bubble-user: #0e4a5e;
-    --color-bubble-assistant: #0e4a5e;
-    --color-on-bubble-assistant: #839496;
+    --color-bubble-user: #073642; /* Base02 */
+    --color-on-bubble-user: #93a1a1; /* Base1 */
+    --color-bubble-assistant: #002b36; /* Base03 — bubbleless */
+    --color-on-bubble-assistant: #93a1a1; /* Base1 */
 
+    /* Red */
     --color-accent-fg: #dc322f;
-    --color-accent-fg-hover: #b8271f;
+    --color-accent-fg-hover: #e85e5b;
     --color-accent-bg: #dc322f;
-    --color-accent-bg-hover: #b8271f;
-    --color-on-accent-bg: #073642;
-    --color-on-accent-bg-hover: #073642;
+    --color-accent-bg-hover: #e85e5b;
+    --color-on-accent-bg: #002b36;
+    --color-on-accent-bg-hover: #002b36;
 
+    /* Blue */
     --color-accent-2-fg: #268bd2;
-    --color-accent-2-fg-hover: #1f6f9f;
+    --color-accent-2-fg-hover: #4ea4dd;
     --color-accent-2-bg: #268bd2;
-    --color-accent-2-bg-hover: #1f6f9f;
-    --color-on-accent-2-bg: #0e4a5e;
-    --color-on-accent-2-bg-hover: #0e4a5e;
+    --color-accent-2-bg-hover: #4ea4dd;
+    --color-on-accent-2-bg: #002b36;
+    --color-on-accent-2-bg-hover: #002b36;
 
+    /* Red */
     --color-accent-3-fg: #dc322f;
-    --color-accent-3-fg-hover: #b8271f;
+    --color-accent-3-fg-hover: #e85e5b;
     --color-accent-3-bg: #dc322f;
-    --color-accent-3-bg-hover: #b8271f;
-    --color-on-accent-3-bg: #073642;
-    --color-on-accent-3-bg-hover: #073642;
+    --color-accent-3-bg-hover: #e85e5b;
+    --color-on-accent-3-bg: #002b36;
+    --color-on-accent-3-bg-hover: #002b36;
 }
 
-/* Retro Sci-Fi HUD — #141D22 (deep dark teal), #DD513C (red-orange), #34A2DF (sky blue), #3DF2AD (mint) */
-[data-theme="retro-sci-fi-hud"] {
+/* Phosphor — #141D22 (deep dark teal), #DD513C (red-orange), #34A2DF (sky blue), #3DF2AD (mint) */
+[data-theme="phosphor"] {
     --color-canvas: #141d22;
     --color-surface-raised: #1c2a32;
     --color-surface-sunken: #1f3040;
@@ -328,7 +341,7 @@
 
     --color-bubble-user: #00b82e;
     --color-on-bubble-user: #0d150d;
-    --color-bubble-assistant: #0d150d;
+    --color-bubble-assistant: #000000;
     --color-on-bubble-assistant: #00ff41;
 
     --color-accent-fg: #00ff41;

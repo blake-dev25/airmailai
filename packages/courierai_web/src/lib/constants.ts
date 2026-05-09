@@ -22,6 +22,6 @@ export const THEMES: ReadonlyArray<{ id: string; name: string }> = [
     { id: 'tapestry', name: 'Tapestry' },
     { id: 'solarized-light', name: 'Solarized Light' },
     { id: 'solarized-dark', name: 'Solarized Dark' },
-    { id: 'retro-sci-fi-hud', name: 'Retro Sci-Fi HUD' },
+    { id: 'phosphor', name: 'Phosphor' },
     { id: 'digital-rain', name: 'Digital Rain' },
 ];

@@ -1,4 +1,9 @@
+import { CACHE_KEY } from '../../openrouter-models';
+
 const statusEl = document.getElementById('status')!;
+const btnExport = document.getElementById(
+    'btn-export-openrouter'
+) as HTMLButtonElement;
 const btnClearChats = document.getElementById(
     'btn-clear-chats'
 ) as HTMLButtonElement;
@@ -12,9 +17,31 @@ function setStatus(msg: string, error = false) {
 }
 
 function setLoading(loading: boolean) {
+    btnExport.disabled = loading;
     btnClearChats.disabled = loading;
     btnClearAll.disabled = loading;
 }
+
+btnExport.addEventListener('click', async () => {
+    setStatus('');
+    const result = await chrome.storage.local.get(CACHE_KEY);
+    const cache = result[CACHE_KEY];
+    if (!cache) {
+        setStatus('No cache yet — open the model picker first.', true);
+        return;
+    }
+    const blob = new Blob([JSON.stringify(cache, null, 2)], {
+        type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const today = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `courierai-openrouter-models-${today}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setStatus('Exported.');
+});
 
 btnClearChats.addEventListener('click', async () => {
     if (!confirm('Delete all chat history? This cannot be undone.')) return;

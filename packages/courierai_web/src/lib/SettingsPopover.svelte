@@ -17,7 +17,12 @@
         submitKeystroke = $bindable(),
         modelTier = $bindable(),
         autoscroll = $bindable(),
+        tagOpenRouterRequests = $bindable(),
+        openRouterFreeModels = $bindable(),
+        syncApiKeys = $bindable(),
         onclose,
+        onapikeysaved,
+        onapikeycleared,
     }: {
         theme: string;
         fontSizeIndex: number;
@@ -30,10 +35,15 @@
         submitKeystroke: 'enter' | 'ctrl+enter';
         modelTier: ModelTier;
         autoscroll: boolean;
+        tagOpenRouterRequests: boolean;
+        openRouterFreeModels: 'show' | 'only' | 'hide';
+        syncApiKeys: boolean;
         onclose: () => void;
+        onapikeysaved: (providerId: string) => void;
+        onapikeycleared: (providerId: string) => void;
     } = $props();
 
-    let activeTab = $state<'keys' | 'ui' | 'changelog'>('keys');
+    let activeTab = $state<'keys' | 'ui' | 'advanced' | 'changelog'>('keys');
 
     let showPrevious = $derived(modelTier !== 'latest');
     let showLegacy = $derived(modelTier === 'legacy');
@@ -58,27 +68,32 @@
         Object.fromEntries(PROVIDERS.map((p) => [p.id, false])),
     );
 
+    async function refreshSavedKeys() {
+        await waitForExtension();
+        savedKeys = await checkApiKeys(PROVIDERS.map((p) => p.id));
+    }
+
     $effect(() => {
-        waitForExtension().then(() => {
-            checkApiKeys(PROVIDERS.map((p) => p.id)).then((result) => {
-                savedKeys = result;
-            });
-        });
+        refreshSavedKeys();
     });
 
     async function handleSave(providerId: string) {
         const key = keyInputs[providerId].trim();
         if (!key) return;
-        const ok = await saveApiKey(providerId, key);
+        const ok = await saveApiKey(providerId, key, syncApiKeys);
         if (ok) {
             keyInputs[providerId] = '';
             savedKeys[providerId] = true;
+            onapikeysaved(providerId);
         }
     }
 
     async function handleClear(providerId: string) {
         const ok = await clearApiKey(providerId);
-        if (ok) savedKeys[providerId] = false;
+        if (ok) {
+            savedKeys[providerId] = false;
+            onapikeycleared(providerId);
+        }
     }
 
     const tabBase =
@@ -128,6 +143,13 @@
             onclick={() => (activeTab = 'ui')}
         >
             UI
+        </button>
+        <button
+            type="button"
+            class={[tabBase, activeTab === 'advanced' && tabActive]}
+            onclick={() => (activeTab = 'advanced')}
+        >
+            Advanced
         </button>
         <button
             type="button"
@@ -340,6 +362,29 @@
                         )}
                 />
             </div>
+        </div>
+
+        <div
+            class={[
+                'col-start-1 row-start-1 flex flex-col gap-5 invisible',
+                activeTab === 'advanced' && 'visible',
+            ]}
+            aria-hidden={activeTab !== 'advanced'}
+        >
+            <div class={[rowBase, themeRow]}>
+                <label for="sync-api-keys" class={labelClass}
+                    >Sync API Keys Through Browser Account</label
+                >
+                <input
+                    id="sync-api-keys"
+                    type="checkbox"
+                    class={checkboxClass}
+                    bind:checked={syncApiKeys}
+                    onchange={() => {
+                        setTimeout(refreshSavedKeys, 500);
+                    }}
+                />
+            </div>
             <div class={[rowBase, themeRow]}>
                 <div class="flex items-center gap-1.25">
                     <label for="smooth-text-mode" class={labelClass}
@@ -374,28 +419,47 @@
                     >
                 </select>
             </div>
-
-            <details class="advanced -mt-2 border-t border-border pt-4">
-                <summary
-                    class="cursor-pointer text-xs font-medium text-fg-muted uppercase tracking-wider py-0.5 select-none"
-                    >Advanced</summary
+            <div class={[rowBase, themeRow]}>
+                <label for="show-legacy" class={labelClass}
+                    >Show Legacy Models</label
                 >
-                <div class={[rowBase, themeRow, 'mt-3.5']}>
-                    <label for="show-legacy" class={labelClass}
-                        >Show Legacy Models</label
-                    >
-                    <input
-                        id="show-legacy"
-                        type="checkbox"
-                        class={checkboxClass}
-                        checked={showLegacy}
-                        onchange={(e) =>
-                            toggleLegacy(
-                                (e.currentTarget as HTMLInputElement).checked,
-                            )}
-                    />
-                </div>
-            </details>
+                <input
+                    id="show-legacy"
+                    type="checkbox"
+                    class={checkboxClass}
+                    checked={showLegacy}
+                    onchange={(e) =>
+                        toggleLegacy(
+                            (e.currentTarget as HTMLInputElement).checked,
+                        )}
+                />
+            </div>
+            <div class={[rowBase, themeRow]}>
+                <label for="tag-openrouter" class={labelClass}
+                    >Tag OpenRouter requests with 'CourierAI' for app
+                    tracking</label
+                >
+                <input
+                    id="tag-openrouter"
+                    type="checkbox"
+                    class={checkboxClass}
+                    bind:checked={tagOpenRouterRequests}
+                />
+            </div>
+            <div class={[rowBase, themeRow]}>
+                <label for="openrouter-free-models" class={labelClass}
+                    >OpenRouter Model Selection</label
+                >
+                <select
+                    id="openrouter-free-models"
+                    class={selectClass}
+                    bind:value={openRouterFreeModels}
+                >
+                    <option value="show">Show free models</option>
+                    <option value="only">Only show free models</option>
+                    <option value="hide">Hide free models</option>
+                </select>
+            </div>
         </div>
 
         <div
@@ -442,26 +506,6 @@
         border-radius: 50%;
         background-color: var(--color-accent-bg);
         cursor: pointer;
-    }
-
-    /* Custom expando chevron — replaces default details-marker */
-    .advanced > summary {
-        list-style: none;
-    }
-
-    .advanced > summary::-webkit-details-marker {
-        display: none;
-    }
-
-    .advanced > summary::before {
-        content: '▸';
-        display: inline-block;
-        margin-right: 6px;
-        transition: transform 0.15s;
-    }
-
-    .advanced[open] > summary::before {
-        transform: rotate(90deg);
     }
 
     /* Info-icon tooltip: hover-driven visibility on a child via parent state */

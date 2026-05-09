@@ -45,6 +45,9 @@ const PROVIDERS: Record<string, StreamFn> = {
 };
 
 const LOG = '[courier:ext]';
+const API_KEY_PREFIX = 'apiKey_';
+const SYNC_API_KEYS_KEY: keyof UserSettings = 'syncApiKeys';
+let keyStorageInit: Promise<void> | null = null;
 
 // Per-chat lock. While a chatId is in this map, another tab attempting to
 // stream the same chat is rejected so writes can't race.
@@ -65,6 +68,81 @@ function broadcast(event: BroadcastEvent) {
     }
 }
 
+function apiKeyName(provider: string): string {
+    return `${API_KEY_PREFIX}${provider}`;
+}
+
+async function getApiKeyEntries(
+    area: chrome.storage.StorageArea
+): Promise<Record<string, string>> {
+    const all = await area.get(null);
+    return Object.fromEntries(
+        Object.entries(all).filter(
+            (entry): entry is [string, string] =>
+                entry[0].startsWith(API_KEY_PREFIX) &&
+                typeof entry[1] === 'string' &&
+                entry[1].length > 0
+        )
+    );
+}
+
+async function getSyncApiKeys(): Promise<boolean> {
+    const result = await chrome.storage.sync.get(SYNC_API_KEYS_KEY);
+    if (typeof result[SYNC_API_KEYS_KEY] === 'boolean') {
+        return result[SYNC_API_KEYS_KEY];
+    }
+    await chrome.storage.sync.set({ [SYNC_API_KEYS_KEY]: false });
+    return false;
+}
+
+async function reconcileApiKeys(syncApiKeys: boolean): Promise<void> {
+    const [localKeys, syncedKeys] = await Promise.all([
+        getApiKeyEntries(chrome.storage.local),
+        getApiKeyEntries(chrome.storage.sync),
+    ]);
+    const mergedKeys = { ...localKeys, ...syncedKeys };
+    const syncedNames = Object.keys(syncedKeys);
+    const mergedNames = Object.keys(mergedKeys);
+
+    // Synced keys hydrate local storage and win conflicts, but API calls never
+    // read from sync directly.
+    if (syncedNames.length > 0) {
+        await chrome.storage.local.set(mergedKeys);
+    }
+
+    if (syncApiKeys) {
+        if (mergedNames.length > 0) await chrome.storage.sync.set(mergedKeys);
+    } else if (syncedNames.length > 0) {
+        await chrome.storage.sync.remove(syncedNames);
+    }
+}
+
+async function applyApiKeySyncPreference(syncApiKeys: boolean): Promise<void> {
+    await chrome.storage.sync.set({ [SYNC_API_KEYS_KEY]: syncApiKeys });
+    if (syncApiKeys) {
+        const localKeys = await getApiKeyEntries(chrome.storage.local);
+        if (Object.keys(localKeys).length > 0) {
+            await chrome.storage.sync.set(localKeys);
+        }
+        return;
+    }
+
+    const syncedKeys = await getApiKeyEntries(chrome.storage.sync);
+    const syncedNames = Object.keys(syncedKeys);
+    if (syncedNames.length > 0) await chrome.storage.sync.remove(syncedNames);
+}
+
+function initializeKeyStorage(): Promise<void> {
+    keyStorageInit ??= getSyncApiKeys().then(reconcileApiKeys);
+    return keyStorageInit;
+}
+
+async function readApiKey(provider: string): Promise<string | undefined> {
+    await initializeKeyStorage();
+    const result = await chrome.storage.local.get(apiKeyName(provider));
+    return result[apiKeyName(provider)] as string | undefined;
+}
+
 async function handleStorage(
     message: StorageRequest
 ): Promise<StorageResponse> {
@@ -72,42 +150,58 @@ async function handleStorage(
     switch (message.type) {
         case 'save_key': {
             console.log(LOG, 'storage: saving API key for', message.provider);
-            await chrome.storage.sync.set({
-                [`apiKey_${message.provider}`]: message.apiKey,
-            });
+            await initializeKeyStorage();
+            const key = apiKeyName(message.provider);
+            await chrome.storage.local.set({ [key]: message.apiKey });
+            await applyApiKeySyncPreference(message.syncApiKeys);
             console.log(LOG, '→ storage response: saved');
             return { type: 'saved' };
         }
         case 'clear_key': {
             console.log(LOG, 'storage: clearing API key for', message.provider);
-            await chrome.storage.sync.remove(`apiKey_${message.provider}`);
+            const key = apiKeyName(message.provider);
+            await Promise.all([
+                chrome.storage.local.remove(key),
+                chrome.storage.sync.remove(key),
+            ]);
             console.log(LOG, '→ storage response: saved');
             return { type: 'saved' };
         }
         case 'has_keys': {
-            const storageKeys = message.providers.map((p) => `apiKey_${p}`);
-            const result = await chrome.storage.sync.get(storageKeys);
+            await initializeKeyStorage();
+            const storageKeys = message.providers.map(apiKeyName);
+            const result = await chrome.storage.local.get(storageKeys);
             const saved: Record<string, boolean> = {};
             for (const p of message.providers) {
-                const val = result[`apiKey_${p}`];
+                const val = result[apiKeyName(p)];
                 saved[p] = typeof val === 'string' && val.length > 0;
             }
             console.log(LOG, '→ storage response: has_keys', saved);
             return { type: 'has_keys', saved };
         }
         case 'save_settings': {
+            await initializeKeyStorage();
+            const currentSyncApiKeys = await getSyncApiKeys();
             const filtered = Object.fromEntries(
                 SETTINGS_KEYS.filter((k) => k in message.settings).map((k) => [
                     k,
                     message.settings[k],
                 ])
             );
+            const nextSyncApiKeys = filtered[SYNC_API_KEYS_KEY];
+            if (
+                typeof nextSyncApiKeys === 'boolean' &&
+                nextSyncApiKeys !== currentSyncApiKeys
+            ) {
+                await applyApiKeySyncPreference(nextSyncApiKeys);
+            }
             console.log(LOG, 'storage: saving settings', filtered);
             await chrome.storage.sync.set(filtered);
             console.log(LOG, '→ storage response: saved');
             return { type: 'saved' };
         }
         case 'load_settings': {
+            await initializeKeyStorage();
             const result = await chrome.storage.sync.get(SETTINGS_KEYS);
             console.log(LOG, '→ storage response: settings', result);
             return {
@@ -163,11 +257,13 @@ async function handleStorage(
             return { type: 'chat', chat };
         }
         case 'load_openrouter_models': {
-            const models = await getOpenRouterModels();
+            const apiKey = await readApiKey('openrouter');
+            const models = await getOpenRouterModels(apiKey);
             console.log(
                 LOG,
                 '→ storage response: openrouter_models',
-                models ? `${models.length} models` : 'unavailable'
+                models ? `${models.length} models` : 'unavailable',
+                apiKey ? 'with key' : 'cache only'
             );
             return { type: 'openrouter_models', models };
         }
@@ -176,6 +272,9 @@ async function handleStorage(
 
 export default defineBackground(() => {
     console.log(LOG, 'background ready');
+    initializeKeyStorage().catch((err) =>
+        console.error(LOG, 'key storage init failed', err)
+    );
 
     // Internal messages from the popup
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -186,7 +285,11 @@ export default defineBackground(() => {
             return true;
         }
         if (message.type === 'admin_clear_all') {
-            Promise.all([dbClearChats(), chrome.storage.sync.clear()])
+            Promise.all([
+                dbClearChats(),
+                chrome.storage.local.clear(),
+                chrome.storage.sync.clear(),
+            ])
                 .then(() => sendResponse({ ok: true }))
                 .catch(() => sendResponse({ ok: false }));
             return true;
@@ -300,12 +403,7 @@ export default defineBackground(() => {
             });
 
             try {
-                const keyResult = await chrome.storage.sync.get(
-                    `apiKey_${msg.provider}`
-                );
-                const apiKey = keyResult[`apiKey_${msg.provider}`] as
-                    | string
-                    | undefined;
+                const apiKey = await readApiKey(msg.provider);
 
                 if (!apiKey) {
                     console.error(LOG, 'no API key for provider', msg.provider);

@@ -1,10 +1,6 @@
 import type { OpenRouterModel } from '@courier/shared';
 import type { ModelOption, ProviderOption } from './types';
 
-// First three vendors are pinned in this order; the rest go alphabetical.
-// Newest model in each group floats to the top.
-const PINNED_VENDORS = ['openai', 'anthropic', 'google'];
-
 // Skeleton — hydrated at runtime from the extension's OpenRouter cache.
 // Until hydration runs the picker shows an empty list under this provider.
 export const OPENROUTER: ProviderOption = {
@@ -45,14 +41,13 @@ function rawToOption(m: OpenRouterModel): ModelOption {
     };
 }
 
-// Big-3 vendors first (in order), then alphabetical. Within each group:
-// newest `created` first.
+// `~`-prefixed vendors (OpenRouter's "premier provider" tag) sort to the top,
+// alphabetical within both the pinned and non-pinned groups. ASCII `~` (126)
+// would otherwise sort to the bottom under default localeCompare.
 function compareVendors(a: string, b: string): number {
-    const aIdx = PINNED_VENDORS.indexOf(a);
-    const bIdx = PINNED_VENDORS.indexOf(b);
-    if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
-    if (aIdx !== -1) return -1;
-    if (bIdx !== -1) return 1;
+    const aPinned = a.startsWith('~');
+    const bPinned = b.startsWith('~');
+    if (aPinned !== bPinned) return aPinned ? -1 : 1;
     return a.localeCompare(b);
 }
 
@@ -69,7 +64,10 @@ export function buildOpenRouterProvider(
     const vendors = Array.from(byVendor.keys()).sort(compareVendors);
     for (const v of vendors) {
         const models = byVendor.get(v)!;
-        models.sort((a, b) => b.created - a.created);
+        // Newest first; ties broken alphabetically by name.
+        models.sort(
+            (a, b) => b.created - a.created || a.name.localeCompare(b.name)
+        );
         for (const m of models) ordered.push(rawToOption(m));
     }
     return { ...OPENROUTER, models: ordered };

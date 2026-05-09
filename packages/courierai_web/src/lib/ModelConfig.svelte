@@ -14,6 +14,7 @@
         providers,
         modelTier,
         initialized,
+        openRouterFreeModels,
         providerId = $bindable(),
         modelId = $bindable(),
         temperature = $bindable(),
@@ -25,6 +26,7 @@
         providers: ProviderOption[];
         modelTier: ModelTier;
         initialized: boolean;
+        openRouterFreeModels: 'show' | 'only' | 'hide';
         providerId: string;
         modelId: string;
         temperature: number;
@@ -40,6 +42,8 @@
         previous: 'Previous',
         legacy: 'Legacy',
     };
+    const OPENROUTER_EMPTY_LABEL =
+        'Please load an OpenRouter API key to download their model catalog.';
 
     function getTier(id: string): ModelTier {
         return MODEL_TIERS[id] ?? 'legacy';
@@ -71,21 +75,38 @@
             return [] as Array<{ label: string; models: ModelOption[] }>;
 
         if (provider.marketplace) {
+            // `~`-prefix is OpenRouter's premier-provider tag, used for sort
+            // upstream — strip it for display so labels read naturally.
+            const stripPrefix = (v: string) => v.replace(/^~/, '');
+            const source =
+                openRouterFreeModels === 'only'
+                    ? provider.models.filter((m) => m.id.endsWith(':free'))
+                    : openRouterFreeModels === 'hide'
+                      ? provider.models.filter(
+                            (m) => !m.id.endsWith(':free'),
+                        )
+                      : provider.models;
             const groups: Array<{ label: string; models: ModelOption[] }> = [];
             let currentVendor: string | null = null;
             let bucket: ModelOption[] = [];
-            for (const m of provider.models) {
+            for (const m of source) {
                 const v = m.vendor ?? 'other';
                 if (v !== currentVendor) {
                     if (bucket.length)
-                        groups.push({ label: currentVendor!, models: bucket });
+                        groups.push({
+                            label: stripPrefix(currentVendor!),
+                            models: bucket,
+                        });
                     currentVendor = v;
                     bucket = [];
                 }
                 bucket.push(m);
             }
             if (bucket.length)
-                groups.push({ label: currentVendor!, models: bucket });
+                groups.push({
+                    label: stripPrefix(currentVendor!),
+                    models: bucket,
+                });
             return groups;
         }
 
@@ -218,6 +239,11 @@
         thinkingConfig
             ? Math.max(0, thinkingConfig.levels.indexOf(thinkingLevel as never))
             : 0,
+    );
+    let modelPickerEmptyLabel = $derived(
+        currentProvider.id === 'openrouter'
+            ? OPENROUTER_EMPTY_LABEL
+            : 'Loading models...',
     );
 
     function levelLabel(level: string): string {
@@ -360,6 +386,7 @@
                 bind:value={modelId}
                 onchange={onModelChange}
                 disabled={!initialized}
+                emptyLabel={modelPickerEmptyLabel}
             />
         </div>
 

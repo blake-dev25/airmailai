@@ -8,11 +8,13 @@ const FRESH_MS = 24 * 60 * 60 * 1000;
 // On fetch error we set a cooldown so successive picker opens can't hammer
 // openrouter.ai. Stale cache (if any) keeps serving in the meantime.
 const ERROR_COOLDOWN_MS = 5 * 60 * 1000;
+const CACHE_VERSION = 2;
 
-const CACHE_KEY = 'openrouter_models_cache';
-const URL = 'https://openrouter.ai/api/v1/models?output_modalities=text';
+export const CACHE_KEY = 'openrouter_models_cache';
+const URL = 'https://openrouter.ai/api/v1/models';
 
 interface CacheEntry {
+    version: number;
     models: OpenRouterModel[];
     fetchedAt: number;
     nextRetryAt?: number;
@@ -32,9 +34,7 @@ const PARAMS_OF_INTEREST = new Set([
     'tools',
     'reasoning',
     'response_format',
-    'structured_outputs',
     'temperature',
-    'top_p',
     'max_tokens',
 ]);
 
@@ -59,8 +59,11 @@ function slim(raw: RawModel): OpenRouterModel | null {
     };
 }
 
-async function fetchAndSlim(): Promise<OpenRouterModel[]> {
-    const res = await fetch(URL);
+async function fetchAndSlim(apiKey: string): Promise<OpenRouterModel[]> {
+    const res = await fetch(URL, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${apiKey}` },
+    });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = (await res.json()) as { data: RawModel[] };
     const models = (json.data ?? [])
@@ -72,7 +75,9 @@ async function fetchAndSlim(): Promise<OpenRouterModel[]> {
 
 async function readCache(): Promise<CacheEntry | null> {
     const result = await chrome.storage.local.get(CACHE_KEY);
-    return (result[CACHE_KEY] as CacheEntry | undefined) ?? null;
+    const entry = result[CACHE_KEY] as CacheEntry | undefined;
+    if (!entry || entry.version !== CACHE_VERSION) return null;
+    return entry;
 }
 
 async function writeCache(entry: CacheEntry): Promise<void> {
@@ -81,10 +86,16 @@ async function writeCache(entry: CacheEntry): Promise<void> {
 
 // Returns the freshest models we can serve right now. Caller never blocks on
 // the network when stale cache exists — we kick off a background refresh and
-// return the stale list immediately.
-export async function getOpenRouterModels(): Promise<OpenRouterModel[] | null> {
+// return the stale list immediately. Without an API key, this is cache-only.
+export async function getOpenRouterModels(
+    apiKey?: string
+): Promise<OpenRouterModel[] | null> {
     const cache = await readCache();
     const now = Date.now();
+
+    if (!apiKey) {
+        return cache && cache.models.length > 0 ? cache.models : null;
+    }
 
     if (cache && now - cache.fetchedAt < FRESH_MS) {
         return cache.models;
@@ -97,18 +108,19 @@ export async function getOpenRouterModels(): Promise<OpenRouterModel[] | null> {
 
     if (cache) {
         // Stale-while-revalidate: serve stale, refresh in background.
-        refreshInBackground();
+        refreshInBackground(apiKey);
         return cache.models;
     }
 
     // Cold start — must wait for the first fetch.
     try {
-        const models = await fetchAndSlim();
-        await writeCache({ models, fetchedAt: now });
+        const models = await fetchAndSlim(apiKey);
+        await writeCache({ version: CACHE_VERSION, models, fetchedAt: now });
         return models;
     } catch (e) {
         console.error(LOG, 'openrouter: cold fetch failed', e);
         await writeCache({
+            version: CACHE_VERSION,
             models: [],
             fetchedAt: 0,
             nextRetryAt: now + ERROR_COOLDOWN_MS,
@@ -118,12 +130,16 @@ export async function getOpenRouterModels(): Promise<OpenRouterModel[] | null> {
 }
 
 let refreshing = false;
-function refreshInBackground(): void {
+function refreshInBackground(apiKey: string): void {
     if (refreshing) return;
     refreshing = true;
-    fetchAndSlim()
+    fetchAndSlim(apiKey)
         .then((models) =>
-            writeCache({ models, fetchedAt: Date.now() }).catch(() => {})
+            writeCache({
+                version: CACHE_VERSION,
+                models,
+                fetchedAt: Date.now(),
+            }).catch(() => {})
         )
         .catch(async (e) => {
             console.error(LOG, 'openrouter: background refresh failed', e);

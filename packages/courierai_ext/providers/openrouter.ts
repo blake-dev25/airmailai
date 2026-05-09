@@ -71,8 +71,9 @@ export async function streamOpenRouter(
 ): Promise<void> {
     const client = new OpenRouter({
         apiKey,
-        appTitle: 'CourierAI',
-        httpReferer: 'https://courierai.net',
+        ...(params.tagOpenRouterRequests
+            ? { appTitle: 'CourierAI', httpReferer: 'https://courierai.net' }
+            : {}),
     });
 
     const systemMsg = messages.find((m) => m.role === 'system');

@@ -89,12 +89,14 @@ async function sendStorageMessage(
 
 export async function saveApiKey(
     provider: string,
-    apiKey: string
+    apiKey: string,
+    syncApiKeys: boolean
 ): Promise<boolean> {
     const response = await sendStorageMessage({
         type: 'save_key',
         provider,
         apiKey,
+        syncApiKeys,
     });
     return response.type === 'saved';
 }

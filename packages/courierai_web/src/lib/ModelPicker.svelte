@@ -7,11 +7,13 @@
         value = $bindable(),
         onchange,
         disabled = false,
+        emptyLabel = 'Loading models...',
     }: {
         groups: Array<{ label: string; models: ModelOption[] }>;
         value: string;
         onchange?: (id: string) => void;
         disabled?: boolean;
+        emptyLabel?: string;
     } = $props();
 
     const SEARCH_THRESHOLD = 50;
@@ -33,7 +35,7 @@
             const m = g.models.find((mm) => mm.id === value);
             if (m) return m.name;
         }
-        return totalCount === 0 ? 'Loading models...' : value;
+        return totalCount === 0 ? emptyLabel : value;
     });
 
     // Filtered + flattened view used for both rendering and keyboard nav.
@@ -173,12 +175,16 @@
     <button
         type="button"
         class={triggerClass}
-        {disabled}
+        disabled={disabled || totalCount === 0}
         aria-haspopup="listbox"
         aria-expanded={open}
         onclick={openPopover}
     >
-        <span class="truncate">{currentLabel}</span>
+        <span
+            class={totalCount === 0
+                ? 'min-w-0 whitespace-normal leading-snug'
+                : 'truncate'}>{currentLabel}</span
+        >
         <Icon name="chevron-down" size={12} class="select-arrow" />
     </button>
 

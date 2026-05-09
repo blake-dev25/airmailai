@@ -23,6 +23,9 @@
         submitKeystroke = $bindable(),
         modelTier = $bindable(),
         autoscroll = $bindable(),
+        tagOpenRouterRequests = $bindable(),
+        openRouterFreeModels = $bindable(),
+        syncApiKeys = $bindable(),
         onnewchat,
         onselectchat,
         ondeletechat,
@@ -32,6 +35,8 @@
         onsearch,
         onclearsearch,
         onextensionneeded,
+        onapikeysaved,
+        onapikeycleared,
     }: {
         chats: Chat[];
         activeChatId: string | null;
@@ -54,6 +59,9 @@
         submitKeystroke: 'enter' | 'ctrl+enter';
         modelTier: ModelTier;
         autoscroll: boolean;
+        tagOpenRouterRequests: boolean;
+        openRouterFreeModels: 'show' | 'only' | 'hide';
+        syncApiKeys: boolean;
         onnewchat: () => void;
         onselectchat: (id: string, matchIndex?: number | null) => void;
         ondeletechat: (id: string) => void;
@@ -63,6 +71,8 @@
         onsearch: (query: string) => void;
         onclearsearch: () => void;
         onextensionneeded: () => void;
+        onapikeysaved: (providerId: string) => void;
+        onapikeycleared: (providerId: string) => void;
     } = $props();
 
     let showSettings = $state(false);
@@ -493,7 +503,12 @@
         bind:submitKeystroke
         bind:modelTier
         bind:autoscroll
+        bind:tagOpenRouterRequests
+        bind:openRouterFreeModels
+        bind:syncApiKeys
         onclose={() => (showSettings = false)}
+        {onapikeysaved}
+        {onapikeycleared}
     />
 {/if}
 
