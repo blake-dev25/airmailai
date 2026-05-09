@@ -136,6 +136,21 @@ export interface StoredChat {
     tokens?: { input: number; output: number };
 }
 
+// OpenRouter's models API returns rich metadata, so we hydrate the picker at
+// runtime instead of curating locally. Lives in the extension's
+// chrome.storage.local cache; served to the web via load_openrouter_models.
+export interface OpenRouterModel {
+    id: string;
+    name: string;
+    vendor: string;
+    contextWindow: number;
+    maxOutputTokens: number;
+    inputModalities: string[];
+    supportedParams: string[];
+    free: boolean;
+    created: number;
+}
+
 // Sent via chrome.runtime.sendMessage for one-off storage operations
 export type StorageRequest =
     | { type: 'save_key'; provider: string; apiKey: string }
@@ -148,7 +163,8 @@ export type StorageRequest =
     | { type: 'load_chat_metas' }
     | { type: 'load_chats' }
     | { type: 'load_chats_by_ids'; ids: string[] }
-    | { type: 'load_chat'; chatId: string };
+    | { type: 'load_chat'; chatId: string }
+    | { type: 'load_openrouter_models' };
 
 export type StorageResponse =
     | { type: 'saved' }
@@ -157,4 +173,5 @@ export type StorageResponse =
     | { type: 'chat_metas'; metas: ChatMeta[] }
     | { type: 'chats'; chats: StoredChat[] }
     | { type: 'chat'; chat: StoredChat | null }
+    | { type: 'openrouter_models'; models: OpenRouterModel[] | null }
     | { type: 'error'; message: string };

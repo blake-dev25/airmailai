@@ -1,9 +1,11 @@
 import { ANTHROPIC } from './anthropic';
 import { GOOGLE } from './google';
 import { OPENAI } from './openai';
+import { OPENROUTER } from './openrouter';
 import { MODEL_TIERS } from './tiers';
 import type { ModelTier, ProviderOption } from './types';
 
+export { buildOpenRouterProvider } from './openrouter';
 export { MODEL_TIERS } from './tiers';
 export type {
     ModelOption,
@@ -13,7 +15,14 @@ export type {
     ThinkingLevel,
 } from './types';
 
-export const PROVIDERS: ProviderOption[] = [ANTHROPIC, OPENAI, GOOGLE];
+// OpenRouter ships with an empty model list and is hydrated at runtime by the
+// extension. Until that resolves, the Models config shows a loading state.
+export const PROVIDERS: ProviderOption[] = [
+    ANTHROPIC,
+    OPENAI,
+    GOOGLE,
+    OPENROUTER,
+];
 
 const TIER_RANK: Record<ModelTier, number> = {
     latest: 0,
@@ -34,9 +43,16 @@ export function filterProvidersByTier(
     selected: ModelTier
 ): ProviderOption[] {
     return providers
-        .map((p) => ({
-            ...p,
-            models: p.models.filter((m) => modelMatchesTier(m.id, selected)),
-        }))
+        .map((p) => {
+            // Marketplace providers (OpenRouter) bypass tier curation —
+            // their catalogs are too large and churn too fast to curate by hand.
+            if (p.marketplace) return p;
+            return {
+                ...p,
+                models: p.models.filter((m) =>
+                    modelMatchesTier(m.id, selected)
+                ),
+            };
+        })
         .filter((p) => p.models.length > 0);
 }

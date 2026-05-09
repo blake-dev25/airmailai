@@ -13,9 +13,11 @@ import type {
 } from '@courier/shared';
 import { SETTINGS_KEYS } from '@courier/shared';
 import { DEBUG_API_LOGGING } from '../debug';
+import { getOpenRouterModels } from '../openrouter-models';
 import { streamAnthropic } from '../providers/anthropic';
 import { streamGoogle } from '../providers/google';
 import { streamOpenAI } from '../providers/openai';
+import { streamOpenRouter } from '../providers/openrouter';
 import {
     dbClearChats,
     dbDeleteChat,
@@ -39,6 +41,7 @@ const PROVIDERS: Record<string, StreamFn> = {
     anthropic: streamAnthropic,
     openai: streamOpenAI,
     google: streamGoogle,
+    openrouter: streamOpenRouter,
 };
 
 const LOG = '[courier:ext]';
@@ -158,6 +161,15 @@ async function handleStorage(
                 chat ? 'found' : 'not found'
             );
             return { type: 'chat', chat };
+        }
+        case 'load_openrouter_models': {
+            const models = await getOpenRouterModels();
+            console.log(
+                LOG,
+                '→ storage response: openrouter_models',
+                models ? `${models.length} models` : 'unavailable'
+            );
+            return { type: 'openrouter_models', models };
         }
     }
 }

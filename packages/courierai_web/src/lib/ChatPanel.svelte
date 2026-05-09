@@ -325,7 +325,7 @@
                         <p
                             class="text-[0.8125rem] font-normal text-center max-w-70"
                         >
-                            Loading…
+                            Loading...
                         </p>
                     </div>
                 {:else if messages.length === 0}

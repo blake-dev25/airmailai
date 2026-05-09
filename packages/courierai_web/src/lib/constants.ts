@@ -6,6 +6,7 @@ export type {
     ThinkingLevel,
 } from './models';
 export {
+    buildOpenRouterProvider,
     filterProvidersByTier,
     MODEL_TIERS,
     modelMatchesTier,

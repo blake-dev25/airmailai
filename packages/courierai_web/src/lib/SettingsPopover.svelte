@@ -206,7 +206,7 @@
                                 <input
                                     class="w-full px-2.5 py-1.5 bg-surface-raised border border-border rounded-md text-sm text-fg font-mono box-border outline-none transition-[border-color] duration-150 focus:border-accent-fg placeholder:font-sans placeholder:text-fg-muted"
                                     type="password"
-                                    placeholder="Paste key…"
+                                    placeholder="Paste key..."
                                     bind:value={keyInputs[provider.id]}
                                     onkeydown={(e) => {
                                         if (e.key === 'Enter')

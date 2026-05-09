@@ -8,6 +8,7 @@
         type ProviderOption,
     } from './constants';
     import Icon from './Icon.svelte';
+    import ModelPicker from './ModelPicker.svelte';
 
     let {
         providers,
@@ -59,10 +60,9 @@
         return out;
     });
 
-    // Tier-grouped, sorted options for the model dropdown. If the chat's
-    // stored model is out-of-tier, it gets its own group at the top so the
-    // select can display it (and the user can revert to it by closing the
-    // dropdown without picking).
+    // Marketplace providers (OpenRouter) skip tier curation. Their catalog is
+    // pre-sorted by the parent (vendor-pinned, then newest-first), and we
+    // group by vendor here so users can scan by upstream maker.
     let modelGroups = $derived.by(() => {
         const provider =
             providerOptions.find((p) => p.id === providerId) ??
@@ -70,6 +70,29 @@
         if (!provider)
             return [] as Array<{ label: string; models: ModelOption[] }>;
 
+        if (provider.marketplace) {
+            const groups: Array<{ label: string; models: ModelOption[] }> = [];
+            let currentVendor: string | null = null;
+            let bucket: ModelOption[] = [];
+            for (const m of provider.models) {
+                const v = m.vendor ?? 'other';
+                if (v !== currentVendor) {
+                    if (bucket.length)
+                        groups.push({ label: currentVendor!, models: bucket });
+                    currentVendor = v;
+                    bucket = [];
+                }
+                bucket.push(m);
+            }
+            if (bucket.length)
+                groups.push({ label: currentVendor!, models: bucket });
+            return groups;
+        }
+
+        // Tier-grouped, sorted options for first-party providers. If the
+        // chat's stored model is out-of-tier, it gets its own group at the top
+        // so the picker can display it (and the user can revert to it by
+        // closing without picking).
         const inTier = new Set(
             filteredProviders
                 .find((p) => p.id === provider.id)
@@ -113,6 +136,7 @@
 
     function onBadgeBlur() {
         badgeFocused = false;
+        if (!currentModel) return;
         const val = parseFloat(badgeEl?.textContent ?? '');
         temperature = Number.isNaN(val)
             ? temperature
@@ -131,7 +155,7 @@
     let maxTokensBadgeFocused = false;
 
     let maxTokensSnaps = $derived.by(() => {
-        const max = currentModel.params.maxOutputTokens;
+        const max = currentModel?.params.maxOutputTokens ?? 8192;
         const snaps: number[] = [1];
         for (let v = 4096; v < max; v += 4096) snaps.push(v);
         if (snaps[snaps.length - 1] !== max) snaps.push(max);
@@ -161,6 +185,7 @@
 
     function onMaxTokensBadgeBlur() {
         maxTokensBadgeFocused = false;
+        if (!currentModel) return;
         const val = parseInt(maxTokensBadgeEl?.textContent ?? '', 10);
         maxTokens = Number.isNaN(val)
             ? maxTokens
@@ -184,11 +209,11 @@
     let currentProvider = $derived(
         providers.find((p) => p.id === providerId) ?? providers[0],
     );
-    let currentModel = $derived(
+    let currentModel = $derived<ModelOption | undefined>(
         currentProvider.models.find((m) => m.id === modelId) ??
             currentProvider.models[0],
     );
-    let thinkingConfig = $derived(currentModel.params.thinking);
+    let thinkingConfig = $derived(currentModel?.params.thinking);
     let thinkingIndex = $derived(
         thinkingConfig
             ? Math.max(0, thinkingConfig.levels.indexOf(thinkingLevel as never))
@@ -216,9 +241,8 @@
         }
     }
 
-    function onModelChange(e: Event) {
-        modelId = (e.currentTarget as HTMLSelectElement).value;
-        const model = currentProvider.models.find((m) => m.id === modelId);
+    function onModelChange(id: string) {
+        const model = currentProvider.models.find((m) => m.id === id);
         if (model) {
             maxTokens = model.params.defaultMaxTokens;
             if (model.params.defaultTemperature !== undefined)
@@ -250,6 +274,7 @@
 
     // Safety clamp for externally set values (e.g. loading a chat saved with an old model limit)
     $effect(() => {
+        if (!currentModel) return;
         const params = currentModel.params;
         untrack(() => {
             if (maxTokens > params.maxOutputTokens)
@@ -330,36 +355,15 @@
 
         <div class={fieldClass}>
             <label for="model" class={labelClass}>Model</label>
-            <div class="relative">
-                <select
-                    id="model"
-                    class={selectClass}
-                    value={modelId}
-                    onchange={onModelChange}
-                >
-                    {#if !initialized}
-                        <!-- No options until init — select renders blank since `value` matches nothing. -->
-                    {:else if modelGroups.length === 1}
-                        {#each modelGroups[0].models as model}
-                            <option value={model.id}>{model.name}</option>
-                        {/each}
-                    {:else}
-                        {#each modelGroups as group}
-                            <optgroup label={group.label}>
-                                {#each group.models as model}
-                                    <option value={model.id}
-                                        >{model.name}</option
-                                    >
-                                {/each}
-                            </optgroup>
-                        {/each}
-                    {/if}
-                </select>
-                <Icon name="chevron-down" size={12} class="select-arrow" />
-            </div>
+            <ModelPicker
+                groups={modelGroups}
+                bind:value={modelId}
+                onchange={onModelChange}
+                disabled={!initialized}
+            />
         </div>
 
-        {#if initialized}
+        {#if initialized && currentModel}
         {#if currentModel.params.temperatureMax !== undefined}
             <div class={fieldClass}>
                 <div class={labelRowClass}>
@@ -523,7 +527,7 @@
             <div class={detailRowClass}>
                 <span class={detailLabelClass}>Context Window</span>
                 <span class={detailValueClass}>
-                    {#if !initialized}
+                    {#if !initialized || !currentModel}
                         &nbsp;
                     {:else if tokens}
                         {(tokens.input + tokens.output).toLocaleString()} / {currentModel.params.contextWindow.toLocaleString()}
@@ -532,11 +536,11 @@
                     {/if}
                 </span>
             </div>
-            {#if !initialized || currentModel.params.knowledgeCutoff}
+            {#if !initialized || !currentModel || currentModel.params.knowledgeCutoff}
                 <div class={detailRowClass}>
                     <span class={detailLabelClass}>Knowledge Cutoff</span>
                     <span class={detailValueClass}
-                        >{initialized
+                        >{initialized && currentModel
                             ? currentModel.params.knowledgeCutoff
                             : ' '}</span
                     >

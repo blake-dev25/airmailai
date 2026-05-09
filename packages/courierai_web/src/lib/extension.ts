@@ -2,6 +2,7 @@ import type {
     BroadcastEvent,
     ChatMeta,
     ExtensionResponse,
+    OpenRouterModel,
     StorageRequest,
     StorageResponse,
     StoredChat,
@@ -152,6 +153,16 @@ export async function loadChatsByIds(ids: string[]): Promise<StoredChat[]> {
 export async function loadChat(chatId: string): Promise<StoredChat | null> {
     const response = await sendStorageMessage({ type: 'load_chat', chatId });
     if (response.type === 'chat') return response.chat;
+    return null;
+}
+
+export async function loadOpenRouterModels(): Promise<
+    OpenRouterModel[] | null
+> {
+    const response = await sendStorageMessage({
+        type: 'load_openrouter_models',
+    });
+    if (response.type === 'openrouter_models') return response.models;
     return null;
 }
 

@@ -11,6 +11,7 @@
         "@anthropic-ai/sdk": "^0.95.0",
         "@courier/shared": "workspace:*",
         "@google/genai": "^1.52.0",
+        "@openrouter/sdk": "^0.12.35",
         "openai": "^6.36.0"
     },
     "devDependencies": {

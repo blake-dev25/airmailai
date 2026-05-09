@@ -4,6 +4,7 @@ export type {
     ChatMessage,
     ChatMeta,
     ExtensionResponse,
+    OpenRouterModel,
     StorageRequest,
     StorageResponse,
     StoredChat,

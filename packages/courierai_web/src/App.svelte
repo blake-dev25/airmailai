@@ -11,10 +11,12 @@
     import { detectBrowser } from './lib/browser';
     import ChatPanel from './lib/ChatPanel.svelte';
     import {
+        buildOpenRouterProvider,
         FONT_SIZES,
         filterProvidersByTier,
         type ModelTier,
         PROVIDERS,
+        type ProviderOption,
     } from './lib/constants';
     import { buildDemoChats } from './lib/demo';
     import ExtensionPrompt from './lib/ExtensionPrompt.svelte';
@@ -23,6 +25,7 @@
         loadChat,
         loadChatMetas,
         loadChatsByIds,
+        loadOpenRouterModels,
         loadSettings,
         type StreamHandle,
         saveChat,
@@ -89,6 +92,10 @@
     let autoscroll = $state(false);
 
     // Model config
+    // OpenRouter's catalog hydrates async; the rest are static. The local
+    // `providers` state lets us swap the OpenRouter entry once it's ready
+    // without re-rendering the world.
+    let providers = $state<ProviderOption[]>(PROVIDERS);
     const defaultModel = PROVIDERS[0].models[1]; // Sonnet as default
     let providerId = $state(PROVIDERS[0].id);
     let modelId = $state(defaultModel.id);
@@ -161,10 +168,10 @@
         untrack(() => {
             const active = chats.find((c) => c.id === activeChatId);
             if ((active?.messages.length ?? 0) > 0) return;
-            const filtered = filterProvidersByTier(PROVIDERS, tier);
+            const filtered = filterProvidersByTier(providers, tier);
             const provider = filtered.find((p) => p.id === providerId);
             if (!provider) {
-                const fallback = filtered[0] ?? PROVIDERS[0];
+                const fallback = filtered[0] ?? providers[0];
                 providerId = fallback.id;
                 modelId = fallback.models[0].id;
                 return;
@@ -193,6 +200,14 @@
     // gracefully halts and saves with truncated visible content.
     const streamHandles = new Map<string, StreamHandle>();
 
+    async function hydrateOpenRouterModels() {
+        const raw = await loadOpenRouterModels();
+        if (!raw || raw.length === 0) return;
+        const built = buildOpenRouterProvider(raw);
+        providers = providers.map((p) => (p.id === 'openrouter' ? built : p));
+        console.log(LOG, 'openrouter hydrated', `${raw.length} models`);
+    }
+
     waitForExtension().then(async (detected) => {
         if (!detected) {
             const browser = detectBrowser();
@@ -205,6 +220,11 @@
             showExtensionPrompt = true;
         }
         console.log(LOG, 'extension detected:', detected);
+
+        // Fire-and-forget: doesn't gate `initialized` since the rest of the UI
+        // works without OpenRouter. The picker shows a loading state for that
+        // provider until this resolves.
+        if (detected) hydrateOpenRouterModels().catch(console.error);
 
         const [settings, metas] = await Promise.all([
             loadSettings(),
@@ -333,9 +353,9 @@
                     const start = Math.max(0, idx - 40);
                     const end = Math.min(content.length, idx + q.length + 60);
                     snippet =
-                        (start > 0 ? '…' : '') +
+                        (start > 0 ? '...' : '') +
                         content.slice(start, end) +
-                        (end < content.length ? '…' : '');
+                        (end < content.length ? '...' : '');
                     break;
                 }
             }
@@ -350,7 +370,7 @@
                 const firstMsg = chat.messages.find((m) => m.content);
                 snippet = firstMsg
                     ? firstMsg.content.slice(0, 100) +
-                      (firstMsg.content.length > 100 ? '…' : '')
+                      (firstMsg.content.length > 100 ? '...' : '')
                     : '';
                 results.push({
                     id: chat.id,
@@ -622,7 +642,7 @@
                 ...(attachments ? { attachments } : {}),
             }));
 
-        const modelParams = PROVIDERS.find(
+        const modelParams = providers.find(
             (p) => p.id === snap.providerId,
         )?.models.find((m) => m.id === snap.modelId)?.params;
 
@@ -1113,7 +1133,7 @@
         onextensionneeded={requestExtension}
     />
     <ModelConfig
-        providers={PROVIDERS}
+        {providers}
         {modelTier}
         {initialized}
         bind:providerId
