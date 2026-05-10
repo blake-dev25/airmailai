@@ -8,9 +8,12 @@
     let { content }: { content: string } = $props();
 
     let highlighterReady = $state(isHighlighterReady());
+    // Triple-backtick is the only path that reaches Shiki; inline code and
+    // 4-space indented blocks render through the plain <pre><code> fallback.
+    let hasCodeBlock = $derived(content.includes('```'));
 
     $effect(() => {
-        if (!highlighterReady) {
+        if (hasCodeBlock && !highlighterReady) {
             initMarkdown().then(() => {
                 highlighterReady = true;
             });

@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Generated at build time by scripts/gen-version.ts
+src/lib/legal-version.ts
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

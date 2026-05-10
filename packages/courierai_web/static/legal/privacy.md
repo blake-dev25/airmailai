@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Last updated:** May 9, 2026
+**Last updated:** May 10, 2026
 
 ## The short version
 
@@ -84,6 +84,7 @@ not sent to any server operated by us:
 | API keys | `chrome.storage.local` for use by the extension; optional backup copy in `chrome.storage.sync` if you enable API-key sync |
 | Chat history, attachments, system prompts, and token counts | IndexedDB (local to each browser profile) |
 | Theme, model, and UI preferences | `chrome.storage.sync` |
+| Theme preference (paint-time cache, so the correct background renders before the extension finishes loading) | Website `localStorage` (key: `courierai-theme`) — kept in sync with, and overwritten by, the canonical value from `chrome.storage.sync` |
 
 You can delete any of this at any time by uninstalling the extension or
 clearing the extension's storage through your browser.
@@ -112,11 +113,14 @@ content.
 
 ## Cookies and tracking
 
-We do not use cookies. We do not use client-side web analytics,
-tracking pixels, fingerprinting, or advertising identifiers. We do not
-enable per-request CDN access logs or real-time logs. The only CDN
-metrics we receive are the aggregate CloudFront viewer reports
-described above.
+We do not use cookies, with one exception: a single `localStorage` key
+(`courierai-theme`) that the website stores in your browser to render
+the correct theme background before the extension finishes loading.
+This is a functional preference cache, not a tracking mechanism. We do
+not use client-side web analytics, tracking pixels, fingerprinting, or
+advertising identifiers. We do not enable per-request CDN access logs
+or real-time logs. The only CDN metrics we receive are the aggregate
+CloudFront viewer reports described above.
 
 ## Children
 

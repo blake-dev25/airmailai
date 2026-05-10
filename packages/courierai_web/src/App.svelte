@@ -35,20 +35,11 @@
         tabId,
         waitForExtension,
     } from './lib/extension';
+    import LegalGate from './lib/LegalGate.svelte';
+    import { LEGAL_UPDATED_AT } from './lib/legal-version';
     import ModelConfig from './lib/ModelConfig.svelte';
-    import { initMarkdown } from './lib/markdown';
     import Sidebar from './lib/Sidebar.svelte';
     import type { Chat, Message, SearchResult } from './lib/types';
-
-    // Preload Shiki in the browser's idle window so the first code block doesn't pay the cost.
-    onMount(() => {
-        const trigger = () => initMarkdown();
-        if ('requestIdleCallback' in window) {
-            window.requestIdleCallback(trigger);
-        } else {
-            setTimeout(trigger, 0);
-        }
-    });
 
     const LOG = '[courier:web]';
     console.log(LOG, 'page load', {
@@ -63,6 +54,7 @@
     let theme = $state('airmail-warm');
     $effect(() => {
         document.documentElement.dataset.theme = theme;
+        localStorage.setItem('courierai-theme', theme);
     });
 
     // Font size — default based on screen width
@@ -96,6 +88,8 @@
     let openRouterFreeModels = $state<'show' | 'only' | 'hide'>('show');
     // API keys stay on this device unless the user opts into browser-account sync.
     let syncApiKeys = $state(false);
+    // Unix seconds of the user's last ToS/Privacy agreement; 0 = never agreed.
+    let legalAgreedAt = $state(0);
 
     // Model config
     // OpenRouter's catalog hydrates async; the rest are static. The local
@@ -199,6 +193,7 @@
     let chatLoading = $state(false);
     let demoMode = $state(false);
     let showExtensionPrompt = $state(false);
+    let showLegalGate = $state(false);
     let promptVariant = $state<
         'no-extension' | 'unsupported-browser' | 'mobile'
     >('no-extension');
@@ -294,6 +289,9 @@
             syncApiKeys: (v) => {
                 syncApiKeys = v;
             },
+            legalAgreedAt: (v) => {
+                legalAgreedAt = v;
+            },
         };
         for (const key of SETTINGS_KEYS) {
             const v = settings[key];
@@ -325,8 +323,23 @@
             console.log(LOG, 'first page loaded', `${chats.length} chats`);
         }
 
+        if (detected && legalAgreedAt < LEGAL_UPDATED_AT) {
+            showLegalGate = true;
+            console.log(LOG, 'legal gate', {
+                agreedAt: legalAgreedAt,
+                updatedAt: LEGAL_UPDATED_AT,
+            });
+        }
+
         initialized = true;
     });
+
+    function handleLegalAgree() {
+        legalAgreedAt = Math.floor(Date.now() / 1000);
+        showLegalGate = false;
+        saveSettings({ legalAgreedAt });
+        console.log(LOG, 'legal agreed', legalAgreedAt);
+    }
 
     async function loadMoreChats() {
         if (isLoadingMore || unloadedMetas.length === 0) return;
@@ -1132,6 +1145,10 @@
 
 {#if showExtensionPrompt}
     <ExtensionPrompt variant={promptVariant} onlookaround={enterDemoMode} />
+{/if}
+
+{#if showLegalGate}
+    <LegalGate onagree={handleLegalAgree} />
 {/if}
 
 <div class="app">

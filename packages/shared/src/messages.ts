@@ -92,6 +92,8 @@ export interface UserSettings {
     tagOpenRouterRequests: boolean;
     openRouterFreeModels: 'show' | 'only' | 'hide';
     syncApiKeys: boolean;
+    // Unix seconds of the last ToS/Privacy agreement. 0/missing = never agreed.
+    legalAgreedAt: number;
 }
 
 // The mapped-type constraint forces every UserSettings field to appear here —
@@ -113,6 +115,7 @@ const SETTINGS_KEY_MAP: { [K in keyof UserSettings]: 0 } = {
     tagOpenRouterRequests: 0,
     openRouterFreeModels: 0,
     syncApiKeys: 0,
+    legalAgreedAt: 0,
 };
 export const SETTINGS_KEYS = Object.keys(
     SETTINGS_KEY_MAP

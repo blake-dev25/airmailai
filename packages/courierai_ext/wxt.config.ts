@@ -16,8 +16,16 @@ function readFile(name: string): string | undefined {
 const version = readFile('VERSION') ?? '0.0.0.1';
 const versionName = readFile('VERSION_NAME');
 
+// Verbosity is driven by BUILD_VERBOSE so the default `bun run build` stays
+// quiet on warnings (only errors surface), and `bun run build:verbose` opts
+// back into the full Vite + Rolldown warning stream when debugging.
+const verbose = !!process.env.BUILD_VERBOSE;
+
 export default defineConfig({
-    vite: () => ({ logLevel: 'warn' }),
+    vite: () => ({
+        logLevel: verbose ? 'info' : 'error',
+        ...(verbose ? {} : { build: { rollupOptions: { onwarn: () => {} } } }),
+    }),
     zip: {
         artifactTemplate: 'zip/courierai_ext.zip',
     },

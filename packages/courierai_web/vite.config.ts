@@ -13,8 +13,13 @@ function readVersion(): string {
     return '0.0.0.1';
 }
 
+// Verbosity is driven by BUILD_VERBOSE so the default `bun run build` stays
+// quiet on warnings (only errors surface), and `bun run build:verbose` opts
+// back into the full Vite + Rolldown warning stream when debugging.
+const verbose = !!process.env.BUILD_VERBOSE;
+
 export default defineConfig({
-    logLevel: 'warn',
+    logLevel: verbose ? 'info' : 'error',
     publicDir: 'static',
     define: {
         __APP_VERSION__: JSON.stringify(readVersion()),
@@ -22,6 +27,7 @@ export default defineConfig({
     plugins: [tailwindcss(), svelte()],
     build: {
         rollupOptions: {
+            ...(verbose ? {} : { onwarn: () => {} }),
             input: {
                 main: resolve(__dirname, 'index.html'),
                 app: resolve(__dirname, 'app/index.html'),

@@ -4,6 +4,20 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CourierAI | App</title>
+    <style>
+      html[data-theme="airmail-warm"]     { background-color: #f0e1c3 }
+      html[data-theme="airmail-light"]    { background-color: #dfe0da }
+      html[data-theme="absolutely"]       { background-color: #1f1f1e }
+      html[data-theme="tapestry"]         { background-color: #000000 }
+      html[data-theme="solarized-light"]  { background-color: #fdf6e3 }
+      html[data-theme="solarized-dark"]   { background-color: #002b36 }
+      html[data-theme="phosphor"]         { background-color: #141d22 }
+      html[data-theme="digital-rain"]     { background-color: #000000 }
+    </style>
+    <script>
+      const t = localStorage.getItem('courierai-theme');
+      if (t) document.documentElement.dataset.theme = t;
+    </script>
   </head>
   <body>
     <div id="app"></div>
