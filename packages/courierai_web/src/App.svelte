@@ -36,7 +36,6 @@
         waitForExtension,
     } from './lib/extension';
     import LegalGate from './lib/LegalGate.svelte';
-    import { LEGAL_UPDATED_AT } from './lib/legal-version';
     import ModelConfig from './lib/ModelConfig.svelte';
     import Sidebar from './lib/Sidebar.svelte';
     import type { Chat, Message, SearchResult } from './lib/types';
@@ -88,8 +87,8 @@
     let openRouterFreeModels = $state<'show' | 'only' | 'hide'>('show');
     // API keys stay on this device unless the user opts into browser-account sync.
     let syncApiKeys = $state(false);
-    // Unix seconds of the user's last ToS/Privacy agreement; 0 = never agreed.
-    let legalAgreedAt = $state(0);
+    // Hash of the ToS/Privacy pair the user last accepted; empty = never agreed.
+    let legalAcceptedVersion = $state('');
 
     // Model config
     // OpenRouter's catalog hydrates async; the rest are static. The local
@@ -289,8 +288,8 @@
             syncApiKeys: (v) => {
                 syncApiKeys = v;
             },
-            legalAgreedAt: (v) => {
-                legalAgreedAt = v;
+            legalAcceptedVersion: (v) => {
+                legalAcceptedVersion = v;
             },
         };
         for (const key of SETTINGS_KEYS) {
@@ -323,11 +322,11 @@
             console.log(LOG, 'first page loaded', `${chats.length} chats`);
         }
 
-        if (detected && legalAgreedAt < LEGAL_UPDATED_AT) {
+        if (detected && legalAcceptedVersion !== __LEGAL_VERSION__) {
             showLegalGate = true;
             console.log(LOG, 'legal gate', {
-                agreedAt: legalAgreedAt,
-                updatedAt: LEGAL_UPDATED_AT,
+                acceptedVersion: legalAcceptedVersion,
+                currentVersion: __LEGAL_VERSION__,
             });
         }
 
@@ -335,10 +334,10 @@
     });
 
     function handleLegalAgree() {
-        legalAgreedAt = Math.floor(Date.now() / 1000);
+        legalAcceptedVersion = __LEGAL_VERSION__;
         showLegalGate = false;
-        saveSettings({ legalAgreedAt });
-        console.log(LOG, 'legal agreed', legalAgreedAt);
+        saveSettings({ legalAcceptedVersion });
+        console.log(LOG, 'legal agreed', legalAcceptedVersion);
     }
 
     async function loadMoreChats() {

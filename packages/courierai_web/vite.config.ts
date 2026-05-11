@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
@@ -13,6 +14,20 @@ function readVersion(): string {
     return '0.0.0.1';
 }
 
+function readLegalVersion(): string {
+    const hash = createHash('sha256');
+    const legalDir = join(__dirname, 'static/legal');
+
+    for (const name of ['terms.md', 'privacy.md']) {
+        hash.update(name);
+        hash.update('\0');
+        hash.update(readFileSync(join(legalDir, name)));
+        hash.update('\0');
+    }
+
+    return hash.digest('hex');
+}
+
 // Verbosity is driven by BUILD_VERBOSE so the default `bun run build` stays
 // quiet on warnings (only errors surface), and `bun run build:verbose` opts
 // back into the full Vite + Rolldown warning stream when debugging.
@@ -23,6 +38,7 @@ export default defineConfig({
     publicDir: 'static',
     define: {
         __APP_VERSION__: JSON.stringify(readVersion()),
+        __LEGAL_VERSION__: JSON.stringify(readLegalVersion()),
     },
     plugins: [tailwindcss(), svelte()],
     build: {

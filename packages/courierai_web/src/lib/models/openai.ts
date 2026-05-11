@@ -1,20 +1,23 @@
 import type { ProviderOption } from './types';
 
 // NOTE FOR LLMS: NEVER MANUALLY MODIFY IDS/NAMES, THEY ARE CORRECT
+// This file is automatically written over by scripts/update-model-list.ts, edits will not be saved
 export const OPENAI: ProviderOption = {
     id: 'openai',
     name: 'OpenAI',
     models: [
         {
             id: 'gpt-5.5-pro',
-            name: 'GPT-5.5 pro',
+            name: 'GPT-5.5 Pro',
             params: {
                 contextWindow: 1050000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Dec 2025',
+                thinking: {
+                    levels: ['medium', 'high', 'xhigh'],
+                    defaultLevel: 'medium',
+                },
             },
         },
         {
@@ -24,8 +27,6 @@ export const OPENAI: ProviderOption = {
                 contextWindow: 1050000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Dec 2025',
                 thinking: {
                     levels: ['none', 'low', 'medium', 'high', 'xhigh'],
@@ -35,26 +36,30 @@ export const OPENAI: ProviderOption = {
         },
         {
             id: 'gpt-5.4-mini',
-            name: 'GPT-5.4 mini',
+            name: 'GPT-5.4 Mini',
             params: {
                 contextWindow: 400000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Aug 2025',
+                thinking: {
+                    levels: ['none', 'low', 'medium', 'high', 'xhigh'],
+                    defaultLevel: 'none',
+                },
             },
         },
         {
             id: 'gpt-5.4-nano',
-            name: 'GPT-5.4 nano',
+            name: 'GPT-5.4 Nano',
             params: {
                 contextWindow: 400000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Aug 2025',
+                thinking: {
+                    levels: ['none', 'low', 'medium', 'high', 'xhigh'],
+                    defaultLevel: 'none',
+                },
             },
         },
         {
@@ -64,8 +69,6 @@ export const OPENAI: ProviderOption = {
                 contextWindow: 1050000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Aug 2025',
                 thinking: {
                     levels: ['none', 'low', 'medium', 'high', 'xhigh'],
@@ -75,13 +78,11 @@ export const OPENAI: ProviderOption = {
         },
         {
             id: 'gpt-5.4-pro',
-            name: 'GPT-5.4 pro',
+            name: 'GPT-5.4 Pro',
             params: {
                 contextWindow: 1050000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Aug 2025',
                 thinking: {
                     levels: ['medium', 'high', 'xhigh'],
@@ -96,21 +97,7 @@ export const OPENAI: ProviderOption = {
                 contextWindow: 128000,
                 maxOutputTokens: 16384,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Aug 2025',
-            },
-        },
-        {
-            id: 'gpt-4o-search-preview',
-            name: 'GPT-4o Search Preview',
-            params: {
-                contextWindow: 128000,
-                maxOutputTokens: 16384,
-                defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
-                knowledgeCutoff: 'Oct 2023',
             },
         },
         {
@@ -120,9 +107,11 @@ export const OPENAI: ProviderOption = {
                 contextWindow: 400000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Aug 2025',
+                thinking: {
+                    levels: ['none', 'low', 'medium', 'high', 'xhigh'],
+                    defaultLevel: 'none',
+                },
             },
         },
         {
@@ -132,9 +121,11 @@ export const OPENAI: ProviderOption = {
                 contextWindow: 400000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Aug 2025',
+                thinking: {
+                    levels: ['none', 'low', 'medium', 'high', 'xhigh'],
+                    defaultLevel: 'none',
+                },
             },
         },
         {
@@ -144,20 +135,16 @@ export const OPENAI: ProviderOption = {
                 contextWindow: 128000,
                 maxOutputTokens: 16384,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Aug 2025',
             },
         },
         {
             id: 'gpt-5.2-pro',
-            name: 'GPT-5.2 pro',
+            name: 'GPT-5.2 Pro',
             params: {
                 contextWindow: 400000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Aug 2025',
                 thinking: {
                     levels: ['medium', 'high', 'xhigh'],
@@ -172,8 +159,6 @@ export const OPENAI: ProviderOption = {
                 contextWindow: 400000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Aug 2025',
                 thinking: {
                     levels: ['none', 'low', 'medium', 'high', 'xhigh'],
@@ -188,33 +173,39 @@ export const OPENAI: ProviderOption = {
                 contextWindow: 400000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Sep 2024',
+                thinking: {
+                    levels: ['none', 'low', 'medium', 'high'],
+                    defaultLevel: 'none',
+                },
             },
         },
         {
             id: 'gpt-5.1-codex-mini',
-            name: 'GPT-5.1 Codex mini',
+            name: 'GPT-5.1-Codex-Mini',
             params: {
                 contextWindow: 400000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Sep 2024',
+                thinking: {
+                    levels: ['none', 'low', 'medium', 'high'],
+                    defaultLevel: 'none',
+                },
             },
         },
         {
             id: 'gpt-5.1-codex',
-            name: 'GPT-5.1 Codex',
+            name: 'GPT-5.1-Codex',
             params: {
                 contextWindow: 400000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Sep 2024',
+                thinking: {
+                    levels: ['none', 'low', 'medium', 'high'],
+                    defaultLevel: 'none',
+                },
             },
         },
         {
@@ -224,8 +215,6 @@ export const OPENAI: ProviderOption = {
                 contextWindow: 400000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Sep 2024',
                 thinking: {
                     levels: ['none', 'low', 'medium', 'high'],
@@ -240,57 +229,63 @@ export const OPENAI: ProviderOption = {
                 contextWindow: 128000,
                 maxOutputTokens: 16384,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Sep 2024',
             },
         },
         {
             id: 'gpt-5-pro',
-            name: 'GPT-5 pro',
+            name: 'GPT-5 Pro',
             params: {
                 contextWindow: 400000,
                 maxOutputTokens: 272000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Sep 2024',
+                thinking: {
+                    levels: ['medium', 'high', 'xhigh'],
+                    defaultLevel: 'medium',
+                },
             },
         },
         {
             id: 'gpt-5-codex',
-            name: 'GPT-5-Codex',
+            name: 'GPT-5 Codex',
             params: {
                 contextWindow: 400000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Sep 2024',
+                thinking: {
+                    levels: ['minimal', 'low', 'medium', 'high'],
+                    defaultLevel: 'minimal',
+                },
             },
         },
         {
             id: 'gpt-5-nano',
-            name: 'GPT-5 nano',
+            name: 'GPT-5 Nano',
             params: {
                 contextWindow: 400000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'May 2024',
+                thinking: {
+                    levels: ['minimal', 'low', 'medium', 'high'],
+                    defaultLevel: 'minimal',
+                },
             },
         },
         {
             id: 'gpt-5-mini',
-            name: 'GPT-5 mini',
+            name: 'GPT-5 Mini',
             params: {
                 contextWindow: 400000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'May 2024',
+                thinking: {
+                    levels: ['minimal', 'low', 'medium', 'high'],
+                    defaultLevel: 'minimal',
+                },
             },
         },
         {
@@ -300,8 +295,6 @@ export const OPENAI: ProviderOption = {
                 contextWindow: 400000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Sep 2024',
                 thinking: {
                     levels: ['minimal', 'low', 'medium', 'high'],
@@ -316,14 +309,12 @@ export const OPENAI: ProviderOption = {
                 contextWindow: 128000,
                 maxOutputTokens: 16384,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Sep 2024',
             },
         },
         {
             id: 'o4-mini-deep-research',
-            name: 'o4-mini-deep-research',
+            name: 'o4 Mini Deep Research',
             params: {
                 contextWindow: 200000,
                 maxOutputTokens: 100000,
@@ -331,11 +322,15 @@ export const OPENAI: ProviderOption = {
                 temperatureMax: 2,
                 defaultTemperature: 1,
                 knowledgeCutoff: 'Jun 2024',
+                thinking: {
+                    levels: ['none', 'low', 'high'],
+                    defaultLevel: 'none',
+                },
             },
         },
         {
             id: 'o3-deep-research',
-            name: 'o3-deep-research',
+            name: 'o3 Deep Research',
             params: {
                 contextWindow: 200000,
                 maxOutputTokens: 100000,
@@ -343,23 +338,29 @@ export const OPENAI: ProviderOption = {
                 temperatureMax: 2,
                 defaultTemperature: 1,
                 knowledgeCutoff: 'Jun 2024',
+                thinking: {
+                    levels: ['none', 'low', 'high'],
+                    defaultLevel: 'none',
+                },
             },
         },
         {
             id: 'o3-pro',
-            name: 'o3-pro',
+            name: 'o3 Pro',
             params: {
                 contextWindow: 200000,
                 maxOutputTokens: 100000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Jun 2024',
+                thinking: {
+                    levels: ['none', 'low', 'high'],
+                    defaultLevel: 'none',
+                },
             },
         },
         {
             id: 'gpt-4.1-nano',
-            name: 'GPT-4.1 nano',
+            name: 'GPT-4.1 Nano',
             params: {
                 contextWindow: 1047576,
                 maxOutputTokens: 32768,
@@ -371,7 +372,7 @@ export const OPENAI: ProviderOption = {
         },
         {
             id: 'gpt-4.1-mini',
-            name: 'GPT-4.1 mini',
+            name: 'GPT-4.1 Mini',
             params: {
                 contextWindow: 1047576,
                 maxOutputTokens: 32768,
@@ -395,14 +396,16 @@ export const OPENAI: ProviderOption = {
         },
         {
             id: 'o4-mini',
-            name: 'o4-mini',
+            name: 'o4 Mini',
             params: {
                 contextWindow: 200000,
                 maxOutputTokens: 100000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Jun 2024',
+                thinking: {
+                    levels: ['none', 'low', 'high'],
+                    defaultLevel: 'none',
+                },
             },
         },
         {
@@ -412,9 +415,11 @@ export const OPENAI: ProviderOption = {
                 contextWindow: 200000,
                 maxOutputTokens: 100000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Jun 2024',
+                thinking: {
+                    levels: ['none', 'low', 'high'],
+                    defaultLevel: 'none',
+                },
             },
         },
         {
@@ -424,21 +429,11 @@ export const OPENAI: ProviderOption = {
                 contextWindow: 200000,
                 maxOutputTokens: 100000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Oct 2023',
-            },
-        },
-        {
-            id: 'gpt-4o-mini-search-preview',
-            name: 'GPT-4o mini Search Preview',
-            params: {
-                contextWindow: 128000,
-                maxOutputTokens: 16384,
-                defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
-                knowledgeCutoff: 'Oct 2023',
+                thinking: {
+                    levels: ['none', 'low', 'high'],
+                    defaultLevel: 'none',
+                },
             },
         },
         {
@@ -455,14 +450,16 @@ export const OPENAI: ProviderOption = {
         },
         {
             id: 'o3-mini',
-            name: 'o3-mini',
+            name: 'o3 Mini',
             params: {
                 contextWindow: 200000,
                 maxOutputTokens: 100000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Oct 2023',
+                thinking: {
+                    levels: ['none', 'low', 'high'],
+                    defaultLevel: 'none',
+                },
             },
         },
         {
@@ -472,14 +469,16 @@ export const OPENAI: ProviderOption = {
                 contextWindow: 200000,
                 maxOutputTokens: 100000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Oct 2023',
+                thinking: {
+                    levels: ['none', 'low', 'high'],
+                    defaultLevel: 'none',
+                },
             },
         },
         {
             id: 'gpt-4o-mini',
-            name: 'GPT-4o mini',
+            name: 'GPT-4o-mini',
             params: {
                 contextWindow: 128000,
                 maxOutputTokens: 16384,
@@ -495,7 +494,7 @@ export const OPENAI: ProviderOption = {
             params: {
                 contextWindow: 128000,
                 maxOutputTokens: 4096,
-                defaultMaxTokens: 8192,
+                defaultMaxTokens: 4096,
                 temperatureMax: 2,
                 defaultTemperature: 1,
                 knowledgeCutoff: 'Dec 2023',
@@ -503,11 +502,11 @@ export const OPENAI: ProviderOption = {
         },
         {
             id: 'gpt-3.5-turbo-instruct',
-            name: 'gpt-3.5-turbo-instruct',
+            name: 'GPT-3.5 Turbo Instruct',
             params: {
                 contextWindow: 4096,
                 maxOutputTokens: 4096,
-                defaultMaxTokens: 8192,
+                defaultMaxTokens: 4096,
                 temperatureMax: 2,
                 defaultTemperature: 1,
                 knowledgeCutoff: 'Sep 2021',
@@ -531,7 +530,7 @@ export const OPENAI: ProviderOption = {
             params: {
                 contextWindow: 16385,
                 maxOutputTokens: 4096,
-                defaultMaxTokens: 8192,
+                defaultMaxTokens: 4096,
                 temperatureMax: 2,
                 defaultTemperature: 1,
                 knowledgeCutoff: 'Sep 2021',

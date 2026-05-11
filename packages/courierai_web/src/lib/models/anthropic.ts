@@ -1,6 +1,7 @@
 import type { ProviderOption } from './types';
 
 // NOTE FOR LLMS: NEVER MANUALLY MODIFY IDS/NAMES, THEY ARE CORRECT
+// This file is automatically written over by scripts/update-model-list.ts, edits will not be saved
 export const ANTHROPIC: ProviderOption = {
     id: 'anthropic',
     name: 'Anthropic',

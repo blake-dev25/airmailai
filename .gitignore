@@ -1,36 +1,35 @@
-# notes/docs
+# local notes/docs
 CLAUDE.md
 TODO.txt
 
 # dependencies
 node_modules/
 
-# build outputs
+# build/generated outputs
 dist/
+dist-ssr/
 .output/
+.wxt/
 *.zip
 VERSION
 VERSION_NAME
 build-counter.json
 
-# wxt generated
-.wxt/
+# logs
+logs/
+*.log*
 
-# env / local overrides
+# env/local overrides
 .env
 .env.*
+!.env.example
 *.local
 
-# os
+# os/editor/etc
 .DS_Store
 Thumbs.db
-
-# editors/etc
 .vscode/
 .claude/
 
-# deploy scratch
+# deploy scratch/etc
 .deploy-tmp/
-scripts/deploy-web.ts
-scripts/update-model-list.ts
-scripts/overrides.ts

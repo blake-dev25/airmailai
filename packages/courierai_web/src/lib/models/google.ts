@@ -1,7 +1,7 @@
 import type { ProviderOption } from './types';
 
 // NOTE FOR LLMS: NEVER MANUALLY MODIFY IDS/NAMES, THEY ARE CORRECT
-// This file is automatically written over by a script, edits will not be saved
+// This file is automatically written over by scripts/update-model-list.ts, edits will not be saved
 export const GOOGLE: ProviderOption = {
     id: 'google',
     name: 'Google',
@@ -16,6 +16,10 @@ export const GOOGLE: ProviderOption = {
                 temperatureMax: 2,
                 defaultTemperature: 1,
                 knowledgeCutoff: 'Jan 2025',
+                thinking: {
+                    levels: ['none', 'low', 'high'],
+                    defaultLevel: 'none',
+                },
             },
         },
         {
@@ -68,6 +72,10 @@ export const GOOGLE: ProviderOption = {
                 temperatureMax: 2,
                 defaultTemperature: 1,
                 knowledgeCutoff: 'Jan 2025',
+                thinking: {
+                    levels: ['none', 'low', 'high'],
+                    defaultLevel: 'none',
+                },
             },
         },
         {
@@ -80,6 +88,10 @@ export const GOOGLE: ProviderOption = {
                 temperatureMax: 2,
                 defaultTemperature: 1,
                 knowledgeCutoff: 'Jan 2025',
+                thinking: {
+                    levels: ['none', 'low', 'high'],
+                    defaultLevel: 'none',
+                },
             },
         },
         {
@@ -124,6 +136,26 @@ export const GOOGLE: ProviderOption = {
                 temperatureMax: 2,
                 defaultTemperature: 1,
                 knowledgeCutoff: 'Jan 2025',
+                thinking: {
+                    levels: ['none', 'low', 'high'],
+                    defaultLevel: 'none',
+                },
+            },
+        },
+        {
+            id: 'gemini-3.1-flash-lite',
+            name: 'Gemini 3.1 Flash Lite',
+            params: {
+                contextWindow: 1048576,
+                maxOutputTokens: 65536,
+                defaultMaxTokens: 8192,
+                temperatureMax: 2,
+                defaultTemperature: 1,
+                knowledgeCutoff: 'Jan 2025',
+                thinking: {
+                    levels: ['none', 'low', 'high'],
+                    defaultLevel: 'none',
+                },
             },
         },
         {
@@ -136,6 +168,10 @@ export const GOOGLE: ProviderOption = {
                 temperatureMax: 2,
                 defaultTemperature: 1,
                 knowledgeCutoff: 'Jan 2025',
+                thinking: {
+                    levels: ['none', 'low', 'high'],
+                    defaultLevel: 'none',
+                },
             },
         },
         {
