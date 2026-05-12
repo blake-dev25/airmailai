@@ -64,7 +64,10 @@ marked.use({
                     theme: THEME,
                 });
                 const langLabel = lang
-                    ? `<span class="code-lang">${lang}</span>`
+                    ? `<span class="code-lang">${lang
+                          .replace(/&/g, '&amp;')
+                          .replace(/</g, '&lt;')
+                          .replace(/>/g, '&gt;')}</span>`
                     : '';
                 const copyBtn = `<button type="button" class="code-copy" aria-label="Copy code">Copy</button>`;
                 return `<div class="code-block"><div class="code-header">${langLabel}${copyBtn}</div>${highlighted}</div>`;
