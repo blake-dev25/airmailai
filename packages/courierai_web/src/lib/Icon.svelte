@@ -49,12 +49,7 @@
         class?: string;
     }
 
-    let {
-        name,
-        size,
-        strokeWidth,
-        class: className = '',
-    }: Props = $props();
+    let { name, size, strokeWidth, class: className = '' }: Props = $props();
 
     const ICONS = {
         check: Check,

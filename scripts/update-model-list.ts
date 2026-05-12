@@ -18,7 +18,11 @@ import { GoogleGenAI } from '@google/genai';
 import type { Model as GoogleModel } from '@google/genai';
 import OpenAI from 'openai';
 import TurndownService from 'turndown';
-import { ANTHROPIC_OVERRIDES, GOOGLE_OVERRIDES, OPENAI_OVERRIDES } from './overrides';
+import {
+    ANTHROPIC_OVERRIDES,
+    GOOGLE_OVERRIDES,
+    OPENAI_OVERRIDES,
+} from './overrides';
 
 const WRITE = process.argv.includes('--write');
 const VERBOSE = process.argv.includes('--verbose');
@@ -33,10 +37,14 @@ const SCRAPE_TEST_ID =
     SCRAPE_TEST_IDX >= 0 ? process.argv[SCRAPE_TEST_IDX + 1] : undefined;
 const GOOGLE_SCRAPE_TEST_IDX = process.argv.indexOf('--google-scrape-test');
 const GOOGLE_SCRAPE_TEST_ID =
-    GOOGLE_SCRAPE_TEST_IDX >= 0 ? process.argv[GOOGLE_SCRAPE_TEST_IDX + 1] : undefined;
+    GOOGLE_SCRAPE_TEST_IDX >= 0
+        ? process.argv[GOOGLE_SCRAPE_TEST_IDX + 1]
+        : undefined;
 
 const PROVIDER_FLAGS = new Set(
-    process.argv.filter((a) => ['--anthropic', '--openai', '--google'].includes(a))
+    process.argv.filter((a) =>
+        ['--anthropic', '--openai', '--google'].includes(a)
+    )
 );
 const RUN_ALL = PROVIDER_FLAGS.size === 0;
 const RUN_ANTHROPIC = RUN_ALL || PROVIDER_FLAGS.has('--anthropic');
@@ -143,7 +151,9 @@ function stripProviderName(name: string, provider: string): string {
     return name.startsWith(prefix) ? name.slice(prefix.length) : name;
 }
 
-function formatKnowledgeCutoff(raw: string | null | undefined): string | undefined {
+function formatKnowledgeCutoff(
+    raw: string | null | undefined
+): string | undefined {
     if (!raw) return undefined;
     const m = raw.match(/^(\d{4})-(\d{2})-\d{2}$/);
     if (!m) return raw;
@@ -166,7 +176,10 @@ function formatKnowledgeCutoff(raw: string | null | undefined): string | undefin
 
 // ---------- shared printing helpers ----------
 
-function formatThinking(m: DerivedModel, kind: 'anthropic' | 'default'): string {
+function formatThinking(
+    m: DerivedModel,
+    kind: 'anthropic' | 'default'
+): string {
     if (!m.thinking) return 'no thinking';
     if (kind === 'anthropic') {
         return `thinking[${m.thinking.adaptive ?? 'enabled-only'}]: ${m.thinking.levels.join('/')}`;
@@ -176,11 +189,18 @@ function formatThinking(m: DerivedModel, kind: 'anthropic' | 'default'): string 
 
 function printModelRow(
     m: DerivedModel,
-    opts: { padWidth: number; thinkingKind: 'anthropic' | 'default'; showNotes: boolean }
+    opts: {
+        padWidth: number;
+        thinkingKind: 'anthropic' | 'default';
+        showNotes: boolean;
+    }
 ): void {
     const ctx = m.contextWindow ?? '?';
     const out = m.maxOutputTokens ?? '?';
-    const temp = m.temperatureMax === undefined ? 'no temp' : `temp<=${m.temperatureMax}`;
+    const temp =
+        m.temperatureMax === undefined
+            ? 'no temp'
+            : `temp<=${m.temperatureMax}`;
     console.log(`  ${m.id.padEnd(opts.padWidth)} "${m.name}"`);
     console.log(
         `    ctx=${ctx}  out=${out}  ${temp}  ${formatThinking(m, opts.thinkingKind)}`
@@ -258,7 +278,10 @@ function emitModelEntry(m: DerivedModel): string {
     return lines.join('\n') + '\n';
 }
 
-async function emitAndMaybeWrite(filename: string, content: string): Promise<void> {
+async function emitAndMaybeWrite(
+    filename: string,
+    content: string
+): Promise<void> {
     if (VERBOSE) {
         console.log(`\n--- Generated ${filename} ---\n`);
         console.log(content);
@@ -327,7 +350,9 @@ async function scrapeDocsRaw(
 
 async function runScrapeTest<T>(
     id: string,
-    fetcher: (id: string) => Promise<{ url: string; status: number; markdown: string | null }>,
+    fetcher: (
+        id: string
+    ) => Promise<{ url: string; status: number; markdown: string | null }>,
     parser: (id: string, md: string) => T
 ): Promise<void> {
     const { url, status, markdown } = await fetcher(id);
@@ -551,7 +576,11 @@ function applyAnthropicOverrides(d: DerivedModel): DerivedModel {
 function printAnthropicSummary(label: string, models: DerivedModel[]): void {
     console.log(`\n=== ${label} — ${models.length} models ===`);
     for (const m of models) {
-        printModelRow(m, { padWidth: 40, thinkingKind: 'anthropic', showNotes: true });
+        printModelRow(m, {
+            padWidth: 40,
+            thinkingKind: 'anthropic',
+            showNotes: true,
+        });
     }
 }
 
@@ -663,7 +692,9 @@ function inferOpenAIKnowledgeCutoff(
 
 async function scrapeOpenAIDocsRaw(id: string) {
     const slug = openaiDocsSlug(id);
-    return scrapeDocsRaw(`https://developers.openai.com/api/docs/models/${slug}`);
+    return scrapeDocsRaw(
+        `https://developers.openai.com/api/docs/models/${slug}`
+    );
 }
 
 interface ScrapedOpenAI {
@@ -772,15 +803,22 @@ async function applyOpenAIDocFallback(models: DerivedModel[]): Promise<void> {
     console.log(
         `starting OpenAI docs polling (${models.length} pages, ${WEBPAGE_SCRAPE_DELAY_MS / 1000}s spacing)`
     );
-    const outcomes = await pollWithDelay(models, WEBPAGE_SCRAPE_DELAY_MS, async (model) => {
-        const { status, markdown } = await scrapeOpenAIDocsRaw(model.id);
-        console.log(`got ${model.id} docs, ${status}`);
-        return {
-            id: model.id,
-            status,
-            parsed: status === 200 && markdown ? parseOpenAIDoc(model.id, markdown) : null,
-        };
-    });
+    const outcomes = await pollWithDelay(
+        models,
+        WEBPAGE_SCRAPE_DELAY_MS,
+        async (model) => {
+            const { status, markdown } = await scrapeOpenAIDocsRaw(model.id);
+            console.log(`got ${model.id} docs, ${status}`);
+            return {
+                id: model.id,
+                status,
+                parsed:
+                    status === 200 && markdown
+                        ? parseOpenAIDoc(model.id, markdown)
+                        : null,
+            };
+        }
+    );
     const parsedById = new Map(outcomes.map((o) => [o.id, o]));
 
     for (const model of models) {
@@ -793,10 +831,7 @@ async function applyOpenAIDocFallback(models: DerivedModel[]): Promise<void> {
         model.contextWindow = parsed.contextWindow ?? model.contextWindow;
         model.maxOutputTokens = parsed.maxOutputTokens ?? model.maxOutputTokens;
         model.knowledgeCutoff = parsed.knowledgeCutoff ?? model.knowledgeCutoff;
-        if (
-            !model.thinking &&
-            parsed.reasoning?.kind === 'levels-known'
-        ) {
+        if (!model.thinking && parsed.reasoning?.kind === 'levels-known') {
             model.thinking = {
                 levels: sortLevels(parsed.reasoning.levels),
                 defaultLevel: parsed.reasoning.defaultLevel,
@@ -832,7 +867,9 @@ async function probeOpenAIModel(
         const code = probeErrorCode(e);
         if (
             code === '404' ||
-            /model not found|not found .*model|unsupported|not supported/i.test(msg)
+            /model not found|not found .*model|unsupported|not supported/i.test(
+                msg
+            )
         ) {
             return { status: 'dead', code };
         }
@@ -851,11 +888,15 @@ async function probeOpenAIModels(
     if (!key) throw new Error('OPENAI_API_KEY missing from .env');
     const client = new OpenAI({ apiKey: key });
 
-    const probes = await pollWithDelay(models, MODEL_PROBE_DELAY_MS, async (m) => {
-        const probe = await probeOpenAIModel(client, m.id);
-        console.log(`tested ${m.id}, ${probe.code}`);
-        return { model: m, probe };
-    });
+    const probes = await pollWithDelay(
+        models,
+        MODEL_PROBE_DELAY_MS,
+        async (m) => {
+            const probe = await probeOpenAIModel(client, m.id);
+            console.log(`tested ${m.id}, ${probe.code}`);
+            return { model: m, probe };
+        }
+    );
 
     const kept: DerivedModel[] = [];
     for (const { model, probe } of probes) {
@@ -912,14 +953,19 @@ function deriveOpenAI(
 
     return {
         id: raw.id,
-        name: o?.name ?? (info ? stripProviderName(info.name, 'OpenAI') : raw.id),
+        name:
+            o?.name ?? (info ? stripProviderName(info.name, 'OpenAI') : raw.id),
         contextWindow,
         maxOutputTokens,
         knowledgeCutoff:
             o?.knowledgeCutoff ?? inferOpenAIKnowledgeCutoff(raw.id, info),
         thinking,
-        temperatureMax: supportsTemperature ? (o?.temperatureMax ?? 2) : undefined,
-        defaultTemperature: supportsTemperature ? (o?.defaultTemperature ?? 1) : undefined,
+        temperatureMax: supportsTemperature
+            ? (o?.temperatureMax ?? 2)
+            : undefined,
+        defaultTemperature: supportsTemperature
+            ? (o?.defaultTemperature ?? 1)
+            : undefined,
         created: raw.created,
         notes,
     };
@@ -964,7 +1010,9 @@ async function pipelineOpenAI(
     const needsLevels = models
         .filter((m) => m.notes.some((n) => n.includes('reasoning supported')))
         .map((m) => m.id);
-    const missingCutoff = probedModels.filter((m) => !m.knowledgeCutoff).map((m) => m.id);
+    const missingCutoff = probedModels
+        .filter((m) => !m.knowledgeCutoff)
+        .map((m) => m.id);
     return { models: probedModels, skipped, needsLevels, missingCutoff };
 }
 
@@ -973,7 +1021,11 @@ function printOpenAIPipeline(r: OpenAIPipelineResult): void {
         `\n=== OpenAI — ${r.models.length} chat models (${r.skipped.length} skipped) ===`
     );
     for (const m of r.models) {
-        printModelRow(m, { padWidth: 40, thinkingKind: 'default', showNotes: false });
+        printModelRow(m, {
+            padWidth: 40,
+            thinkingKind: 'default',
+            showNotes: false,
+        });
     }
     if (r.skipped.length > 0) {
         console.log(`\n   ${r.skipped.length} skipped:`);
@@ -1080,7 +1132,10 @@ function deriveGoogle(
             levels: sortLevels(o.thinking.levels),
             defaultLevel: o.thinking.defaultLevel,
         };
-    } else if (scraped.thinkingSupported || supportsOpenRouterParam(info, 'reasoning')) {
+    } else if (
+        scraped.thinkingSupported ||
+        supportsOpenRouterParam(info, 'reasoning')
+    ) {
         thinking = fallbackReasoningThinking();
     }
 
@@ -1101,10 +1156,20 @@ function deriveGoogle(
 
     return {
         id,
-        name: o?.name ?? m.displayName ?? (info ? stripProviderName(info.name, 'Google') : id),
-        contextWindow: o?.contextWindow ?? m.inputTokenLimit ?? info?.contextWindow ?? null,
+        name:
+            o?.name ??
+            m.displayName ??
+            (info ? stripProviderName(info.name, 'Google') : id),
+        contextWindow:
+            o?.contextWindow ??
+            m.inputTokenLimit ??
+            info?.contextWindow ??
+            null,
         maxOutputTokens:
-            o?.maxOutputTokens ?? m.outputTokenLimit ?? info?.maxOutputTokens ?? null,
+            o?.maxOutputTokens ??
+            m.outputTokenLimit ??
+            info?.maxOutputTokens ??
+            null,
         knowledgeCutoff:
             o?.knowledgeCutoff ??
             scraped.knowledgeCutoff ??
@@ -1112,7 +1177,9 @@ function deriveGoogle(
         thinking,
         temperatureMax,
         defaultTemperature:
-            temperatureMax !== undefined ? (o?.defaultTemperature ?? 1) : undefined,
+            temperatureMax !== undefined
+                ? (o?.defaultTemperature ?? 1)
+                : undefined,
         created: info?.created,
         notes,
     };
@@ -1143,7 +1210,10 @@ async function pipelineGoogle(
     const candidates = raw.filter((m) => {
         const id = googleModelId(m);
         if (!isGoogleChatCandidate(m)) {
-            skipped.push({ id, reason: 'no generateContent in supportedActions' });
+            skipped.push({
+                id,
+                reason: 'no generateContent in supportedActions',
+            });
             return false;
         }
         return true;
@@ -1152,12 +1222,16 @@ async function pipelineGoogle(
     console.log(
         `starting Google docs polling (${candidates.length} pages, ${WEBPAGE_SCRAPE_DELAY_MS / 1000}s spacing)`
     );
-    const docOutcomes = await pollWithDelay(candidates, WEBPAGE_SCRAPE_DELAY_MS, async (m) => {
-        const id = googleModelId(m);
-        const { status, markdown } = await scrapeGoogleDocsRaw(id);
-        console.log(`got ${id} docs, ${status}`);
-        return { m, id, status, markdown };
-    });
+    const docOutcomes = await pollWithDelay(
+        candidates,
+        WEBPAGE_SCRAPE_DELAY_MS,
+        async (m) => {
+            const id = googleModelId(m);
+            const { status, markdown } = await scrapeGoogleDocsRaw(id);
+            console.log(`got ${id} docs, ${status}`);
+            return { m, id, status, markdown };
+        }
+    );
 
     const docSurvivors: DerivedModel[] = [];
     for (const { m, id, status, markdown } of docOutcomes) {
@@ -1167,7 +1241,10 @@ async function pipelineGoogle(
         }
         const scraped = parseGoogleDoc(id, markdown);
         if (!scraped.hasTextOutput) {
-            skipped.push({ id, reason: 'output is not Text (TTS / image / etc.)' });
+            skipped.push({
+                id,
+                reason: 'output is not Text (TTS / image / etc.)',
+            });
             continue;
         }
         docSurvivors.push(deriveGoogle(m, openrouter, scraped));
@@ -1176,17 +1253,21 @@ async function pipelineGoogle(
     console.log(
         `starting Google 404 polling (${docSurvivors.length} models, ${MODEL_PROBE_DELAY_MS / 1000}s spacing)`
     );
-    const probes = await pollWithDelay(docSurvivors, MODEL_PROBE_DELAY_MS, async (m) => {
-        const probe = await probeGoogleModel(client, m.id);
-        const result = {
-            model: m,
-            id: m.id,
-            status: probe.status,
-            code: probe.code,
-        };
-        console.log(`tested ${result.id}, ${result.code}`);
-        return result;
-    });
+    const probes = await pollWithDelay(
+        docSurvivors,
+        MODEL_PROBE_DELAY_MS,
+        async (m) => {
+            const probe = await probeGoogleModel(client, m.id);
+            const result = {
+                model: m,
+                id: m.id,
+                status: probe.status,
+                code: probe.code,
+            };
+            console.log(`tested ${result.id}, ${result.code}`);
+            return result;
+        }
+    );
 
     const grandfathered: string[] = [];
     const models: DerivedModel[] = [];
@@ -1202,14 +1283,22 @@ async function pipelineGoogle(
     const needsLevels = models
         .filter((m) => m.notes.some((n) => n.includes('no levels')))
         .map((m) => m.id);
-    const missingCutoff = models.filter((m) => !m.knowledgeCutoff).map((m) => m.id);
+    const missingCutoff = models
+        .filter((m) => !m.knowledgeCutoff)
+        .map((m) => m.id);
     return { raw, models, skipped, needsLevels, missingCutoff, grandfathered };
 }
 
 function printGooglePipeline(r: GooglePipelineResult): void {
-    console.log(`\n=== Google — ${r.models.length} chat models (${r.skipped.length} skipped) ===`);
+    console.log(
+        `\n=== Google — ${r.models.length} chat models (${r.skipped.length} skipped) ===`
+    );
     for (const m of r.models) {
-        printModelRow(m, { padWidth: 50, thinkingKind: 'default', showNotes: true });
+        printModelRow(m, {
+            padWidth: 50,
+            thinkingKind: 'default',
+            showNotes: true,
+        });
     }
     if (VERBOSE && r.skipped.length > 0) {
         console.log(`\n   ${r.skipped.length} skipped:`);
@@ -1297,7 +1386,9 @@ function updateTiersFile(
 
 type ModelTestProvider = 'anthropic' | 'openai' | 'google';
 
-function isModelTestProvider(value: string | undefined): value is ModelTestProvider {
+function isModelTestProvider(
+    value: string | undefined
+): value is ModelTestProvider {
     return value === 'anthropic' || value === 'openai' || value === 'google';
 }
 
@@ -1329,7 +1420,10 @@ async function printStep(
     }
 }
 
-async function modelTest(provider: ModelTestProvider, model: string): Promise<void> {
+async function modelTest(
+    provider: ModelTestProvider,
+    model: string
+): Promise<void> {
     if (provider === 'anthropic') {
         const key = process.env.ANTHROPIC_API_KEY;
         if (!key) throw new Error('ANTHROPIC_API_KEY missing from .env');
@@ -1337,12 +1431,14 @@ async function modelTest(provider: ModelTestProvider, model: string): Promise<vo
         await printStep(`Anthropic models.retrieve("${model}")`, () =>
             client.models.retrieve(model)
         );
-        await printStep(`Anthropic messages.create("${model}", max_tokens=1)`, () =>
-            client.messages.create({
-                model,
-                max_tokens: 1,
-                messages: [{ role: 'user', content: 'a' }],
-            })
+        await printStep(
+            `Anthropic messages.create("${model}", max_tokens=1)`,
+            () =>
+                client.messages.create({
+                    model,
+                    max_tokens: 1,
+                    messages: [{ role: 'user', content: 'a' }],
+                })
         );
         return;
     }
@@ -1354,12 +1450,14 @@ async function modelTest(provider: ModelTestProvider, model: string): Promise<vo
         await printStep(`OpenAI models.retrieve("${model}")`, () =>
             client.models.retrieve(model)
         );
-        await printStep(`OpenAI responses.create("${model}", max_output_tokens=16)`, () =>
-            client.responses.create({
-                model,
-                input: 'a',
-                max_output_tokens: 16,
-            })
+        await printStep(
+            `OpenAI responses.create("${model}", max_output_tokens=16)`,
+            () =>
+                client.responses.create({
+                    model,
+                    input: 'a',
+                    max_output_tokens: 16,
+                })
         );
         return;
     }
@@ -1370,12 +1468,14 @@ async function modelTest(provider: ModelTestProvider, model: string): Promise<vo
     await printStep(`Google models.get("${model}")`, () =>
         client.models.get({ model })
     );
-    await printStep(`Google generateContent("${model}", maxOutputTokens=1)`, () =>
-        client.models.generateContent({
-            model,
-            contents: 'a',
-            config: { maxOutputTokens: 1 },
-        })
+    await printStep(
+        `Google generateContent("${model}", maxOutputTokens=1)`,
+        () =>
+            client.models.generateContent({
+                model,
+                contents: 'a',
+                config: { maxOutputTokens: 1 },
+            })
     );
 }
 
@@ -1423,11 +1523,19 @@ async function main(): Promise<void> {
         return;
     }
     if (SCRAPE_TEST_ID) {
-        await runScrapeTest(SCRAPE_TEST_ID, scrapeOpenAIDocsRaw, parseOpenAIDoc);
+        await runScrapeTest(
+            SCRAPE_TEST_ID,
+            scrapeOpenAIDocsRaw,
+            parseOpenAIDoc
+        );
         return;
     }
     if (GOOGLE_SCRAPE_TEST_ID) {
-        await runScrapeTest(GOOGLE_SCRAPE_TEST_ID, scrapeGoogleDocsRaw, parseGoogleDoc);
+        await runScrapeTest(
+            GOOGLE_SCRAPE_TEST_ID,
+            scrapeGoogleDocsRaw,
+            parseGoogleDoc
+        );
         return;
     }
 
@@ -1490,10 +1598,26 @@ async function main(): Promise<void> {
         entries: Array<{ id: string; tier: string }>;
     }> = [];
 
-    const tiersUpdates: Array<{ provider: string; comment: string; ids: string[] | undefined }> = [
-        { provider: 'anthropic', comment: '// anthropic', ids: anthropic?.map((m) => m.id) },
-        { provider: 'openai', comment: '// openai', ids: openaiResult?.models.map((m) => m.id) },
-        { provider: 'google', comment: '// google', ids: googleResult?.models.map((m) => m.id) },
+    const tiersUpdates: Array<{
+        provider: string;
+        comment: string;
+        ids: string[] | undefined;
+    }> = [
+        {
+            provider: 'anthropic',
+            comment: '// anthropic',
+            ids: anthropic?.map((m) => m.id),
+        },
+        {
+            provider: 'openai',
+            comment: '// openai',
+            ids: openaiResult?.models.map((m) => m.id),
+        },
+        {
+            provider: 'google',
+            comment: '// google',
+            ids: googleResult?.models.map((m) => m.id),
+        },
     ];
 
     for (const u of tiersUpdates) {
@@ -1502,17 +1626,25 @@ async function main(): Promise<void> {
         tiersText = r.text;
         newTiersIds.push(...r.newIds);
         if (r.staleEntries.length > 0) {
-            staleByProvider.push({ provider: u.provider, entries: r.staleEntries });
+            staleByProvider.push({
+                provider: u.provider,
+                entries: r.staleEntries,
+            });
         }
     }
 
     const tiersChanged = newTiersIds.length > 0;
     if (newTiersIds.length > 0) {
-        console.log(`\nAdding ${newTiersIds.length} new id(s) to tiers.ts as 'legacy':`);
+        console.log(
+            `\nAdding ${newTiersIds.length} new id(s) to tiers.ts as 'legacy':`
+        );
         for (const id of newTiersIds) console.log(`   - ${id}`);
     }
 
-    const totalStale = staleByProvider.reduce((n, p) => n + p.entries.length, 0);
+    const totalStale = staleByProvider.reduce(
+        (n, p) => n + p.entries.length,
+        0
+    );
     if (totalStale > 0) {
         console.log(
             `\n⚠ ${totalStale} stale tier entry/entries — model not in current provider file, consider removing from tiers.ts:`

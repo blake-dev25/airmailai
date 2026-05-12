@@ -1,23 +1,27 @@
-import type { ChatMessage, StreamHandlers, StreamUsage } from '@courier/shared';
+import type {
+    HydratedChatMessage,
+    StreamHandlers,
+    StreamUsage,
+} from '@courier/shared';
 import { OpenRouter } from '@openrouter/sdk';
+import type {
+    EasyInputMessage,
+    EasyInputMessageContentInputImage,
+    InputFile,
+    InputText,
+} from '@openrouter/sdk/models';
 import { DEBUG_API_LOGGING } from '../debug';
 
 const LOG = '[courier:ext]';
 
-type EasyInputContent =
-    | { type: 'input_text'; text: string }
-    | { type: 'input_image'; imageUrl: string; detail: 'auto' }
-    | { type: 'input_file'; filename: string; fileData: string };
-
-function toResponsesInput(msg: ChatMessage): {
-    role: 'user' | 'assistant';
-    content: string | EasyInputContent[];
-} {
+function toResponsesInput(msg: HydratedChatMessage): EasyInputMessage {
     if (!msg.attachments?.length) {
         return { role: msg.role as 'user' | 'assistant', content: msg.content };
     }
 
-    const parts: EasyInputContent[] = [];
+    const parts: Array<
+        InputText | EasyInputMessageContentInputImage | InputFile
+    > = [];
 
     for (const att of msg.attachments) {
         if (att.mediaType.startsWith('image/')) {
@@ -64,7 +68,7 @@ function toEffort(
 export async function streamOpenRouter(
     apiKey: string,
     model: string,
-    messages: ChatMessage[],
+    messages: HydratedChatMessage[],
     params: Record<string, unknown>,
     handlers: StreamHandlers,
     signal?: AbortSignal
@@ -95,7 +99,7 @@ export async function streamOpenRouter(
             {
                 responsesRequest: {
                     model,
-                    input: input as never,
+                    input,
                     ...(systemMsg ? { instructions: systemMsg.content } : {}),
                     maxOutputTokens: (params.maxTokens as number) ?? 8192,
                     ...(params.temperature !== undefined

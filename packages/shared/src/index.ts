@@ -1,9 +1,11 @@
 export type {
     Attachment,
+    AttachmentRef,
     BroadcastEvent,
     ChatMessage,
     ChatMeta,
     ExtensionResponse,
+    HydratedChatMessage,
     OpenRouterModel,
     StorageRequest,
     StorageResponse,

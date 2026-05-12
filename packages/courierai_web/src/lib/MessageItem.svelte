@@ -84,7 +84,7 @@
         {#if isUser}
             {#if message.attachments?.length}
                 <div class="flex flex-wrap gap-1.5 justify-end">
-                    {#each message.attachments as att}
+                    {#each message.attachments as att (att.hash)}
                         <span
                             class="inline-flex items-center px-2.5 py-1 bg-bubble-user text-on-bubble-user rounded-lg text-xs font-medium max-w-60 overflow-hidden text-ellipsis whitespace-nowrap"
                             >{att.name}</span

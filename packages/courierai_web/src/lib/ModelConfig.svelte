@@ -50,7 +50,7 @@
     }
 
     let filteredProviders = $derived(
-        filterProvidersByTier(providers, modelTier),
+        filterProvidersByTier(providers, modelTier)
     );
 
     let providerOptions = $derived.by(() => {
@@ -75,16 +75,16 @@
             return [] as Array<{ label: string; models: ModelOption[] }>;
 
         if (provider.marketplace) {
-            // `~`-prefix is OpenRouter's premier-provider tag, used for sort
-            // upstream — strip it for display so labels read naturally.
-            const stripPrefix = (v: string) => v.replace(/^~/, '');
+            // `~`-prefix is OpenRouter's premier-provider tag — a curated
+            // subset (e.g. latest models) that lives as its own group, distinct
+            // from the same vendor's non-premier catalog.
+            const formatVendor = (v: string) =>
+                v.startsWith('~') ? `★ ${v.slice(1)}` : v;
             const source =
                 openRouterFreeModels === 'only'
                     ? provider.models.filter((m) => m.id.endsWith(':free'))
                     : openRouterFreeModels === 'hide'
-                      ? provider.models.filter(
-                            (m) => !m.id.endsWith(':free'),
-                        )
+                      ? provider.models.filter((m) => !m.id.endsWith(':free'))
                       : provider.models;
             const groups: Array<{ label: string; models: ModelOption[] }> = [];
             let currentVendor: string | null = null;
@@ -94,7 +94,7 @@
                 if (v !== currentVendor) {
                     if (bucket.length)
                         groups.push({
-                            label: stripPrefix(currentVendor!),
+                            label: formatVendor(currentVendor!),
                             models: bucket,
                         });
                     currentVendor = v;
@@ -104,7 +104,7 @@
             }
             if (bucket.length)
                 groups.push({
-                    label: stripPrefix(currentVendor!),
+                    label: formatVendor(currentVendor!),
                     models: bucket,
                 });
             return groups;
@@ -117,7 +117,7 @@
         const inTier = new Set(
             filteredProviders
                 .find((p) => p.id === provider.id)
-                ?.models.map((m) => m.id) ?? [],
+                ?.models.map((m) => m.id) ?? []
         );
 
         const groups: Array<{ label: string; models: ModelOption[] }> = [];
@@ -147,6 +147,8 @@
 
     $effect(() => {
         if (badgeEl && !badgeFocused) {
+            // contenteditable badge — Svelte yields ownership while editing.
+            // eslint-disable-next-line svelte/no-dom-manipulating
             badgeEl.textContent = temperature.toFixed(2);
         }
     });
@@ -162,6 +164,7 @@
         temperature = Number.isNaN(val)
             ? temperature
             : Math.max(0, Math.min(currentModel.params.temperatureMax!, val));
+        // eslint-disable-next-line svelte/no-dom-manipulating
         if (badgeEl) badgeEl.textContent = temperature.toFixed(2);
     }
 
@@ -190,12 +193,13 @@
                 Math.abs(maxTokensSnaps[best] - maxTokens)
                     ? i
                     : best,
-            0,
-        ),
+            0
+        )
     );
 
     $effect(() => {
         if (maxTokensBadgeEl && !maxTokensBadgeFocused) {
+            // eslint-disable-next-line svelte/no-dom-manipulating
             maxTokensBadgeEl.textContent = String(maxTokens);
         }
     });
@@ -211,6 +215,7 @@
         maxTokens = Number.isNaN(val)
             ? maxTokens
             : Math.max(1, Math.min(currentModel.params.maxOutputTokens, val));
+        // eslint-disable-next-line svelte/no-dom-manipulating
         if (maxTokensBadgeEl) maxTokensBadgeEl.textContent = String(maxTokens);
     }
 
@@ -228,22 +233,22 @@
     }
 
     let currentProvider = $derived(
-        providers.find((p) => p.id === providerId) ?? providers[0],
+        providers.find((p) => p.id === providerId) ?? providers[0]
     );
     let currentModel = $derived<ModelOption | undefined>(
         currentProvider.models.find((m) => m.id === modelId) ??
-            currentProvider.models[0],
+            currentProvider.models[0]
     );
     let thinkingConfig = $derived(currentModel?.params.thinking);
     let thinkingIndex = $derived(
         thinkingConfig
             ? Math.max(0, thinkingConfig.levels.indexOf(thinkingLevel as never))
-            : 0,
+            : 0
     );
     let modelPickerEmptyLabel = $derived(
         currentProvider.id === 'openrouter'
             ? OPENROUTER_EMPTY_LABEL
-            : 'Loading models...',
+            : 'Loading models...'
     );
 
     function levelLabel(level: string): string {
@@ -295,7 +300,7 @@
                 points: `${x + mcStripeH},0 ${x + mcStripeH + mcStripeW},0 ${x + mcStripeW},${mcStripeH} ${x},${mcStripeH}`,
                 red: i % 2 === 0,
             };
-        },
+        }
     );
 
     // Safety clamp for externally set values (e.g. loading a chat saved with an old model limit)
@@ -338,8 +343,7 @@
     const rangeHintsClass =
         'flex justify-between text-[0.6875rem] text-fg -mt-1';
     const detailRowClass = 'flex flex-col gap-[3px]';
-    const detailLabelClass =
-        'text-xs text-fg uppercase tracking-wider';
+    const detailLabelClass = 'text-xs text-fg uppercase tracking-wider';
     const detailValueClass =
         'text-xs text-fg [font-variant-numeric:tabular-nums]';
 </script>
@@ -347,9 +351,7 @@
 <aside
     class="model-config thin-scrollbar shrink-0 flex w-68 flex-col bg-canvas border-l border-border overflow-x-hidden overflow-y-auto select-none [&_input]:select-text **:[[contenteditable=true]]:select-text"
 >
-    <div
-        class="flex shrink-0 items-center h-11.25 px-4 border-b border-border"
-    >
+    <div class="flex shrink-0 items-center h-11.25 px-4 border-b border-border">
         <h2
             class="m-0 text-sm font-semibold text-fg uppercase tracking-widest leading-none"
         >
@@ -368,10 +370,8 @@
                     onchange={onProviderChange}
                 >
                     {#if initialized}
-                        {#each providerOptions as provider}
-                            <option value={provider.id}
-                                >{provider.name}</option
-                            >
+                        {#each providerOptions as provider (provider.id)}
+                            <option value={provider.id}>{provider.name}</option>
                         {/each}
                     {/if}
                 </select>
@@ -391,154 +391,156 @@
         </div>
 
         {#if initialized && currentModel}
-        {#if currentModel.params.temperatureMax !== undefined}
+            {#if currentModel.params.temperatureMax !== undefined}
+                <div class={fieldClass}>
+                    <div class={labelRowClass}>
+                        <label for="temperature" class={labelClass}
+                            >Temperature</label
+                        >
+                        <span
+                            class={valueBadgeClass}
+                            role="spinbutton"
+                            tabindex="0"
+                            contenteditable="true"
+                            aria-valuenow={temperature}
+                            aria-valuemin={0}
+                            aria-valuemax={currentModel.params.temperatureMax}
+                            bind:this={badgeEl}
+                            onfocus={onBadgeFocus}
+                            onblur={onBadgeBlur}
+                            onkeydown={onBadgeKeydown}
+                            >{temperature.toFixed(2)}</span
+                        >
+                    </div>
+                    <input
+                        id="temperature"
+                        type="range"
+                        class={rangeClass}
+                        min="0"
+                        max={currentModel.params.temperatureMax}
+                        step="0.01"
+                        bind:value={temperature}
+                    />
+                    <div class={rangeHintsClass}>
+                        <span>Precise</span>
+                        <span>Creative</span>
+                    </div>
+                </div>
+            {/if}
+
+            {#if thinkingConfig}
+                <div class={fieldClass}>
+                    <div class={labelRowClass}>
+                        <label for="thinking" class={labelClass}>Thinking</label
+                        >
+                        <span class={valueBadgeClass}
+                            >{levelLabel(thinkingLevel)}</span
+                        >
+                    </div>
+                    <input
+                        id="thinking"
+                        type="range"
+                        class={rangeClass}
+                        min="0"
+                        max={thinkingConfig.levels.length - 1}
+                        step="1"
+                        value={thinkingIndex}
+                        oninput={(e) => {
+                            thinkingLevel =
+                                thinkingConfig!.levels[
+                                    +(e.currentTarget as HTMLInputElement).value
+                                ];
+                        }}
+                    />
+                    <div class={rangeHintsClass}>
+                        <span>None</span>
+                        <span
+                            >{levelLabel(
+                                thinkingConfig.levels[
+                                    thinkingConfig.levels.length - 1
+                                ]
+                            )}</span
+                        >
+                    </div>
+                </div>
+            {/if}
+
+            {#if thinkingConfig?.adaptive && thinkingLevel !== 'none'}
+                {@const locked = thinkingConfig.adaptive === 'required'}
+                <div class={fieldClass}>
+                    <div class={labelRowClass}>
+                        <label for="adaptive-thinking" class={labelClass}
+                            >Adaptive Thinking</label
+                        >
+                        <button
+                            id="adaptive-thinking"
+                            type="button"
+                            class={[
+                                'ios-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
+                                locked && 'cursor-not-allowed opacity-60',
+                            ]}
+                            class:on={adaptiveThinking}
+                            role="switch"
+                            aria-checked={adaptiveThinking}
+                            aria-label="Adaptive Thinking"
+                            disabled={locked}
+                            title={locked
+                                ? 'This model only supports adaptive thinking.'
+                                : undefined}
+                            onclick={() => {
+                                if (!locked)
+                                    adaptiveThinking = !adaptiveThinking;
+                            }}
+                        >
+                            <span class="ios-switch-thumb"></span>
+                        </button>
+                    </div>
+                </div>
+            {/if}
+
             <div class={fieldClass}>
                 <div class={labelRowClass}>
-                    <label for="temperature" class={labelClass}
-                        >Temperature</label
+                    <label for="max-tokens" class={labelClass}
+                        >Max Output Tokens</label
                     >
                     <span
                         class={valueBadgeClass}
                         role="spinbutton"
                         tabindex="0"
                         contenteditable="true"
-                        aria-valuenow={temperature}
-                        aria-valuemin={0}
-                        aria-valuemax={currentModel.params.temperatureMax}
-                        bind:this={badgeEl}
-                        onfocus={onBadgeFocus}
-                        onblur={onBadgeBlur}
-                        onkeydown={onBadgeKeydown}
-                        >{temperature.toFixed(2)}</span
+                        aria-valuenow={maxTokens}
+                        aria-valuemin={1}
+                        aria-valuemax={currentModel.params.maxOutputTokens}
+                        bind:this={maxTokensBadgeEl}
+                        onfocus={onMaxTokensBadgeFocus}
+                        onblur={onMaxTokensBadgeBlur}
+                        onkeydown={onMaxTokensBadgeKeydown}>{maxTokens}</span
                     >
                 </div>
                 <input
-                    id="temperature"
+                    id="max-tokens"
                     type="range"
                     class={rangeClass}
                     min="0"
-                    max={currentModel.params.temperatureMax}
-                    step="0.01"
-                    bind:value={temperature}
-                />
-                <div class={rangeHintsClass}>
-                    <span>Precise</span>
-                    <span>Creative</span>
-                </div>
-            </div>
-        {/if}
-
-        {#if thinkingConfig}
-            <div class={fieldClass}>
-                <div class={labelRowClass}>
-                    <label for="thinking" class={labelClass}>Thinking</label>
-                    <span class={valueBadgeClass}
-                        >{levelLabel(thinkingLevel)}</span
-                    >
-                </div>
-                <input
-                    id="thinking"
-                    type="range"
-                    class={rangeClass}
-                    min="0"
-                    max={thinkingConfig.levels.length - 1}
+                    max={maxTokensSnaps.length - 1}
                     step="1"
-                    value={thinkingIndex}
+                    value={maxTokensSliderIndex}
                     oninput={(e) => {
-                        thinkingLevel =
-                            thinkingConfig!.levels[
+                        maxTokens =
+                            maxTokensSnaps[
                                 +(e.currentTarget as HTMLInputElement).value
                             ];
                     }}
                 />
                 <div class={rangeHintsClass}>
-                    <span>None</span>
+                    <span>1</span>
                     <span
-                        >{levelLabel(
-                            thinkingConfig.levels[
-                                thinkingConfig.levels.length - 1
-                            ],
+                        >{abbreviateTokens(
+                            currentModel.params.maxOutputTokens
                         )}</span
                     >
                 </div>
             </div>
-        {/if}
-
-        {#if thinkingConfig?.adaptive && thinkingLevel !== 'none'}
-            {@const locked = thinkingConfig.adaptive === 'required'}
-            <div class={fieldClass}>
-                <div class={labelRowClass}>
-                    <label for="adaptive-thinking" class={labelClass}
-                        >Adaptive Thinking</label
-                    >
-                    <button
-                        id="adaptive-thinking"
-                        type="button"
-                        class={[
-                            'ios-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
-                            locked && 'cursor-not-allowed opacity-60',
-                        ]}
-                        class:on={adaptiveThinking}
-                        role="switch"
-                        aria-checked={adaptiveThinking}
-                        aria-label="Adaptive Thinking"
-                        disabled={locked}
-                        title={locked
-                            ? 'This model only supports adaptive thinking.'
-                            : undefined}
-                        onclick={() => {
-                            if (!locked) adaptiveThinking = !adaptiveThinking;
-                        }}
-                    >
-                        <span class="ios-switch-thumb"></span>
-                    </button>
-                </div>
-            </div>
-        {/if}
-
-        <div class={fieldClass}>
-            <div class={labelRowClass}>
-                <label for="max-tokens" class={labelClass}
-                    >Max Output Tokens</label
-                >
-                <span
-                    class={valueBadgeClass}
-                    role="spinbutton"
-                    tabindex="0"
-                    contenteditable="true"
-                    aria-valuenow={maxTokens}
-                    aria-valuemin={1}
-                    aria-valuemax={currentModel.params.maxOutputTokens}
-                    bind:this={maxTokensBadgeEl}
-                    onfocus={onMaxTokensBadgeFocus}
-                    onblur={onMaxTokensBadgeBlur}
-                    onkeydown={onMaxTokensBadgeKeydown}>{maxTokens}</span
-                >
-            </div>
-            <input
-                id="max-tokens"
-                type="range"
-                class={rangeClass}
-                min="0"
-                max={maxTokensSnaps.length - 1}
-                step="1"
-                value={maxTokensSliderIndex}
-                oninput={(e) => {
-                    maxTokens =
-                        maxTokensSnaps[
-                            +(e.currentTarget as HTMLInputElement).value
-                        ];
-                }}
-            />
-            <div class={rangeHintsClass}>
-                <span>1</span>
-                <span
-                    >{abbreviateTokens(
-                        currentModel.params.maxOutputTokens,
-                    )}</span
-                >
-            </div>
-        </div>
         {/if}
     </div>
 
@@ -596,6 +598,7 @@
         </defs>
         <g clip-path="url(#mc-stripe-clip)">
             <rect width={mcW} height={mcStripeH} fill="var(--color-canvas)" />
+            <!-- eslint-disable-next-line svelte/require-each-key -->
             {#each mcStripes as stripe}
                 <polygon
                     points={stripe.points}

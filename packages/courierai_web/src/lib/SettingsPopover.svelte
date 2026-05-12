@@ -61,11 +61,11 @@
     }
 
     let keyInputs = $state<Record<string, string>>(
-        Object.fromEntries(PROVIDERS.map((p) => [p.id, ''])),
+        Object.fromEntries(PROVIDERS.map((p) => [p.id, '']))
     );
 
     let savedKeys = $state<Record<string, boolean>>(
-        Object.fromEntries(PROVIDERS.map((p) => [p.id, false])),
+        Object.fromEntries(PROVIDERS.map((p) => [p.id, false]))
     );
 
     async function refreshSavedKeys() {
@@ -358,7 +358,7 @@
                     checked={showPrevious}
                     onchange={(e) =>
                         togglePrevious(
-                            (e.currentTarget as HTMLInputElement).checked,
+                            (e.currentTarget as HTMLInputElement).checked
                         )}
                 />
             </div>
@@ -430,14 +430,13 @@
                     checked={showLegacy}
                     onchange={(e) =>
                         toggleLegacy(
-                            (e.currentTarget as HTMLInputElement).checked,
+                            (e.currentTarget as HTMLInputElement).checked
                         )}
                 />
             </div>
             <div class={[rowBase, themeRow]}>
                 <label for="tag-openrouter" class={labelClass}
-                    >Tag OpenRouter requests with 'CourierAI' for app
-                    tracking</label
+                    >Tag OpenRouter requests with 'CourierAI' for app tracking</label
                 >
                 <input
                     id="tag-openrouter"

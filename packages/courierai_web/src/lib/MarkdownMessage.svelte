@@ -32,7 +32,7 @@
 
         function handleClick(e: MouseEvent) {
             const btn = (e.target as Element).closest(
-                '.code-copy',
+                '.code-copy'
             ) as HTMLButtonElement | null;
             if (!btn) return;
             const pre = btn.closest('.code-block')?.querySelector('pre');

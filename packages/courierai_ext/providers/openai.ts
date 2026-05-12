@@ -1,28 +1,27 @@
-import type { ChatMessage, StreamHandlers, StreamUsage } from '@courier/shared';
+import type {
+    HydratedChatMessage,
+    StreamHandlers,
+    StreamUsage,
+} from '@courier/shared';
 import OpenAI from 'openai';
 import { DEBUG_API_LOGGING } from '../debug';
 
 const LOG = '[courier:ext]';
 
-type OpenAIContentPart =
-    | { type: 'input_text'; text: string }
-    | { type: 'input_image'; image_url: string }
-    | { type: 'input_file'; filename: string; file_data: string };
-
-function toOpenAIParam(msg: ChatMessage): {
-    role: 'user' | 'assistant';
-    content: string | OpenAIContentPart[];
-} {
+function toOpenAIParam(
+    msg: HydratedChatMessage
+): OpenAI.Responses.EasyInputMessage {
     if (!msg.attachments?.length) {
         return { role: msg.role as 'user' | 'assistant', content: msg.content };
     }
 
-    const parts: OpenAIContentPart[] = [];
+    const parts: OpenAI.Responses.ResponseInputContent[] = [];
 
     for (const att of msg.attachments) {
         if (att.mediaType.startsWith('image/')) {
             parts.push({
                 type: 'input_image',
+                detail: 'auto',
                 image_url: `data:${att.mediaType};base64,${att.data}`,
             });
         } else {
@@ -44,7 +43,7 @@ function toOpenAIParam(msg: ChatMessage): {
 export async function streamOpenAI(
     apiKey: string,
     model: string,
-    messages: ChatMessage[],
+    messages: HydratedChatMessage[],
     params: Record<string, unknown>,
     handlers: StreamHandlers,
     signal?: AbortSignal

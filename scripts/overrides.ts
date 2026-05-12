@@ -43,8 +43,7 @@ export const ANTHROPIC_OVERRIDES: Record<string, ModelOverride> = {
 
 // OpenAI's own /models endpoint is barebones, but OpenRouter fills most of the
 // CourierAI model params.
-export const OPENAI_OVERRIDES: Record<string, ModelOverride> = {
-};
+export const OPENAI_OVERRIDES: Record<string, ModelOverride> = {};
 
 // Google's API gives token limits and temperature. OpenRouter helps identify
 // reasoning-capable models, but it does not enumerate Google's thinking levels,

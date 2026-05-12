@@ -22,7 +22,9 @@ if (isOfficial) {
     const now = new Date();
     const yy = String(now.getFullYear()).slice(-2);
     const startOfYear = new Date(now.getFullYear(), 0, 0);
-    const doy = Math.floor((now.getTime() - startOfYear.getTime()) / 86_400_000);
+    const doy = Math.floor(
+        (now.getTime() - startOfYear.getTime()) / 86_400_000
+    );
     const ddd = String(doy).padStart(3, '0');
     const dateCode = `${yy}${ddd}`;
 

@@ -193,6 +193,7 @@
                 height={stripeH}
                 fill="var(--color-canvas)"
             />
+            <!-- eslint-disable-next-line svelte/require-each-key -->
             {#each stripes as stripe}
                 <polygon
                     points={stripe.points}
@@ -214,9 +215,7 @@
         >
     </div>
 
-    <div
-        class="flex shrink-0 flex-col gap-1.5 p-3 border-b border-border"
-    >
+    <div class="flex shrink-0 flex-col gap-1.5 p-3 border-b border-border">
         <div
             class="flex items-center gap-2 w-full px-2.5 py-1.75 bg-canvas border border-border rounded-lg box-border opacity-45 transition-[opacity,border-color] duration-150 focus-within:opacity-100 focus-within:border-fg-muted"
         >
@@ -304,19 +303,23 @@
                                     result.id === activeChatId &&
                                         'text-accent-fg',
                                 ]}
-                                >{@html highlightSnippet(
-                                    result.title,
-                                    searchQuery,
-                                )}</span
                             >
+                                <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+                                {@html highlightSnippet(
+                                    result.title,
+                                    searchQuery
+                                )}
+                            </span>
                             {#if result.snippet}
                                 <span
                                     class="block text-[0.6875rem] text-fg-muted overflow-hidden text-ellipsis whitespace-nowrap mt-px"
-                                    >{@html highlightSnippet(
-                                        result.snippet,
-                                        searchQuery,
-                                    )}</span
                                 >
+                                    <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+                                    {@html highlightSnippet(
+                                        result.snippet,
+                                        searchQuery
+                                    )}
+                                </span>
                             {/if}
                         </button>
                     </div>

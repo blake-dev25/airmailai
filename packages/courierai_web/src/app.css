@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 @plugin "@tailwindcss/typography";
 
 /* Default theme tokens live in @theme so each --color-* generates the matching
@@ -102,7 +102,7 @@
 }
 
 /* Airmail Light — #DFE0DA (sage), #282C5C (navy), #BD3C2F (red) */
-[data-theme="airmail-light"] {
+[data-theme='airmail-light'] {
     --color-canvas: #dfe0da;
     --color-surface-raised: #d2d3cd;
     --color-surface-sunken: #eaebe6;
@@ -138,7 +138,7 @@
 }
 
 /* Absolutely — #1F1F1E charcoal, #D97757 warm accent */
-[data-theme="absolutely"] {
+[data-theme='absolutely'] {
     --color-canvas: #1f1f1e;
     --color-surface-raised: #252524;
     --color-surface-sunken: #121212;
@@ -174,7 +174,7 @@
 }
 
 /* Tapestry — #000000 black, #FFFFFF white */
-[data-theme="tapestry"] {
+[data-theme='tapestry'] {
     --color-canvas: #000000;
     --color-surface-raised: #2f2f2f;
     --color-surface-sunken: #171717;
@@ -214,7 +214,7 @@
  * accents are Red / Blue / Red with Base03 dark text for AA contrast on
  * mid-luminance accent surfaces. Accent hover variants are the only
  * non-palette values — Solarized has no Red/Blue tints. */
-[data-theme="solarized-light"] {
+[data-theme='solarized-light'] {
     --color-canvas: #fdf6e3; /* Base3 */
     --color-surface-raised: #eee8d5; /* Base2 */
     --color-surface-sunken: #eee8d5; /* Base2 — palette has no third light bg tone */
@@ -256,7 +256,7 @@
  * readability); bubbles use Solarized base bg tones (Base02/Base03), accents
  * are Red / Blue / Red with Base03 dark text. Accent hover variants are the
  * only non-palette values. */
-[data-theme="solarized-dark"] {
+[data-theme='solarized-dark'] {
     --color-canvas: #002b36; /* Base03 */
     --color-surface-raised: #073642; /* Base02 */
     --color-surface-sunken: #073642; /* Base02 — palette has no third dark bg tone */
@@ -295,7 +295,7 @@
 }
 
 /* Phosphor — #141D22 (deep dark teal), #DD513C (red-orange), #34A2DF (sky blue), #3DF2AD (mint) */
-[data-theme="phosphor"] {
+[data-theme='phosphor'] {
     --color-canvas: #141d22;
     --color-surface-raised: #1c2a32;
     --color-surface-sunken: #1f3040;
@@ -331,7 +331,7 @@
 }
 
 /* Digital Rain — #000000 (black), #00FF41 (neon green), #00B82E (darker green) */
-[data-theme="digital-rain"] {
+[data-theme='digital-rain'] {
     --color-canvas: #000000;
     --color-surface-raised: #0d1a0d;
     --color-surface-sunken: #0d150d;

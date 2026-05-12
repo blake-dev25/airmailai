@@ -36,13 +36,12 @@ export default defineConfig({
     },
     manifest: {
         name: 'CourierAI',
-        description: 'Chat with LLMs using your own API keys',
+        description: 'Chat with AI using your own API keys',
         version,
         ...(versionName && versionName !== version
             ? { version_name: versionName }
             : {}),
         permissions: ['storage'],
-        host_permissions: ['https://openrouter.ai/*'],
         externally_connectable: {
             matches: ['http://localhost:*/*', 'https://*.courierai.net/*'],
         },

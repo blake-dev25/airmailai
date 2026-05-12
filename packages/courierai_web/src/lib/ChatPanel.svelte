@@ -1,6 +1,14 @@
 <script lang="ts">
     import type { Attachment } from '@courier/shared';
     import { tick, untrack } from 'svelte';
+    import {
+        formatFileSize,
+        getAcceptForProvider,
+        getFilePolicy,
+        getMimeTypeFromFilename,
+        hashBytes,
+        validateReadyAttachments,
+    } from './files';
     import Icon from './Icon.svelte';
     import MessageItem from './MessageItem.svelte';
     import { createSmoothText } from './smoothText.svelte';
@@ -17,6 +25,7 @@
         submitKeystroke = 'enter',
         autoscroll = false,
         systemPrompt = $bindable(),
+        providerId,
         highlightMessageIndex = null,
         demoMode = false,
         onsend,
@@ -24,6 +33,7 @@
         onretry,
         onedit,
         ondelete,
+        onclearerror,
         onextensionneeded,
     }: {
         messages: Message[];
@@ -43,6 +53,7 @@
         submitKeystroke?: 'enter' | 'ctrl+enter';
         autoscroll?: boolean;
         systemPrompt: string;
+        providerId: string;
         highlightMessageIndex?: number | null;
         demoMode?: boolean;
         onsend: (content: string, attachments?: Attachment[]) => void;
@@ -50,11 +61,14 @@
         onretry: (index: number) => void;
         onedit: (index: number, content: string) => void;
         ondelete: (index: number) => void;
+        onclearerror: () => void;
         onextensionneeded: () => void;
     } = $props();
 
     let systemExpanded = $state(false);
-    let expandedThinking = $state(new Set<number>());
+    // Per-message UI state keyed by Message.id so it survives mid-chat deletes
+    // (an index-keyed Set/index would shift onto the wrong message).
+    let expandedThinking = $state(new Set<string>());
     let inputText = $state('');
     let messagesEl = $state<HTMLElement | null>(null);
     let lastScrollTop = 0;
@@ -63,13 +77,27 @@
     let isAtBottom = $state(true);
     let isAtTop = $state(true);
     let pendingAttachments = $state<Attachment[]>([]);
-    let hoveredIndex = $state<number | null>(null);
+    let processingAttachments = $state<
+        Array<{ id: string; name: string; progress: number }>
+    >([]);
+    let fileErrors = $state<string[]>([]);
+    let lastProviderId: string | null = null;
+    let hoveredMessageId = $state<string | null>(null);
     let hoverHideTimer: ReturnType<typeof setTimeout> | null = null;
-    let editingIndex = $state<number | null>(null);
+    let editingMessageId = $state<string | null>(null);
     let editingText = $state('');
     let editingDims = $state<{ w: number; h: number } | null>(null);
 
     const MAX_ATTACHMENTS = 20;
+    let uploadGeneration = 0;
+    let filePolicy = $derived(getFilePolicy(providerId));
+    let fileAccept = $derived(getAcceptForProvider(providerId));
+    let attachmentTotalBytes = $derived(
+        pendingAttachments.reduce(
+            (total, attachment) => total + attachment.encodedSizeBytes,
+            0
+        )
+    );
 
     const smooth = createSmoothText({
         mode: () => smoothTextMode,
@@ -109,7 +137,7 @@
             requestAnimationFrame(() => {
                 if (cancelled || !messagesEl) return;
                 const el = messagesEl.querySelector(
-                    `[data-msg-index="${idx}"]`,
+                    `[data-msg-index="${idx}"]`
                 ) as HTMLElement | null;
                 if (!el) return;
                 el.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -123,10 +151,36 @@
     });
 
     $effect(() => {
-        if (editingIndex !== null && editingIndex >= messages.length) {
-            editingIndex = null;
+        if (
+            editingMessageId !== null &&
+            !messages.some((m) => m.id === editingMessageId)
+        ) {
+            editingMessageId = null;
             editingText = '';
         }
+    });
+
+    $effect(() => {
+        if (lastProviderId === null) {
+            lastProviderId = providerId;
+            return;
+        }
+        if (lastProviderId === providerId) return;
+        lastProviderId = providerId;
+        uploadGeneration++;
+        processingAttachments = [];
+
+        const attachments = untrack(() => pendingAttachments);
+        if (!attachments.length) return;
+
+        const validation = validateReadyAttachments(attachments, providerId);
+        if (validation.ok) return;
+
+        pendingAttachments = [];
+        fileErrors = [
+            `Attached files were removed. ${validation.message}`,
+            ...untrack(() => fileErrors),
+        ].slice(0, 3);
     });
 
     function handleMessagesScroll() {
@@ -161,11 +215,30 @@
 
     function submit() {
         const text = inputText.trim();
-        if ((!text && !pendingAttachments.length) || isStreaming) return;
+        if (
+            (!text && !pendingAttachments.length) ||
+            isStreaming ||
+            processingAttachments.length
+        ) {
+            return;
+        }
         if (demoMode) {
             onextensionneeded();
             return;
         }
+
+        const fileValidation = validateReadyAttachments(
+            pendingAttachments,
+            providerId
+        );
+        if (!fileValidation.ok) {
+            fileErrors = [
+                fileValidation.message,
+                ...untrack(() => fileErrors),
+            ].slice(0, 3);
+            return;
+        }
+
         isAtBottom = true;
         const atts = pendingAttachments;
         pendingAttachments = [];
@@ -185,27 +258,164 @@
         fileInputEl?.click();
     }
 
+    function addFileError(message: string) {
+        fileErrors = [message, ...untrack(() => fileErrors)].slice(0, 3);
+    }
+
+    function setProcessingProgress(id: string, progress: number) {
+        processingAttachments = processingAttachments.map((attachment) =>
+            attachment.id === id ? { ...attachment, progress } : attachment
+        );
+    }
+
+    function removeProcessingAttachment(id: string) {
+        processingAttachments = processingAttachments.filter(
+            (attachment) => attachment.id !== id
+        );
+    }
+
+    function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as ArrayBuffer);
+            reader.onerror = () =>
+                reject(reader.error ?? new Error('Could not read file.'));
+            reader.readAsArrayBuffer(file);
+        });
+    }
+
+    function bytesToBase64(bytes: Uint8Array): string {
+        let binary = '';
+        const CHUNK = 0x8000;
+        for (let i = 0; i < bytes.length; i += CHUNK) {
+            binary += String.fromCharCode(
+                ...bytes.subarray(i, Math.min(i + CHUNK, bytes.length))
+            );
+        }
+        return btoa(binary);
+    }
+
+    async function processFile(
+        file: File,
+        id: string,
+        uploadProviderId: string,
+        generation: number
+    ) {
+        const isCurrent = () => generation === uploadGeneration;
+        const policy = getFilePolicy(uploadProviderId);
+
+        try {
+            setProcessingProgress(id, 12);
+            const mediaType = getMimeTypeFromFilename(file.name);
+            if (!mediaType) {
+                addFileError(`${file.name} has no supported file extension.`);
+                removeProcessingAttachment(id);
+                return;
+            }
+
+            setProcessingProgress(id, 24);
+            if (!policy.mimeTypes.has(mediaType)) {
+                addFileError(
+                    `${file.name} (${mediaType}) is not supported by this provider.`
+                );
+                removeProcessingAttachment(id);
+                return;
+            }
+
+            setProcessingProgress(id, 38);
+            if (file.size > policy.maxFileBytes) {
+                addFileError(
+                    `${file.name} is ${formatFileSize(file.size)}. Limit: ${formatFileSize(policy.maxFileBytes)}.`
+                );
+                removeProcessingAttachment(id);
+                return;
+            }
+
+            setProcessingProgress(id, 50);
+            const buffer = await readFileAsArrayBuffer(file);
+            if (!isCurrent()) return;
+
+            setProcessingProgress(id, 64);
+            const hash = await hashBytes(buffer);
+            if (!isCurrent()) return;
+
+            const data = bytesToBase64(new Uint8Array(buffer));
+            const encodedSizeBytes = data.length;
+
+            setProcessingProgress(id, 72);
+            if (encodedSizeBytes > policy.maxFileBytes) {
+                addFileError(
+                    `${file.name} is ${formatFileSize(encodedSizeBytes)} after encoding. Limit: ${formatFileSize(policy.maxFileBytes)}.`
+                );
+                removeProcessingAttachment(id);
+                return;
+            }
+
+            setProcessingProgress(id, 86);
+            const currentTotal = untrack(() =>
+                pendingAttachments.reduce(
+                    (total, attachment) => total + attachment.encodedSizeBytes,
+                    0
+                )
+            );
+            if (currentTotal + encodedSizeBytes > policy.maxRequestBytes) {
+                addFileError(
+                    `${file.name} would exceed the request file limit (${formatFileSize(policy.maxRequestBytes)}).`
+                );
+                removeProcessingAttachment(id);
+                return;
+            }
+
+            setProcessingProgress(id, 100);
+            pendingAttachments = [
+                ...untrack(() => pendingAttachments),
+                {
+                    hash,
+                    name: file.name,
+                    mediaType,
+                    sizeBytes: file.size,
+                    encodedSizeBytes,
+                    data,
+                },
+            ];
+            removeProcessingAttachment(id);
+        } catch (error) {
+            if (!isCurrent()) return;
+            addFileError(
+                error instanceof Error
+                    ? `${file.name}: ${error.message}`
+                    : `${file.name} could not be processed.`
+            );
+            removeProcessingAttachment(id);
+        }
+    }
+
     function handleFileChange(e: Event) {
         const files = Array.from((e.target as HTMLInputElement).files ?? []);
         if (!fileInputEl) return;
         fileInputEl.value = '';
         if (!files.length) return;
 
-        const slots = MAX_ATTACHMENTS - pendingAttachments.length;
+        fileErrors = [];
+        const uploadProviderId = providerId;
+        const generation = uploadGeneration;
+        const slots =
+            MAX_ATTACHMENTS -
+            pendingAttachments.length -
+            processingAttachments.length;
         const toAdd = files.slice(0, slots);
 
+        if (toAdd.length < files.length) {
+            addFileError(`Only ${MAX_ATTACHMENTS} files can be attached.`);
+        }
+
         for (const file of toAdd) {
-            const reader = new FileReader();
-            reader.onload = () => {
-                const dataUrl = reader.result as string;
-                const comma = dataUrl.indexOf(',');
-                const data = dataUrl.slice(comma + 1);
-                pendingAttachments = [
-                    ...pendingAttachments,
-                    { name: file.name, mediaType: file.type, data },
-                ];
-            };
-            reader.readAsDataURL(file);
+            const id = crypto.randomUUID();
+            processingAttachments = [
+                ...processingAttachments,
+                { id, name: file.name, progress: 0 },
+            ];
+            void processFile(file, id, uploadProviderId, generation);
         }
     }
 
@@ -216,41 +426,43 @@
     }
 
     function startEdit(
-        i: number,
+        id: string,
         content: string,
-        bubbleEl?: HTMLElement | null,
+        bubbleEl?: HTMLElement | null
     ) {
         editingDims = bubbleEl
             ? { w: bubbleEl.offsetWidth, h: bubbleEl.offsetHeight }
             : null;
-        editingIndex = i;
+        editingMessageId = id;
         editingText = content;
     }
 
     function saveEdit() {
-        if (editingIndex === null) return;
-        onedit(editingIndex, editingText);
-        editingIndex = null;
+        if (editingMessageId === null) return;
+        const idx = messages.findIndex((m) => m.id === editingMessageId);
+        editingMessageId = null;
+        const text = editingText;
         editingText = '';
+        if (idx !== -1) onedit(idx, text);
     }
 
     function cancelEdit() {
-        editingIndex = null;
+        editingMessageId = null;
         editingText = '';
     }
 
-    function setHovered(i: number | null) {
+    function setHovered(id: string | null) {
         if (hoverHideTimer !== null) {
             clearTimeout(hoverHideTimer);
             hoverHideTimer = null;
         }
-        if (i === null) {
+        if (id === null) {
             hoverHideTimer = setTimeout(() => {
-                hoveredIndex = null;
+                hoveredMessageId = null;
                 hoverHideTimer = null;
             }, 120);
         } else {
-            hoveredIndex = i;
+            hoveredMessageId = id;
         }
     }
 
@@ -333,9 +545,7 @@
                         class="flex flex-col items-center justify-center flex-1 h-full gap-2.5 text-fg"
                     >
                         <Icon name="mail-plus" />
-                        <p
-                            class="text-[0.9375rem] font-medium text-fg m-0"
-                        >
+                        <p class="text-[0.9375rem] font-medium text-fg m-0">
                             Start a conversation
                         </p>
                         <p
@@ -346,14 +556,13 @@
                         </p>
                     </div>
                 {:else}
-                    {#each messages as message, i (i)}
+                    {#each messages as message, i (message.id)}
                         {@const isLastStreaming =
                             isStreaming && i === messages.length - 1}
                         {@const displayContent =
                             i === messages.length - 1 &&
                             message.role === 'assistant' &&
-                            (isStreaming ||
-                                smooth.display !== message.content)
+                            (isStreaming || smooth.display !== message.content)
                                 ? smooth.display
                                 : message.content}
                         <MessageItem
@@ -362,21 +571,22 @@
                             {displayContent}
                             {isStreaming}
                             {isLastStreaming}
-                            editing={editingIndex === i}
+                            editing={editingMessageId === message.id}
                             bind:editingText
                             {editingDims}
-                            hovered={hoveredIndex === i}
-                            thinkingExpanded={expandedThinking.has(i)}
-                            onhoverenter={() => setHovered(i)}
+                            hovered={hoveredMessageId === message.id}
+                            thinkingExpanded={expandedThinking.has(message.id)}
+                            onhoverenter={() => setHovered(message.id)}
                             onhoverleave={() => setHovered(null)}
                             onstartedit={(content, bubbleEl) =>
-                                startEdit(i, content, bubbleEl)}
+                                startEdit(message.id, content, bubbleEl)}
                             onsaveedit={saveEdit}
                             oncanceledit={cancelEdit}
                             onthinkingtoggle={() => {
                                 const next = new Set(expandedThinking);
-                                if (next.has(i)) next.delete(i);
-                                else next.add(i);
+                                if (next.has(message.id))
+                                    next.delete(message.id);
+                                else next.add(message.id);
                                 expandedThinking = next;
                             }}
                             onretry={() => onretry(i)}
@@ -401,34 +611,41 @@
     <!-- Stream error -->
     {#if streamError}
         <div
-            class="shrink-0 px-4 py-2 text-sm text-accent-fg border-t border-border bg-canvas"
+            class="shrink-0 flex items-center gap-3 px-4 py-2 text-sm text-accent-fg border-t border-border bg-canvas"
             role="alert"
         >
-            {streamError}
+            <span class="min-w-0 flex-1 wrap-break-word">{streamError}</span>
+            <button
+                type="button"
+                class="shrink-0 flex items-center justify-center w-6 h-6 p-0 bg-transparent border-0 rounded-md text-accent-fg cursor-pointer opacity-70 transition-[opacity,background-color] duration-150 hover:opacity-100 hover:bg-surface-sunken"
+                onclick={onclearerror}
+                aria-label="Dismiss API error"
+            >
+                <Icon name="close" />
+            </button>
         </div>
     {/if}
 
     <!-- Input -->
     <div class="shrink-0 border-t border-border bg-canvas">
-        {#if pendingAttachments.length}
-            <div class="flex flex-wrap gap-1 px-4 pt-2">
-                {#each pendingAttachments as att, i}
+        {#if fileErrors.length}
+            <div class="flex flex-col gap-1 px-4 pt-2">
+                {#each fileErrors as error, i (i)}
                     <div
-                        class="inline-flex items-center gap-1.5 pl-2.5 pr-2 py-1.25 bg-surface-sunken border border-border rounded-lg text-xs text-fg max-w-60"
+                        class="flex items-center gap-2 text-xs text-accent-fg"
+                        role="alert"
                     >
-                        <Icon name="file" />
-                        <span
-                            class="overflow-hidden text-ellipsis whitespace-nowrap max-w-45"
-                            >{att.name}</span
+                        <span class="min-w-0 flex-1 wrap-break-word"
+                            >{error}</span
                         >
                         <button
                             type="button"
-                            class="flex items-center justify-center w-4 h-4 bg-transparent border-0 p-0 text-fg opacity-50 cursor-pointer shrink-0 transition-opacity duration-150 hover:opacity-100"
+                            class="flex items-center justify-center w-4 h-4 bg-transparent border-0 p-0 text-accent-fg opacity-60 cursor-pointer shrink-0 transition-opacity duration-150 hover:opacity-100"
                             onclick={() =>
-                                (pendingAttachments = pendingAttachments.filter(
-                                    (_, j) => j !== i,
+                                (fileErrors = fileErrors.filter(
+                                    (_, j) => j !== i
                                 ))}
-                            aria-label="Remove attachment"
+                            aria-label="Dismiss file error"
                         >
                             <Icon name="close" />
                         </button>
@@ -436,12 +653,61 @@
                 {/each}
             </div>
         {/if}
-        <div
-            class="flex items-end gap-2 px-4 py-3 bg-canvas shrink-0"
-        >
+        {#if pendingAttachments.length || processingAttachments.length}
+            <div class="flex items-start justify-between gap-3 px-4 pt-2">
+                <div class="flex flex-wrap gap-1 min-w-0">
+                    {#each processingAttachments as att (att.id)}
+                        <div
+                            class="relative overflow-hidden inline-flex items-center gap-1.5 pl-2.5 pr-2 py-1.25 bg-surface-sunken border border-border rounded-lg text-xs text-fg max-w-60"
+                        >
+                            <span
+                                class="absolute top-0 left-0 h-0.5 bg-accent-3-bg transition-[width] duration-150"
+                                style="width: {att.progress}%"
+                            ></span>
+                            <Icon name="spinner" />
+                            <span
+                                class="overflow-hidden text-ellipsis whitespace-nowrap max-w-45"
+                                >{att.name}</span
+                            >
+                        </div>
+                    {/each}
+                    {#each pendingAttachments as att, i (att.hash)}
+                        <div
+                            class="inline-flex items-center gap-1.5 pl-2.5 pr-2 py-1.25 bg-surface-sunken border border-border rounded-lg text-xs text-fg max-w-60"
+                        >
+                            <Icon name="file" />
+                            <span
+                                class="overflow-hidden text-ellipsis whitespace-nowrap max-w-45"
+                                >{att.name}</span
+                            >
+                            <button
+                                type="button"
+                                class="flex items-center justify-center w-4 h-4 bg-transparent border-0 p-0 text-fg opacity-50 cursor-pointer shrink-0 transition-opacity duration-150 hover:opacity-100"
+                                onclick={() =>
+                                    (pendingAttachments =
+                                        pendingAttachments.filter(
+                                            (_, j) => j !== i
+                                        ))}
+                                aria-label="Remove attachment"
+                            >
+                                <Icon name="close" />
+                            </button>
+                        </div>
+                    {/each}
+                </div>
+                <div
+                    class="shrink-0 pt-1 text-[0.6875rem] leading-none text-fg-muted tabular-nums"
+                >
+                    {formatFileSize(attachmentTotalBytes)} / {formatFileSize(
+                        filePolicy.maxRequestBytes
+                    )}
+                </div>
+            </div>
+        {/if}
+        <div class="flex items-end gap-2 px-4 py-3 bg-canvas shrink-0">
             <input
                 type="file"
-                accept=".pdf,image/*"
+                accept={fileAccept}
                 multiple
                 class="hidden"
                 bind:this={fileInputEl}
@@ -452,7 +718,8 @@
                 class="{sendStyleBase} bg-surface-sunken text-fg border! border-border! enabled:hover:bg-border disabled:opacity-[0.35] disabled:cursor-not-allowed"
                 onclick={openFilePicker}
                 disabled={isStreaming ||
-                    pendingAttachments.length >= MAX_ATTACHMENTS}
+                    pendingAttachments.length + processingAttachments.length >=
+                        MAX_ATTACHMENTS}
                 aria-label="Attach file"
             >
                 <Icon name="plus" />
@@ -481,6 +748,7 @@
                     class="{sendStyleBase} bg-accent-3-bg text-on-accent-3-bg enabled:hover:bg-accent-3-bg-hover enabled:hover:text-on-accent-3-bg-hover disabled:opacity-[0.35] disabled:cursor-not-allowed"
                     onclick={submit}
                     disabled={isStreaming ||
+                        processingAttachments.length > 0 ||
                         (!inputText.trim() && !pendingAttachments.length)}
                     aria-label="Send message"
                 >

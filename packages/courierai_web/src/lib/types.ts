@@ -1,10 +1,14 @@
-import type { Attachment } from '@courier/shared';
+import type { Attachment, AttachmentRef } from '@courier/shared';
 
 export interface Message {
+    // Client-only stable identity. Drives keyed {#each} and per-message UI
+    // state (edit/hover/expanded). Not persisted — regenerated on every load
+    // from storage (see hydrateStoredMessages in App.svelte).
+    id: string;
     role: 'user' | 'assistant';
     content: string;
     thinking?: string;
-    attachments?: Attachment[];
+    attachments?: AttachmentRef[];
 }
 
 export interface Chat {
@@ -20,6 +24,11 @@ export interface Chat {
     thinkingLevel: string;
     adaptiveThinking: boolean;
     tokens?: { input: number; output: number };
+    // Fresh upload bytes that haven't yet been persisted by the ext, keyed by
+    // hash. Populated on send and consumed by streamForChat to inline data
+    // into the turn request. Cleared on successful turn completion; preserved
+    // through stream errors so retry can re-submit without re-uploading.
+    pendingBlobs?: Map<string, Attachment>;
 }
 
 export interface SearchResult {

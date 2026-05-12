@@ -32,10 +32,13 @@ console.log('\n> S3 sync HTML/root (short cache, --delete)...');
 await $`aws s3 sync ${dist}/ s3://${BUCKET}/ --exclude "assets/*" --exclude "legal/*" --cache-control ${SHORT_CACHE} --delete --no-progress`;
 
 console.log('\n> CloudFront invalidation...');
-const invalidation = await $`aws cloudfront create-invalidation --distribution-id ${DIST_ID} --paths "/*"`.json();
+const invalidation =
+    await $`aws cloudfront create-invalidation --distribution-id ${DIST_ID} --paths "/*"`.json();
 const invalidationId = invalidation.Invalidation.Id;
 
-console.log(`\n> Waiting for invalidation ${invalidationId} (typically 1-5 min)...`);
+console.log(
+    `\n> Waiting for invalidation ${invalidationId} (typically 1-5 min)...`
+);
 await $`aws cloudfront wait invalidation-completed --distribution-id ${DIST_ID} --id ${invalidationId}`;
 
 console.log('\n> Pruning orphan /assets/* (--delete)...');

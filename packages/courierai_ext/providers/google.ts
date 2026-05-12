@@ -1,15 +1,25 @@
-import type { ChatMessage, StreamHandlers, StreamUsage } from '@courier/shared';
-import { GoogleGenAI } from '@google/genai';
+import type {
+    HydratedChatMessage,
+    StreamHandlers,
+    StreamUsage,
+} from '@courier/shared';
+import {
+    type Content,
+    GoogleGenAI,
+    type Part,
+    type ThinkingConfig,
+    ThinkingLevel,
+} from '@google/genai';
 import { DEBUG_API_LOGGING } from '../debug';
 
 const LOG = '[courier:ext]';
 
-function toGoogleContents(messages: ChatMessage[]) {
+function toGoogleContents(messages: HydratedChatMessage[]): Content[] {
     return messages
         .filter((m) => m.role !== 'system')
-        .map((msg) => {
+        .map((msg): Content => {
             const role = msg.role === 'assistant' ? 'model' : 'user';
-            const parts: Array<Record<string, unknown>> = [];
+            const parts: Part[] = [];
 
             for (const att of msg.attachments ?? []) {
                 parts.push({
@@ -24,12 +34,12 @@ function toGoogleContents(messages: ChatMessage[]) {
         });
 }
 
-// Gemini 2.5 uses thinkingBudget (token count); 3.x uses thinkingLevel string.
+// Gemini 2.5 uses thinkingBudget (token count); 3.x uses thinkingLevel enum.
 function buildThinkingConfig(
     model: string,
     thinkingLevel: string | undefined,
     wantsThoughts: boolean
-): Record<string, unknown> | undefined {
+): ThinkingConfig | undefined {
     if (!thinkingLevel || thinkingLevel === 'none') return undefined;
 
     if (model.includes('2.5')) {
@@ -42,31 +52,29 @@ function buildThinkingConfig(
         };
         const budget = budgets[thinkingLevel];
         if (budget == null) return undefined;
-        return { thinkingConfig: { thinkingBudget: Math.max(128, budget) } };
+        return { thinkingBudget: Math.max(128, budget) };
     }
 
     // Gemini 3+
-    const levelMap: Record<string, string> = {
-        low: 'LOW',
-        medium: 'MEDIUM',
-        high: 'HIGH',
-        max: 'HIGH',
-        xhigh: 'HIGH',
+    const levelMap: Record<string, ThinkingLevel> = {
+        low: ThinkingLevel.LOW,
+        medium: ThinkingLevel.MEDIUM,
+        high: ThinkingLevel.HIGH,
+        max: ThinkingLevel.HIGH,
+        xhigh: ThinkingLevel.HIGH,
     };
     const level = levelMap[thinkingLevel];
     if (!level) return undefined;
     return {
-        thinkingConfig: {
-            thinkingLevel: level,
-            includeThoughts: wantsThoughts,
-        },
+        thinkingLevel: level,
+        includeThoughts: wantsThoughts,
     };
 }
 
 export async function streamGoogle(
     apiKey: string,
     model: string,
-    messages: ChatMessage[],
+    messages: HydratedChatMessage[],
     params: Record<string, unknown>,
     handlers: StreamHandlers,
     signal?: AbortSignal
@@ -102,7 +110,7 @@ export async function streamGoogle(
                 ...(params.temperature !== undefined
                     ? { temperature: params.temperature as number }
                     : {}),
-                ...thinkingCfg,
+                ...(thinkingCfg ? { thinkingConfig: thinkingCfg } : {}),
                 ...(signal ? { abortSignal: signal } : {}),
             },
         });

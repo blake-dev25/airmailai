@@ -1,10 +1,33 @@
-export interface Attachment {
+// Persisted form. Carries everything needed to render an attachment chip and
+// look up the bytes by content-hash. Storage lives in the ext's `files` IDB
+// store keyed by `hash`, dedup'd via refCount across chats.
+export interface AttachmentRef {
+    hash: string; // SHA-256 of raw bytes
     name: string;
     mediaType: string;
+    sizeBytes: number;
+}
+
+// In-flight form. Adds the base64-encoded bytes used by provider request
+// shapers. `data` is only present for fresh uploads on the current turn —
+// history attachments arrive as bare refs and are hydrated by the ext from
+// its files store before reaching the provider.
+export interface Attachment extends AttachmentRef {
+    encodedSizeBytes: number;
     data: string; // base64
 }
 
 export interface ChatMessage {
+    role: 'user' | 'assistant' | 'system';
+    content: string;
+    // Union: fresh uploads on the current turn carry full Attachment (with
+    // data); history items are AttachmentRef and get hydrated server-side.
+    attachments?: (Attachment | AttachmentRef)[];
+}
+
+// Post-hydration form. The ext fills bare refs into full attachments before
+// handing off to providers, so this is what provider stream fns consume.
+export interface HydratedChatMessage {
     role: 'user' | 'assistant' | 'system';
     content: string;
     attachments?: Attachment[];
@@ -140,7 +163,7 @@ export interface StoredChat {
         role: 'user' | 'assistant';
         content: string;
         thinking?: string;
-        attachments?: Attachment[];
+        attachments?: AttachmentRef[];
     }>;
     tokens?: { input: number; output: number };
 }

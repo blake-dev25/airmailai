@@ -1,10 +1,19 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type { ChatMessage, StreamHandlers } from '@courier/shared';
+import type { HydratedChatMessage, StreamHandlers } from '@courier/shared';
 import { DEBUG_API_LOGGING } from '../debug';
 
 const LOG = '[courier:ext]';
 
-function toAnthropicParam(msg: ChatMessage): Anthropic.MessageParam {
+function decodeBase64Utf8(data: string): string {
+    const binary = atob(data);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return new TextDecoder().decode(bytes);
+}
+
+function toAnthropicParam(msg: HydratedChatMessage): Anthropic.MessageParam {
     if (!msg.attachments?.length) {
         return { role: msg.role as 'user' | 'assistant', content: msg.content };
     }
@@ -20,7 +29,16 @@ function toAnthropicParam(msg: ChatMessage): Anthropic.MessageParam {
                     media_type: 'application/pdf',
                     data: att.data,
                 },
-            } as Anthropic.ContentBlockParam);
+            });
+        } else if (att.mediaType === 'text/plain') {
+            blocks.push({
+                type: 'document',
+                source: {
+                    type: 'text',
+                    media_type: 'text/plain',
+                    data: decodeBase64Utf8(att.data),
+                },
+            });
         } else {
             blocks.push({
                 type: 'image',
@@ -47,7 +65,7 @@ function toAnthropicParam(msg: ChatMessage): Anthropic.MessageParam {
 export async function streamAnthropic(
     apiKey: string,
     model: string,
-    messages: ChatMessage[],
+    messages: HydratedChatMessage[],
     params: Record<string, unknown>,
     handlers: StreamHandlers,
     signal?: AbortSignal
@@ -117,11 +135,7 @@ export async function streamAnthropic(
         let firstChunk = true;
         for await (const event of stream) {
             if (event.type === 'content_block_delta') {
-                const delta = event.delta as {
-                    type: string;
-                    text?: string;
-                    thinking?: string;
-                };
+                const delta = event.delta;
                 if (delta.type === 'text_delta' && delta.text) {
                     if (firstChunk) {
                         console.log(LOG, 'anthropic: first chunk received');

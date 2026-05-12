@@ -1,7 +1,3 @@
-# local notes/docs
-CLAUDE.md
-*.txt
-
 # dependencies
 node_modules/
 
@@ -14,22 +10,17 @@ dist-ssr/
 VERSION
 VERSION_NAME
 build-counter.json
+bun.lock
 
 # logs
 logs/
 *.log*
 
-# env/local overrides
+# local/env/deploy scratch
 .env
 .env.*
-!.env.example
-*.local
-
-# os/editor/etc
-.DS_Store
-Thumbs.db
-.vscode/
-.claude/
-
-# deploy scratch/etc
 .deploy-tmp/
+
+# notes/docs/etc
+*.md
+*.txt

@@ -62,15 +62,28 @@ const skyBlue =
 
 export function buildDemoChats(config: DemoConfig): Chat[] {
     const now = Date.now();
+    const id = () => crypto.randomUUID();
     return [
         {
             id: 'demo-1',
             title: 'this is a demo conversation',
             messages: [
-                { role: 'user', content: 'this is a demo conversation' },
-                { role: 'assistant', content: 'great! how can I help you?' },
-                { role: 'user', content: 'give me a recipe for eggs benedict' },
-                { role: 'assistant', content: eggsBenedict },
+                {
+                    id: id(),
+                    role: 'user',
+                    content: 'this is a demo conversation',
+                },
+                {
+                    id: id(),
+                    role: 'assistant',
+                    content: 'great! how can I help you?',
+                },
+                {
+                    id: id(),
+                    role: 'user',
+                    content: 'give me a recipe for eggs benedict',
+                },
+                { id: id(), role: 'assistant', content: eggsBenedict },
             ],
             createdAt: now,
             systemPrompt: '',
@@ -80,13 +93,18 @@ export function buildDemoChats(config: DemoConfig): Chat[] {
             id: 'demo-2',
             title: 'write me a python fizzbuzz script',
             messages: [
-                { role: 'user', content: 'write me a python fizzbuzz script' },
-                { role: 'assistant', content: fizzbuzz },
                 {
+                    id: id(),
+                    role: 'user',
+                    content: 'write me a python fizzbuzz script',
+                },
+                { id: id(), role: 'assistant', content: fizzbuzz },
+                {
+                    id: id(),
                     role: 'user',
                     content: 'can you explain how the % operator works there?',
                 },
-                { role: 'assistant', content: moduloExplanation },
+                { id: id(), role: 'assistant', content: moduloExplanation },
             ],
             createdAt: now - 1000,
             systemPrompt: '',
@@ -96,8 +114,8 @@ export function buildDemoChats(config: DemoConfig): Chat[] {
             id: 'demo-3',
             title: 'why is the sky blue?',
             messages: [
-                { role: 'user', content: 'why is the sky blue?' },
-                { role: 'assistant', content: skyBlue },
+                { id: id(), role: 'user', content: 'why is the sky blue?' },
+                { id: id(), role: 'assistant', content: skyBlue },
             ],
             createdAt: now - 2000,
             systemPrompt: '',

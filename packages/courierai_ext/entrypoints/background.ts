@@ -1,8 +1,10 @@
 import type {
+    Attachment,
     BroadcastEvent,
     ChatMessage,
     ChatMeta,
     ExtensionResponse,
+    HydratedChatMessage,
     StorageRequest,
     StorageResponse,
     StoredChat,
@@ -21,6 +23,7 @@ import { streamOpenRouter } from '../providers/openrouter';
 import {
     dbClearChats,
     dbDeleteChat,
+    dbGetFileBlob,
     dbLoadChat,
     dbLoadChatMetas,
     dbLoadChats,
@@ -28,10 +31,97 @@ import {
     dbSaveChat,
 } from '../storage/db';
 
+function base64ToBlob(data: string, mediaType: string): Blob {
+    const binary = atob(data);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new Blob([bytes], { type: mediaType });
+}
+
+async function blobToBase64(blob: Blob): Promise<string> {
+    const buf = new Uint8Array(await blob.arrayBuffer());
+    // String.fromCharCode in chunks to avoid stack overflow on large buffers.
+    let binary = '';
+    const CHUNK = 0x8000;
+    for (let i = 0; i < buf.length; i += CHUNK) {
+        binary += String.fromCharCode(
+            ...buf.subarray(i, Math.min(i + CHUNK, buf.length))
+        );
+    }
+    return btoa(binary);
+}
+
+// Walks the inbound turn messages, pulls bytes out of any fresh uploads
+// (attachments with `data`) into a hash→Blob map, and returns a normalized
+// message list with every attachment turned into a full `Attachment`
+// (provider-ready). History refs are filled in from the per-turn freshBlobs
+// map first, then the files store. Throws if a ref can't be resolved.
+async function hydrateTurn(messages: ChatMessage[]): Promise<{
+    hydrated: HydratedChatMessage[];
+    freshBlobs: Map<string, Blob>;
+}> {
+    const freshBlobs = new Map<string, Blob>();
+    const dataCache = new Map<string, string>();
+
+    for (const msg of messages) {
+        for (const att of msg.attachments ?? []) {
+            if ('data' in att && att.data) {
+                if (!freshBlobs.has(att.hash)) {
+                    freshBlobs.set(
+                        att.hash,
+                        base64ToBlob(att.data, att.mediaType)
+                    );
+                }
+                dataCache.set(att.hash, att.data);
+            }
+        }
+    }
+
+    const hydrated: HydratedChatMessage[] = [];
+    for (const msg of messages) {
+        if (!msg.attachments?.length) {
+            hydrated.push({ role: msg.role, content: msg.content });
+            continue;
+        }
+        const filled: Attachment[] = [];
+        for (const att of msg.attachments) {
+            if ('data' in att && att.data) {
+                filled.push(att as Attachment);
+                continue;
+            }
+            let data = dataCache.get(att.hash);
+            if (!data) {
+                const blob = await dbGetFileBlob(att.hash);
+                if (!blob) {
+                    throw new Error(
+                        `Missing attachment for hash ${att.hash} (${att.name})`
+                    );
+                }
+                data = await blobToBase64(blob);
+                dataCache.set(att.hash, data);
+            }
+            filled.push({
+                hash: att.hash,
+                name: att.name,
+                mediaType: att.mediaType,
+                sizeBytes: att.sizeBytes,
+                encodedSizeBytes: data.length,
+                data,
+            });
+        }
+        hydrated.push({
+            role: msg.role,
+            content: msg.content,
+            attachments: filled,
+        });
+    }
+    return { hydrated, freshBlobs };
+}
+
 type StreamFn = (
     apiKey: string,
     model: string,
-    messages: ChatMessage[],
+    messages: HydratedChatMessage[],
     params: Record<string, unknown>,
     handlers: StreamHandlers,
     signal?: AbortSignal
@@ -342,6 +432,7 @@ export default defineBackground(() => {
         let saveCtx: {
             meta: ChatMeta;
             history: StoredChat['messages'];
+            freshBlobs: Map<string, Blob>;
         } | null = null;
         let portOpen = true;
 
@@ -389,7 +480,6 @@ export default defineBackground(() => {
             }
             inflightTurns.set(msg.chatId, controller);
             lockedChatId = msg.chatId;
-            saveCtx = { meta: msg.meta, history: msg.historyForSave };
             disposition = 'streaming';
 
             // Announce the turn to every other tab so they can mirror state.
@@ -420,10 +510,29 @@ export default defineBackground(() => {
                     return;
                 }
 
+                let hydratedMessages: HydratedChatMessage[];
+                let freshBlobs: Map<string, Blob>;
+                try {
+                    const result = await hydrateTurn(msg.messages);
+                    hydratedMessages = result.hydrated;
+                    freshBlobs = result.freshBlobs;
+                } catch (e) {
+                    console.error(LOG, 'hydrate failed', e);
+                    streamErrorMsg = e instanceof Error ? e.message : String(e);
+                    disposition = 'errored';
+                    return;
+                }
+
+                saveCtx = {
+                    meta: msg.meta,
+                    history: msg.historyForSave,
+                    freshBlobs,
+                };
+
                 console.log(LOG, 'streaming', msg.chatId, {
                     provider: msg.provider,
                     model: msg.model,
-                    messages: msg.messages.length,
+                    messages: hydratedMessages.length,
                 });
 
                 if (DEBUG_API_LOGGING) {
@@ -431,7 +540,7 @@ export default defineBackground(() => {
                         provider: msg.provider,
                         model: msg.model,
                         params: msg.params,
-                        messages: msg.messages,
+                        messages: hydratedMessages,
                     });
                 }
 
@@ -471,7 +580,7 @@ export default defineBackground(() => {
                 await stream(
                     apiKey,
                     msg.model,
-                    msg.messages,
+                    hydratedMessages,
                     msg.params ?? {},
                     handlers,
                     controller.signal
@@ -487,9 +596,13 @@ export default defineBackground(() => {
                     disposition = 'errored';
                 }
             } finally {
+                // Re-widen: TS narrows `disposition` based on assignments in
+                // try/catch, but the port listeners can mutate it to 'aborted'
+                // or 'stopped' mid-await — narrowing misses those paths.
+                const disp = disposition as Disposition;
                 // Save phase. Skipped on 'aborted' (web bailed without stop).
-                if (disposition !== 'aborted' && saveCtx && lockedChatId) {
-                    const isStop = disposition === 'stopped';
+                if (disp !== 'aborted' && saveCtx && lockedChatId) {
+                    const isStop = disp === 'stopped';
                     const finalContent = isStop
                         ? stopTruncated
                         : assistantContent;
@@ -523,15 +636,19 @@ export default defineBackground(() => {
                     };
 
                     try {
-                        await dbSaveChat(stored, saveCtx.meta);
+                        await dbSaveChat(
+                            stored,
+                            saveCtx.meta,
+                            saveCtx.freshBlobs
+                        );
                     } catch (err) {
                         console.error(LOG, 'save failed', err);
                     }
                 }
 
-                if (disposition === 'errored' && streamErrorMsg) {
+                if (disp === 'errored' && streamErrorMsg) {
                     send({ type: 'error', message: streamErrorMsg });
-                } else if (disposition !== 'aborted') {
+                } else if (disp !== 'aborted') {
                     send({ type: 'done', usage: streamUsage });
                 }
 
@@ -539,13 +656,13 @@ export default defineBackground(() => {
                 // source tab bailed without saving — other tabs should roll
                 // back to IDB's pre-turn state.
                 if (lockedChatId) {
-                    if (disposition === 'errored' && streamErrorMsg) {
+                    if (disp === 'errored' && streamErrorMsg) {
                         broadcast({
                             type: 'turn-error',
                             chatId: lockedChatId,
                             message: streamErrorMsg,
                         });
-                    } else if (disposition === 'aborted') {
+                    } else if (disp === 'aborted') {
                         broadcast({
                             type: 'turn-aborted',
                             chatId: lockedChatId,

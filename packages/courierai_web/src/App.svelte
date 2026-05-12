@@ -1,7 +1,9 @@
 <script lang="ts">
     import type {
         Attachment,
+        AttachmentRef,
         BroadcastEvent,
+        ChatMessage,
         ChatMeta,
         StoredChat,
         UserSettings,
@@ -99,14 +101,14 @@
     let providerId = $state(PROVIDERS[0].id);
     let modelId = $state(defaultModel.id);
     let temperature = $state<number>(
-        defaultModel.params.defaultTemperature ?? 1,
+        defaultModel.params.defaultTemperature ?? 1
     );
     let maxTokens = $state(defaultModel.params.defaultMaxTokens);
     let thinkingLevel = $state<string>(
-        defaultModel.params.thinking?.defaultLevel ?? 'none',
+        defaultModel.params.thinking?.defaultLevel ?? 'none'
     );
     let adaptiveThinking = $state<boolean>(
-        defaultModel.params.thinking?.adaptive !== undefined,
+        defaultModel.params.thinking?.adaptive !== undefined
     );
     let systemPrompt = $state('');
 
@@ -127,13 +129,13 @@
     let searchQuery = $state('');
     let highlightMessageIndex = $state<number | null>(null);
     let isActiveLocalStreaming = $derived(
-        streamingChatIds.includes(activeChatId ?? ''),
+        streamingChatIds.includes(activeChatId ?? '')
     );
     let isActiveRemoteStreaming = $derived(
-        remoteStreamingChatIds.includes(activeChatId ?? ''),
+        remoteStreamingChatIds.includes(activeChatId ?? '')
     );
     let isActiveStreaming = $derived(
-        isActiveLocalStreaming || isActiveRemoteStreaming,
+        isActiveLocalStreaming || isActiveRemoteStreaming
     );
     // Sidebar gets the union — any chat being streamed by any tab gets the
     // spinner indicator.
@@ -143,10 +145,10 @@
     ]);
     let activeStreamError = $derived(chatErrors[activeChatId ?? ''] ?? null);
     let activeMessages = $derived(
-        chats.find((c) => c.id === activeChatId)?.messages ?? [],
+        chats.find((c) => c.id === activeChatId)?.messages ?? []
     );
     let activeTokens = $derived(
-        chats.find((c) => c.id === activeChatId)?.tokens ?? null,
+        chats.find((c) => c.id === activeChatId)?.tokens ?? null
     );
 
     // When the user changes tier and the active model is no longer in the
@@ -314,7 +316,7 @@
                     if (!stored) return null;
                     return {
                         ...meta,
-                        messages: stored.messages,
+                        messages: hydrateStoredMessages(stored.messages),
                         ...(stored.tokens ? { tokens: stored.tokens } : {}),
                     };
                 })
@@ -352,7 +354,7 @@
                 if (!stored) return null;
                 return {
                     ...meta,
-                    messages: stored.messages,
+                    messages: hydrateStoredMessages(stored.messages),
                     ...(stored.tokens ? { tokens: stored.tokens } : {}),
                 };
             })
@@ -362,7 +364,7 @@
         console.log(
             LOG,
             'loaded more chats',
-            `${newChats.length} chats, total ${chats.length}`,
+            `${newChats.length} chats, total ${chats.length}`
         );
         isLoadingMore = false;
     }
@@ -461,10 +463,23 @@
         return () => clearTimeout(timer);
     });
 
+    // Message.id is a client-only handle for keyed {#each} and per-message UI
+    // state — strip it on persist; regenerate on load.
+    function hydrateStoredMessages(stored: StoredChat['messages']): Message[] {
+        return stored.map((m) => ({ ...m, id: crypto.randomUUID() }));
+    }
+
     function chatToStored(chat: Chat, messages = chat.messages): StoredChat {
         return {
             id: chat.id,
-            messages,
+            messages: messages.map(
+                ({ role, content, thinking, attachments }) => ({
+                    role,
+                    content,
+                    thinking,
+                    attachments,
+                })
+            ),
             ...(chat.tokens ? { tokens: chat.tokens } : {}),
         };
     }
@@ -508,8 +523,9 @@
 
     function hasOpenRouterModels() {
         return (
-            providers.find((p) => p.id === 'openrouter')?.models.length ?? 0
-        ) > 0;
+            (providers.find((p) => p.id === 'openrouter')?.models.length ?? 0) >
+            0
+        );
     }
 
     function handleApiKeySaved(providerId: string) {
@@ -584,7 +600,7 @@
                 ...chats,
                 {
                     ...meta,
-                    messages: full.messages,
+                    messages: hydrateStoredMessages(full.messages),
                     ...(full.tokens ? { tokens: full.tokens } : {}),
                 },
             ];
@@ -596,6 +612,11 @@
         if (!chatErrors[id]) return;
         const { [id]: _, ...rest } = chatErrors;
         chatErrors = rest;
+    }
+
+    function clearActiveChatError() {
+        if (!activeChatId) return;
+        clearChatError(activeChatId);
     }
 
     function removeChat(id: string) {
@@ -617,12 +638,12 @@
         console.log(LOG, 'rename chat', id, newTitle);
         chats = chats.map((c) => (c.id === id ? { ...c, title: newTitle } : c));
         unloadedMetas = unloadedMetas.map((m) =>
-            m.id === id ? { ...m, title: newTitle } : m,
+            m.id === id ? { ...m, title: newTitle } : m
         );
         const updated = chats.find((c) => c.id === id);
         if (updated && !demoMode)
             saveChat(chatToStored(updated), chatToMeta(updated)).catch(
-                console.error,
+                console.error
             );
     }
 
@@ -633,7 +654,7 @@
         let messages = chat.messages;
         if (messages.length === 0) {
             const full = await loadChat(id);
-            if (full) messages = full.messages;
+            if (full) messages = hydrateStoredMessages(full.messages);
         }
 
         const created = new Date(chat.createdAt);
@@ -679,13 +700,28 @@
         const snap = chats.find((c) => c.id === chatId);
         if (!snap) return;
 
-        const history = snap.messages
+        // Attach fresh upload bytes (if any) inline so the ext can persist
+        // them. Bare refs pass through and get hydrated server-side from the
+        // files store.
+        const pending = snap.pendingBlobs;
+        const hydrateForApi = (
+            attachments: AttachmentRef[] | undefined
+        ): (Attachment | AttachmentRef)[] | undefined => {
+            if (!attachments?.length) return undefined;
+            if (!pending?.size) return attachments;
+            return attachments.map((ref) => pending.get(ref.hash) ?? ref);
+        };
+
+        const history: ChatMessage[] = snap.messages
             .slice(0, -1)
-            .map(({ role, content, attachments }) => ({
-                role,
-                content,
-                ...(attachments ? { attachments } : {}),
-            }));
+            .map(({ role, content, attachments }) => {
+                const atts = hydrateForApi(attachments);
+                return {
+                    role,
+                    content,
+                    ...(atts ? { attachments: atts } : {}),
+                };
+            });
         const apiMessages = snap.systemPrompt.trim()
             ? [
                   { role: 'system' as const, content: snap.systemPrompt },
@@ -694,7 +730,8 @@
             : history;
 
         // What the extension persists at end-of-turn (no system prompt, no
-        // empty placeholder, with thinking preserved).
+        // empty placeholder, with thinking preserved). Refs only — fresh
+        // blobs travel via apiMessages above.
         const historyForSave: StoredChat['messages'] = snap.messages
             .slice(0, -1)
             .map(({ role, content, thinking, attachments }) => ({
@@ -704,9 +741,9 @@
                 ...(attachments ? { attachments } : {}),
             }));
 
-        const modelParams = providers.find(
-            (p) => p.id === snap.providerId,
-        )?.models.find((m) => m.id === snap.modelId)?.params;
+        const modelParams = providers
+            .find((p) => p.id === snap.providerId)
+            ?.models.find((m) => m.id === snap.modelId)?.params;
 
         const updateLast = (mutate: (last: Message) => Message) => {
             chats = chats.map((c) => {
@@ -756,19 +793,17 @@
                 },
                 onDone: (usage) => {
                     finishStream();
-                    if (usage) {
-                        chats = chats.map((c) =>
-                            c.id === chatId
-                                ? {
-                                      ...c,
-                                      tokens: {
-                                          input: usage.inputTokens,
-                                          output: usage.outputTokens,
-                                      },
-                                  }
-                                : c,
-                        );
-                    }
+                    chats = chats.map((c) => {
+                        if (c.id !== chatId) return c;
+                        const next: Chat = { ...c, pendingBlobs: undefined };
+                        if (usage) {
+                            next.tokens = {
+                                input: usage.inputTokens,
+                                output: usage.outputTokens,
+                            };
+                        }
+                        return next;
+                    });
                 },
                 onError: (msg) => {
                     finishStream();
@@ -786,7 +821,7 @@
                             : { ...c, messages: c.messages.slice(0, -1) };
                     });
                 },
-            },
+            }
         );
         streamHandles.set(chatId, handle);
     }
@@ -802,24 +837,29 @@
     function applyRemoteTurnStart(
         chatId: string,
         meta: ChatMeta,
-        history: StoredChat['messages'],
+        history: StoredChat['messages']
     ) {
         // The source tab's local streamingChatIds already contains chatId by
         // the time turn-start arrives — but we filter on sourceTabId at the
         // event boundary, so by the time we reach here we know it's remote.
-        const placeholder: Message = { role: 'assistant', content: '' };
+        const placeholder: Message = {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: '',
+        };
+        const hydratedHistory = hydrateStoredMessages(history);
         const existing = chats.find((c) => c.id === chatId);
         if (existing) {
             chats = chats.map((c) =>
                 c.id === chatId
-                    ? { ...c, messages: [...history, placeholder] }
-                    : c,
+                    ? { ...c, messages: [...hydratedHistory, placeholder] }
+                    : c
             );
         } else {
             const fromUnloaded = unloadedMetas.find((m) => m.id === chatId);
             const newChat: Chat = {
                 ...meta,
-                messages: [...history, placeholder],
+                messages: [...hydratedHistory, placeholder],
             };
             chats = [newChat, ...chats];
             if (fromUnloaded) {
@@ -835,7 +875,7 @@
     function applyRemoteTurnChunk(
         chatId: string,
         kind: 'content' | 'thinking',
-        delta: string,
+        delta: string
     ) {
         if (!remoteStreamingChatIds.includes(chatId)) return;
         chats = chats.map((c) => {
@@ -854,7 +894,7 @@
     async function applyRemoteTurnDone(chatId: string) {
         if (!remoteStreamingChatIds.includes(chatId)) return;
         remoteStreamingChatIds = remoteStreamingChatIds.filter(
-            (id) => id !== chatId,
+            (id) => id !== chatId
         );
         // Refresh from IDB for canonical state — the extension just saved.
         const stored = await loadChat(chatId);
@@ -863,10 +903,10 @@
                 c.id === chatId
                     ? {
                           ...c,
-                          messages: stored.messages,
+                          messages: hydrateStoredMessages(stored.messages),
                           ...(stored.tokens ? { tokens: stored.tokens } : {}),
                       }
-                    : c,
+                    : c
             );
         }
     }
@@ -874,7 +914,7 @@
     async function applyRemoteTurnAborted(chatId: string) {
         if (!remoteStreamingChatIds.includes(chatId)) return;
         remoteStreamingChatIds = remoteStreamingChatIds.filter(
-            (id) => id !== chatId,
+            (id) => id !== chatId
         );
         // Source tab bailed without saving. IDB has the pre-turn state (or
         // nothing if this was the chat's very first turn).
@@ -882,8 +922,11 @@
         if (stored) {
             chats = chats.map((c) =>
                 c.id === chatId
-                    ? { ...c, messages: stored.messages }
-                    : c,
+                    ? {
+                          ...c,
+                          messages: hydrateStoredMessages(stored.messages),
+                      }
+                    : c
             );
         } else {
             chats = chats.filter((c) => c.id !== chatId);
@@ -894,7 +937,7 @@
     async function applyRemoteTurnError(chatId: string, message: string) {
         if (!remoteStreamingChatIds.includes(chatId)) return;
         remoteStreamingChatIds = remoteStreamingChatIds.filter(
-            (id) => id !== chatId,
+            (id) => id !== chatId
         );
         chatErrors = { ...chatErrors, [chatId]: `API Error: ${message}` };
         const stored = await loadChat(chatId);
@@ -903,10 +946,10 @@
                 c.id === chatId
                     ? {
                           ...c,
-                          messages: stored.messages,
+                          messages: hydrateStoredMessages(stored.messages),
                           ...(stored.tokens ? { tokens: stored.tokens } : {}),
                       }
-                    : c,
+                    : c
             );
         }
     }
@@ -943,10 +986,10 @@
             c.id === activeChatId
                 ? {
                       ...c,
-                      messages: stored.messages,
+                      messages: hydrateStoredMessages(stored.messages),
                       ...(stored.tokens ? { tokens: stored.tokens } : {}),
                   }
-                : c,
+                : c
         );
     }
 
@@ -1016,23 +1059,42 @@
             });
         }
 
+        const refs: AttachmentRef[] | undefined = attachments?.length
+            ? attachments.map(({ hash, name, mediaType, sizeBytes }) => ({
+                  hash,
+                  name,
+                  mediaType,
+                  sizeBytes,
+              }))
+            : undefined;
         const userMsg: Message = {
+            id: crypto.randomUUID(),
             role: 'user',
             content,
-            ...(attachments?.length ? { attachments } : {}),
+            ...(refs ? { attachments: refs } : {}),
         };
-        chats = chats.map((c) =>
-            c.id === chatId
-                ? {
-                      ...c,
-                      messages: [
-                          ...c.messages,
-                          userMsg,
-                          { role: 'assistant', content: '' },
-                      ],
-                  }
-                : c,
-        );
+        chats = chats.map((c) => {
+            if (c.id !== chatId) return c;
+            const nextPending = attachments?.length
+                ? new Map(c.pendingBlobs ?? [])
+                : c.pendingBlobs;
+            if (attachments?.length && nextPending) {
+                for (const att of attachments) nextPending.set(att.hash, att);
+            }
+            return {
+                ...c,
+                messages: [
+                    ...c.messages,
+                    userMsg,
+                    {
+                        id: crypto.randomUUID(),
+                        role: 'assistant',
+                        content: '',
+                    },
+                ],
+                ...(nextPending ? { pendingBlobs: nextPending } : {}),
+            };
+        });
 
         streamingChatIds = [...streamingChatIds, chatId];
         clearChatError(chatId);
@@ -1073,10 +1135,14 @@
                       adaptiveThinking,
                       messages: [
                           ...c.messages.slice(0, keepUpTo + 1),
-                          { role: 'assistant', content: '' },
+                          {
+                              id: crypto.randomUUID(),
+                              role: 'assistant',
+                              content: '',
+                          },
                       ],
                   }
-                : c,
+                : c
         );
 
         clearChatError(chatId);
@@ -1123,7 +1189,7 @@
         const updated = chats.find((c) => c.id === chatId);
         if (updated && !demoMode)
             saveChat(chatToStored(updated), chatToMeta(updated)).catch(
-                console.error,
+                console.error
             );
     }
 
@@ -1137,7 +1203,7 @@
         const updated = chats.find((c) => c.id === chatId);
         if (updated && !demoMode)
             saveChat(chatToStored(updated), chatToMeta(updated)).catch(
-                console.error,
+                console.error
             );
     }
 </script>
@@ -1195,6 +1261,7 @@
         {autoscroll}
         loading={chatLoading}
         bind:systemPrompt
+        {providerId}
         {highlightMessageIndex}
         {demoMode}
         onsend={sendMessage}
@@ -1202,6 +1269,7 @@
         onretry={retryMessage}
         onedit={editMessage}
         ondelete={deleteMessage}
+        onclearerror={clearActiveChatError}
         onextensionneeded={requestExtension}
     />
     <ModelConfig
