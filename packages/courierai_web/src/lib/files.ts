@@ -6,10 +6,19 @@ export type FileProviderId = 'anthropic' | 'google' | 'openai' | 'openrouter';
 
 export interface FilePolicy {
     providerId: FileProviderId;
+    maxAttachments: number;
     maxFileBytes: number;
     maxRequestBytes: number;
     mimeTypes: ReadonlySet<string>;
+    maxAudioAttachments?: number;
+    maxVideoAttachments?: number;
 }
+
+export interface FilePolicyModel {
+    inputModalities?: readonly string[];
+}
+
+const EMPTY_MIME_TYPES = new Set<string>();
 
 const OPENAI_MIME_TYPES = new Set([
     'application/csv',
@@ -185,30 +194,141 @@ const GOOGLE_MIME_TYPES = new Set([
     'video/x-flv',
 ]);
 
+const OPENROUTER_MIME_TYPES_BY_MODALITY: Record<string, readonly string[]> = {
+    image: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'],
+    file: ['application/pdf', 'text/plain'],
+    audio: ['audio/wav', 'audio/mp3', 'audio/aac'],
+    video: ['video/mp4', 'video/mpeg', 'video/mov', 'video/webm'],
+};
+
+const ACCEPT_EXTENSIONS_BY_PROVIDER: Record<
+    Exclude<FileProviderId, 'openrouter'>,
+    readonly string[]
+> = {
+    anthropic: [
+        '.gif',
+        '.jpeg',
+        '.jpg',
+        '.md',
+        '.pdf',
+        '.png',
+        '.txt',
+        '.webp',
+    ],
+    google: [
+        '.3gp',
+        '.3gpp',
+        '.aac',
+        '.aif',
+        '.aiff',
+        '.avi',
+        '.css',
+        '.csv',
+        '.flac',
+        '.flv',
+        '.heic',
+        '.heif',
+        '.htm',
+        '.html',
+        '.jpeg',
+        '.jpg',
+        '.js',
+        '.md',
+        '.mov',
+        '.mp3',
+        '.mp4',
+        '.mpeg',
+        '.mpg',
+        '.ogg',
+        '.pdf',
+        '.png',
+        '.rtf',
+        '.txt',
+        '.wav',
+        '.webm',
+        '.webp',
+        '.wmv',
+        '.xml',
+    ],
+    openai: [
+        '.c',
+        '.cpp',
+        '.cs',
+        '.css',
+        '.csv',
+        '.doc',
+        '.docx',
+        '.gif',
+        '.go',
+        '.html',
+        '.java',
+        '.jpeg',
+        '.jpg',
+        '.js',
+        '.json',
+        '.jsonl',
+        '.md',
+        '.pdf',
+        '.php',
+        '.png',
+        '.ppt',
+        '.pptx',
+        '.py',
+        '.rb',
+        '.rtf',
+        '.sh',
+        '.tex',
+        '.ts',
+        '.txt',
+        '.webp',
+        '.xls',
+        '.xlsx',
+        '.xml',
+    ],
+};
+
+const OPENROUTER_ACCEPT_EXTENSIONS_BY_MODALITY: Record<
+    string,
+    readonly string[]
+> = {
+    audio: ['.aac', '.mp3', '.wav'],
+    file: ['.md', '.pdf', '.txt'],
+    image: ['.gif', '.jpeg', '.jpg', '.png', '.webp'],
+    video: ['.mov', '.mp4', '.mpeg', '.webm'],
+};
+
 export const FILE_POLICIES: Record<FileProviderId, FilePolicy> = {
     anthropic: {
         providerId: 'anthropic',
+        maxAttachments: 100,
         maxFileBytes: 32 * MB,
         maxRequestBytes: 32 * MB,
         mimeTypes: ANTHROPIC_MIME_TYPES,
     },
     google: {
         providerId: 'google',
+        maxAttachments: 100,
         maxFileBytes: 50 * MB,
         maxRequestBytes: 100 * MB,
         mimeTypes: GOOGLE_MIME_TYPES,
+        maxAudioAttachments: 1,
+        maxVideoAttachments: 10,
     },
     openai: {
         providerId: 'openai',
+        maxAttachments: 20,
         maxFileBytes: 50 * MB,
         maxRequestBytes: 50 * MB,
         mimeTypes: OPENAI_MIME_TYPES,
     },
+    // OpenRouter MIME support is model-specific. This starts empty and is
+    // populated from the selected model's input modalities at runtime.
     openrouter: {
         providerId: 'openrouter',
-        maxFileBytes: 50 * MB,
-        maxRequestBytes: 50 * MB,
-        mimeTypes: OPENAI_MIME_TYPES,
+        maxAttachments: 8,
+        maxFileBytes: 32 * MB,
+        maxRequestBytes: 32 * MB,
+        mimeTypes: EMPTY_MIME_TYPES,
     },
 };
 
@@ -284,6 +404,7 @@ const MIME_BY_EXTENSION: Record<string, string> = {
     '.jpg': 'image/jpeg',
     '.js': 'text/javascript',
     '.json': 'application/json',
+    '.jsonl': 'application/x-ndjson',
     '.json5': 'application/json5',
     '.jsx': 'text/jsx',
     '.key': 'application/vnd.apple.keynote',
@@ -302,7 +423,7 @@ const MIME_BY_EXTENSION: Record<string, string> = {
     '.mhtml': 'message/rfc822',
     '.mime': 'message/rfc822',
     '.mjs': 'text/javascript',
-    '.mov': 'video/quicktime',
+    '.mov': 'video/mov',
     '.mp3': 'audio/mp3',
     '.mp4': 'video/mp4',
     '.mpeg': 'video/mpeg',
@@ -386,30 +507,95 @@ function toProviderId(providerId: string): FileProviderId {
         : 'anthropic';
 }
 
-export function getFilePolicy(providerId: string): FilePolicy {
-    return FILE_POLICIES[toProviderId(providerId)];
+function getOpenRouterMimeTypes(model?: FilePolicyModel | null): Set<string> {
+    const mimeTypes = new Set<string>();
+    for (const modality of model?.inputModalities ?? []) {
+        const supported = OPENROUTER_MIME_TYPES_BY_MODALITY[modality];
+        if (!supported) continue;
+        for (const mimeType of supported) mimeTypes.add(mimeType);
+    }
+    return mimeTypes;
+}
+
+export function getFilePolicy(
+    providerId: string,
+    model?: FilePolicyModel | null
+): FilePolicy {
+    const id = toProviderId(providerId);
+    if (id !== 'openrouter') return FILE_POLICIES[id];
+
+    return {
+        ...FILE_POLICIES.openrouter,
+        mimeTypes: getOpenRouterMimeTypes(model),
+    };
 }
 
 export function getMimeTypeFromFilename(filename: string): string | null {
-    const dot = filename.lastIndexOf('.');
-    if (dot < 0) return null;
-    const ext = filename.slice(dot).toLowerCase();
-    return MIME_BY_EXTENSION[ext] ?? null;
+    const ext = getExtensionFromFilename(filename);
+    return ext ? (MIME_BY_EXTENSION[ext] ?? null) : null;
 }
 
-export function getAcceptForProvider(providerId: string): string {
+function getExtensionFromFilename(filename: string): string | null {
+    const dot = filename.lastIndexOf('.');
+    if (dot < 0) return null;
+    return filename.slice(dot).toLowerCase();
+}
+
+function getAcceptForOpenRouterModel(
+    model?: FilePolicyModel | null
+): readonly string[] {
+    const extensions = new Set<string>();
+    for (const modality of model?.inputModalities ?? []) {
+        const supported = OPENROUTER_ACCEPT_EXTENSIONS_BY_MODALITY[modality];
+        if (!supported) continue;
+        for (const extension of supported) extensions.add(extension);
+    }
+    return Array.from(extensions);
+}
+
+function toAcceptString(extensions: readonly string[]): string {
+    return Array.from(new Set(extensions)).sort().join(',');
+}
+
+export function getAcceptForProvider(
+    providerId: string,
+    model?: FilePolicyModel | null
+): string {
     const id = toProviderId(providerId);
+    if (id === 'openrouter') {
+        return toAcceptString(getAcceptForOpenRouterModel(model));
+    }
+
     const cached = ACCEPT_BY_PROVIDER.get(id);
     if (cached) return cached;
 
-    const policy = getFilePolicy(id);
-    const extensions = Object.entries(MIME_BY_EXTENSION)
-        .filter(([, mimeType]) => policy.mimeTypes.has(mimeType))
-        .map(([extension]) => extension)
-        .sort();
-    const accept = extensions.join(',');
+    const accept = toAcceptString(ACCEPT_EXTENSIONS_BY_PROVIDER[id]);
     ACCEPT_BY_PROVIDER.set(id, accept);
     return accept;
+}
+
+function normalizeBrowserMimeType(mimeType: string): string | null {
+    const normalized = mimeType.split(';', 1)[0]?.trim().toLowerCase();
+    return normalized || null;
+}
+
+export function resolveFileMediaType(
+    file: Pick<File, 'name' | 'type'>,
+    providerId: string,
+    model?: FilePolicyModel | null
+): string | null {
+    const policy = getFilePolicy(providerId, model);
+    const extensionMimeType = getMimeTypeFromFilename(file.name);
+    if (extensionMimeType && policy.mimeTypes.has(extensionMimeType)) {
+        return extensionMimeType;
+    }
+
+    const browserMimeType = normalizeBrowserMimeType(file.type);
+    if (browserMimeType && policy.mimeTypes.has(browserMimeType)) {
+        return browserMimeType;
+    }
+
+    return null;
 }
 
 export async function hashBytes(bytes: ArrayBuffer): Promise<string> {
@@ -432,10 +618,20 @@ export function formatFileSize(bytes: number): string {
 
 export function validateReadyAttachments(
     attachments: Attachment[],
-    providerId: string
+    providerId: string,
+    model?: FilePolicyModel | null
 ): { ok: true } | { ok: false; message: string } {
-    const policy = getFilePolicy(providerId);
+    const policy = getFilePolicy(providerId, model);
+    if (attachments.length > policy.maxAttachments) {
+        return {
+            ok: false,
+            message: `Only ${policy.maxAttachments} files can be attached for this provider.`,
+        };
+    }
+
     let total = 0;
+    let audioCount = 0;
+    let videoCount = 0;
 
     for (const attachment of attachments) {
         if (!policy.mimeTypes.has(attachment.mediaType)) {
@@ -450,7 +646,29 @@ export function validateReadyAttachments(
                 message: `${attachment.name} is too large after encoding. Limit: ${formatFileSize(policy.maxFileBytes)}.`,
             };
         }
+        if (attachment.mediaType.startsWith('audio/')) audioCount++;
+        if (attachment.mediaType.startsWith('video/')) videoCount++;
         total += attachment.encodedSizeBytes;
+    }
+
+    if (
+        policy.maxAudioAttachments !== undefined &&
+        audioCount > policy.maxAudioAttachments
+    ) {
+        return {
+            ok: false,
+            message: `Only ${policy.maxAudioAttachments} audio file can be attached for this provider.`,
+        };
+    }
+
+    if (
+        policy.maxVideoAttachments !== undefined &&
+        videoCount > policy.maxVideoAttachments
+    ) {
+        return {
+            ok: false,
+            message: `Only ${policy.maxVideoAttachments} video files can be attached for this provider.`,
+        };
     }
 
     if (total > policy.maxRequestBytes) {

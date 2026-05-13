@@ -27,6 +27,9 @@ export interface ModelOption {
     id: string;
     name: string;
     params: ModelParams;
+    // OpenRouter models preserve catalog input modalities so upload support
+    // can be computed per selected upstream model.
+    inputModalities?: string[];
     // Marketplace providers (OpenRouter) attach the upstream vendor for
     // grouping in the picker — undefined for first-party providers.
     vendor?: string;

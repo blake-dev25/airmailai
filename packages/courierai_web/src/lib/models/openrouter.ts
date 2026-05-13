@@ -21,6 +21,7 @@ function rawToOption(m: OpenRouterModel): ModelOption {
     return {
         id: m.id,
         name: m.name,
+        inputModalities: m.inputModalities,
         vendor: m.vendor,
         params: {
             contextWindow: m.contextWindow,

@@ -1,12 +1,13 @@
 <script lang="ts">
     import type { Attachment } from '@courier/shared';
     import { tick, untrack } from 'svelte';
+    import type { ModelOption } from './constants';
     import {
         formatFileSize,
         getAcceptForProvider,
         getFilePolicy,
-        getMimeTypeFromFilename,
         hashBytes,
+        resolveFileMediaType,
         validateReadyAttachments,
     } from './files';
     import Icon from './Icon.svelte';
@@ -26,6 +27,7 @@
         autoscroll = false,
         systemPrompt = $bindable(),
         providerId,
+        model = null,
         highlightMessageIndex = null,
         demoMode = false,
         onsend,
@@ -54,6 +56,7 @@
         autoscroll?: boolean;
         systemPrompt: string;
         providerId: string;
+        model?: ModelOption | null;
         highlightMessageIndex?: number | null;
         demoMode?: boolean;
         onsend: (content: string, attachments?: Attachment[]) => void;
@@ -81,17 +84,28 @@
         Array<{ id: string; name: string; progress: number }>
     >([]);
     let fileErrors = $state<string[]>([]);
-    let lastProviderId: string | null = null;
+    let lastFilePolicyKey: string | null = null;
     let hoveredMessageId = $state<string | null>(null);
     let hoverHideTimer: ReturnType<typeof setTimeout> | null = null;
     let editingMessageId = $state<string | null>(null);
     let editingText = $state('');
     let editingDims = $state<{ w: number; h: number } | null>(null);
 
-    const MAX_ATTACHMENTS = 20;
     let uploadGeneration = 0;
-    let filePolicy = $derived(getFilePolicy(providerId));
-    let fileAccept = $derived(getAcceptForProvider(providerId));
+    let filePolicy = $derived(getFilePolicy(providerId, model));
+    let filePolicyKey = $derived(
+        [
+            filePolicy.providerId,
+            filePolicy.maxAttachments,
+            filePolicy.maxFileBytes,
+            filePolicy.maxRequestBytes,
+            filePolicy.maxAudioAttachments ?? '',
+            filePolicy.maxVideoAttachments ?? '',
+            ...Array.from(filePolicy.mimeTypes).sort(),
+        ].join(':')
+    );
+    let fileAccept = $derived(getAcceptForProvider(providerId, model));
+    let canAttachFiles = $derived(filePolicy.mimeTypes.size > 0);
     let attachmentTotalBytes = $derived(
         pendingAttachments.reduce(
             (total, attachment) => total + attachment.encodedSizeBytes,
@@ -161,19 +175,24 @@
     });
 
     $effect(() => {
-        if (lastProviderId === null) {
-            lastProviderId = providerId;
+        const policyKey = filePolicyKey;
+        if (lastFilePolicyKey === null) {
+            lastFilePolicyKey = policyKey;
             return;
         }
-        if (lastProviderId === providerId) return;
-        lastProviderId = providerId;
+        if (lastFilePolicyKey === policyKey) return;
+        lastFilePolicyKey = policyKey;
         uploadGeneration++;
         processingAttachments = [];
 
         const attachments = untrack(() => pendingAttachments);
         if (!attachments.length) return;
 
-        const validation = validateReadyAttachments(attachments, providerId);
+        const validation = validateReadyAttachments(
+            attachments,
+            providerId,
+            model
+        );
         if (validation.ok) return;
 
         pendingAttachments = [];
@@ -229,7 +248,8 @@
 
         const fileValidation = validateReadyAttachments(
             pendingAttachments,
-            providerId
+            providerId,
+            model
         );
         if (!fileValidation.ok) {
             fileErrors = [
@@ -299,16 +319,21 @@
         file: File,
         id: string,
         uploadProviderId: string,
+        uploadModel: ModelOption | null,
         generation: number
     ) {
         const isCurrent = () => generation === uploadGeneration;
-        const policy = getFilePolicy(uploadProviderId);
+        const policy = getFilePolicy(uploadProviderId, uploadModel);
 
         try {
             setProcessingProgress(id, 12);
-            const mediaType = getMimeTypeFromFilename(file.name);
+            const mediaType = resolveFileMediaType(
+                file,
+                uploadProviderId,
+                uploadModel
+            );
             if (!mediaType) {
-                addFileError(`${file.name} has no supported file extension.`);
+                addFileError(`${file.name} is not supported by this provider.`);
                 removeProcessingAttachment(id);
                 return;
             }
@@ -352,32 +377,31 @@
             }
 
             setProcessingProgress(id, 86);
-            const currentTotal = untrack(() =>
-                pendingAttachments.reduce(
-                    (total, attachment) => total + attachment.encodedSizeBytes,
-                    0
-                )
+            const attachment: Attachment = {
+                hash,
+                name: file.name,
+                mediaType,
+                sizeBytes: file.size,
+                encodedSizeBytes,
+                data,
+            };
+            const nextAttachments = [
+                ...untrack(() => pendingAttachments),
+                attachment,
+            ];
+            const validation = validateReadyAttachments(
+                nextAttachments,
+                uploadProviderId,
+                uploadModel
             );
-            if (currentTotal + encodedSizeBytes > policy.maxRequestBytes) {
-                addFileError(
-                    `${file.name} would exceed the request file limit (${formatFileSize(policy.maxRequestBytes)}).`
-                );
+            if (!validation.ok) {
+                addFileError(validation.message);
                 removeProcessingAttachment(id);
                 return;
             }
 
             setProcessingProgress(id, 100);
-            pendingAttachments = [
-                ...untrack(() => pendingAttachments),
-                {
-                    hash,
-                    name: file.name,
-                    mediaType,
-                    sizeBytes: file.size,
-                    encodedSizeBytes,
-                    data,
-                },
-            ];
+            pendingAttachments = nextAttachments;
             removeProcessingAttachment(id);
         } catch (error) {
             if (!isCurrent()) return;
@@ -398,15 +422,21 @@
 
         fileErrors = [];
         const uploadProviderId = providerId;
+        const uploadModel = model;
+        const uploadPolicy = getFilePolicy(uploadProviderId, uploadModel);
         const generation = uploadGeneration;
-        const slots =
-            MAX_ATTACHMENTS -
-            pendingAttachments.length -
-            processingAttachments.length;
+        const slots = Math.max(
+            0,
+            uploadPolicy.maxAttachments -
+                pendingAttachments.length -
+                processingAttachments.length
+        );
         const toAdd = files.slice(0, slots);
 
         if (toAdd.length < files.length) {
-            addFileError(`Only ${MAX_ATTACHMENTS} files can be attached.`);
+            addFileError(
+                `Only ${uploadPolicy.maxAttachments} files can be attached for this provider.`
+            );
         }
 
         for (const file of toAdd) {
@@ -415,7 +445,13 @@
                 ...processingAttachments,
                 { id, name: file.name, progress: 0 },
             ];
-            void processFile(file, id, uploadProviderId, generation);
+            void processFile(
+                file,
+                id,
+                uploadProviderId,
+                uploadModel,
+                generation
+            );
         }
     }
 
@@ -718,8 +754,9 @@
                 class="{sendStyleBase} bg-surface-sunken text-fg border! border-border! enabled:hover:bg-border disabled:opacity-[0.35] disabled:cursor-not-allowed"
                 onclick={openFilePicker}
                 disabled={isStreaming ||
+                    !canAttachFiles ||
                     pendingAttachments.length + processingAttachments.length >=
-                        MAX_ATTACHMENTS}
+                        filePolicy.maxAttachments}
                 aria-label="Attach file"
             >
                 <Icon name="plus" />

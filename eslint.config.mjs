@@ -33,9 +33,8 @@ export default defineConfig(
             sourceType: 'module',
             globals: {
                 ...globals.browser,
-                ...(globals.webextensions ?? {}),
+                ...globals.webextensions,
                 ...globals.node,
-                ...(globals.bun ?? {}),
                 __APP_VERSION__: 'readonly',
                 __LEGAL_VERSION__: 'readonly',
             },
@@ -62,12 +61,17 @@ export default defineConfig(
                 },
             ],
             'no-empty': ['error', { allowEmptyCatch: true }],
+            // Off: we use plain Map/Set as handle registries and transient
+            // builders inside $derived. Reactivity is via assignment to $state,
+            // not via SvelteMap/SvelteSet.
             'svelte/prefer-svelte-reactivity': 'off',
         },
     },
     {
         files: ['**/*.svelte'],
         rules: {
+            // Svelte 5 reactivity tracks bare references inside $effect /
+            // $derived.by (e.g. `html;` to register it as a dependency).
             '@typescript-eslint/no-unused-expressions': 'off',
         },
     }

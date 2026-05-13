@@ -14,7 +14,6 @@
         providers,
         modelTier,
         initialized,
-        openRouterFreeModels,
         providerId = $bindable(),
         modelId = $bindable(),
         temperature = $bindable(),
@@ -26,7 +25,6 @@
         providers: ProviderOption[];
         modelTier: ModelTier;
         initialized: boolean;
-        openRouterFreeModels: 'show' | 'only' | 'hide';
         providerId: string;
         modelId: string;
         temperature: number;
@@ -80,16 +78,10 @@
             // from the same vendor's non-premier catalog.
             const formatVendor = (v: string) =>
                 v.startsWith('~') ? `★ ${v.slice(1)}` : v;
-            const source =
-                openRouterFreeModels === 'only'
-                    ? provider.models.filter((m) => m.id.endsWith(':free'))
-                    : openRouterFreeModels === 'hide'
-                      ? provider.models.filter((m) => !m.id.endsWith(':free'))
-                      : provider.models;
             const groups: Array<{ label: string; models: ModelOption[] }> = [];
             let currentVendor: string | null = null;
             let bucket: ModelOption[] = [];
-            for (const m of source) {
+            for (const m of provider.models) {
                 const v = m.vendor ?? 'other';
                 if (v !== currentVendor) {
                     if (bucket.length)

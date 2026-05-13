@@ -113,7 +113,6 @@ export interface UserSettings {
     thinkingLevel: string;
     adaptiveThinking: boolean;
     tagOpenRouterRequests: boolean;
-    openRouterFreeModels: 'show' | 'only' | 'hide';
     syncApiKeys: boolean;
     // Content hash of the last accepted ToS/Privacy pair. Empty/missing = never agreed.
     legalAcceptedVersion: string;
@@ -136,7 +135,6 @@ const SETTINGS_KEY_MAP: { [K in keyof UserSettings]: 0 } = {
     thinkingLevel: 0,
     adaptiveThinking: 0,
     tagOpenRouterRequests: 0,
-    openRouterFreeModels: 0,
     syncApiKeys: 0,
     legalAcceptedVersion: 0,
 };

@@ -8,10 +8,10 @@ const FRESH_MS = 24 * 60 * 60 * 1000;
 // On fetch error we set a cooldown so successive picker opens can't hammer
 // openrouter.ai. Stale cache (if any) keeps serving in the meantime.
 const ERROR_COOLDOWN_MS = 5 * 60 * 1000;
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 
 export const CACHE_KEY = 'openrouter_models_cache';
-const URL = 'https://openrouter.ai/api/v1/models';
+const URL = 'https://openrouter.ai/api/v1/models/user';
 
 interface CacheEntry {
     version: number;

@@ -24,7 +24,6 @@
         modelTier = $bindable(),
         autoscroll = $bindable(),
         tagOpenRouterRequests = $bindable(),
-        openRouterFreeModels = $bindable(),
         syncApiKeys = $bindable(),
         onnewchat,
         onselectchat,
@@ -60,7 +59,6 @@
         modelTier: ModelTier;
         autoscroll: boolean;
         tagOpenRouterRequests: boolean;
-        openRouterFreeModels: 'show' | 'only' | 'hide';
         syncApiKeys: boolean;
         onnewchat: () => void;
         onselectchat: (id: string, matchIndex?: number | null) => void;
@@ -507,7 +505,6 @@
         bind:modelTier
         bind:autoscroll
         bind:tagOpenRouterRequests
-        bind:openRouterFreeModels
         bind:syncApiKeys
         onclose={() => (showSettings = false)}
         {onapikeysaved}

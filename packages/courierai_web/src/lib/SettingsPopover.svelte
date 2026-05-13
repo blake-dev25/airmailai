@@ -18,7 +18,6 @@
         modelTier = $bindable(),
         autoscroll = $bindable(),
         tagOpenRouterRequests = $bindable(),
-        openRouterFreeModels = $bindable(),
         syncApiKeys = $bindable(),
         onclose,
         onapikeysaved,
@@ -36,7 +35,6 @@
         modelTier: ModelTier;
         autoscroll: boolean;
         tagOpenRouterRequests: boolean;
-        openRouterFreeModels: 'show' | 'only' | 'hide';
         syncApiKeys: boolean;
         onclose: () => void;
         onapikeysaved: (providerId: string) => void;
@@ -444,20 +442,6 @@
                     class={checkboxClass}
                     bind:checked={tagOpenRouterRequests}
                 />
-            </div>
-            <div class={[rowBase, themeRow]}>
-                <label for="openrouter-free-models" class={labelClass}
-                    >OpenRouter Model Selection</label
-                >
-                <select
-                    id="openrouter-free-models"
-                    class={selectClass}
-                    bind:value={openRouterFreeModels}
-                >
-                    <option value="show">Show free models</option>
-                    <option value="only">Only show free models</option>
-                    <option value="hide">Hide free models</option>
-                </select>
             </div>
         </div>
 

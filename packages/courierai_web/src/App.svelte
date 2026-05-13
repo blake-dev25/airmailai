@@ -85,8 +85,6 @@
     let autoscroll = $state(false);
     // Tag OpenRouter requests with appTitle/httpReferer for app tracking
     let tagOpenRouterRequests = $state(false);
-    // OpenRouter free-model handling: show all, only free, or hide free
-    let openRouterFreeModels = $state<'show' | 'only' | 'hide'>('show');
     // API keys stay on this device unless the user opts into browser-account sync.
     let syncApiKeys = $state(false);
     // Hash of the ToS/Privacy pair the user last accepted; empty = never agreed.
@@ -149,6 +147,11 @@
     );
     let activeTokens = $derived(
         chats.find((c) => c.id === activeChatId)?.tokens ?? null
+    );
+    let selectedModel = $derived(
+        providers
+            .find((p) => p.id === providerId)
+            ?.models.find((m) => m.id === modelId) ?? null
     );
 
     // When the user changes tier and the active model is no longer in the
@@ -283,9 +286,6 @@
             },
             tagOpenRouterRequests: (v) => {
                 tagOpenRouterRequests = v;
-            },
-            openRouterFreeModels: (v) => {
-                openRouterFreeModels = v;
             },
             syncApiKeys: (v) => {
                 syncApiKeys = v;
@@ -438,7 +438,6 @@
             modelId,
             adaptiveThinking,
             tagOpenRouterRequests,
-            openRouterFreeModels,
             syncApiKeys,
         };
         if (!shouldSaveSettings()) return;
@@ -1236,7 +1235,6 @@
         bind:modelTier
         bind:autoscroll
         bind:tagOpenRouterRequests
-        bind:openRouterFreeModels
         bind:syncApiKeys
         onnewchat={newChat}
         onselectchat={selectChat}
@@ -1262,6 +1260,7 @@
         loading={chatLoading}
         bind:systemPrompt
         {providerId}
+        model={selectedModel}
         {highlightMessageIndex}
         {demoMode}
         onsend={sendMessage}
@@ -1276,7 +1275,6 @@
         {providers}
         {modelTier}
         {initialized}
-        {openRouterFreeModels}
         bind:providerId
         bind:modelId
         bind:temperature
