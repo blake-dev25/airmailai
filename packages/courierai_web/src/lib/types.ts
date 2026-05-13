@@ -23,6 +23,7 @@ export interface Chat {
     maxTokens: number;
     thinkingLevel: string;
     adaptiveThinking: boolean;
+    webSearch: boolean;
     tokens?: { input: number; output: number };
     // Fresh upload bytes that haven't yet been persisted by the ext, keyed by
     // hash. Populated on send and consumed by streamForChat to inline data

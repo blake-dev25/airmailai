@@ -8,9 +8,11 @@ import {
     GoogleGenAI,
     type Part,
     type ThinkingConfig,
+    type Tool,
     ThinkingLevel,
 } from '@google/genai';
 import { DEBUG_API_LOGGING } from '../debug';
+import { formatSources, type SourceLink } from './sources';
 
 const LOG = '[courier:ext]';
 
@@ -71,6 +73,41 @@ function buildThinkingConfig(
     };
 }
 
+function collectGoogleSources(chunk: unknown): SourceLink[] {
+    if (!chunk || typeof chunk !== 'object') return [];
+    const candidates = (chunk as { candidates?: unknown }).candidates;
+    if (!Array.isArray(candidates)) return [];
+
+    const sources: SourceLink[] = [];
+    for (const candidate of candidates) {
+        if (!candidate || typeof candidate !== 'object') continue;
+        const metadata = (candidate as { groundingMetadata?: unknown })
+            .groundingMetadata;
+        if (!metadata || typeof metadata !== 'object') continue;
+        const groundingChunks = (metadata as { groundingChunks?: unknown })
+            .groundingChunks;
+        if (!Array.isArray(groundingChunks)) continue;
+
+        for (const groundingChunk of groundingChunks) {
+            if (!groundingChunk || typeof groundingChunk !== 'object') continue;
+            const web = (groundingChunk as { web?: unknown }).web;
+            if (!web || typeof web !== 'object') continue;
+            const source = web as { title?: unknown; uri?: unknown };
+            if (typeof source.uri === 'string') {
+                sources.push({
+                    url: source.uri,
+                    title:
+                        typeof source.title === 'string'
+                            ? source.title
+                            : undefined,
+                });
+            }
+        }
+    }
+
+    return sources;
+}
+
 export async function streamGoogle(
     apiKey: string,
     model: string,
@@ -92,6 +129,9 @@ export async function streamGoogle(
         thinkingLevel,
         wantsThoughts
     );
+    const webSearchTools: Tool[] | undefined = params.webSearch
+        ? [{ googleSearch: {} }]
+        : undefined;
 
     console.log(LOG, 'google: stream start', {
         model,
@@ -111,14 +151,17 @@ export async function streamGoogle(
                     ? { temperature: params.temperature as number }
                     : {}),
                 ...(thinkingCfg ? { thinkingConfig: thinkingCfg } : {}),
+                ...(webSearchTools ? { tools: webSearchTools } : {}),
                 ...(signal ? { abortSignal: signal } : {}),
             },
         });
 
         let firstChunk = true;
         let lastUsage: StreamUsage | undefined;
+        const sources: SourceLink[] = [];
 
         for await (const chunk of stream) {
+            sources.push(...collectGoogleSources(chunk));
             for (const part of chunk.candidates?.[0]?.content?.parts ?? []) {
                 if (part.thought && part.text) {
                     handlers.onThinking?.(part.text);
@@ -140,6 +183,8 @@ export async function streamGoogle(
             }
         }
 
+        const sourceChunk = formatSources(sources);
+        if (sourceChunk) handlers.onChunk(sourceChunk);
         console.log(LOG, 'google: stream done');
         if (DEBUG_API_LOGGING) {
             console.log(LOG, '[debug] usage', lastUsage);

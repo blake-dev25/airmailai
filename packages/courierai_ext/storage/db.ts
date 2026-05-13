@@ -1,7 +1,7 @@
 import type { AttachmentRef, ChatMeta, StoredChat } from '@courier/shared';
 
 const DB_NAME = 'courier_ai';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const LOG = '[courier:ext]';
 
 const STORE_MESSAGES = 'chat_messages';

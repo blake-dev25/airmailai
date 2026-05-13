@@ -1,5 +1,6 @@
 import type {
     BroadcastEvent,
+    BroadcastRequest,
     ChatMeta,
     ExtensionResponse,
     OpenRouterModel,
@@ -23,6 +24,10 @@ export interface StreamHandle {
 export const tabId = crypto.randomUUID();
 
 const LOG = '[courier:web]';
+// Cadence for the broadcast-port heartbeat. Comfortably inside Chrome's 30s
+// SW idle timer so any tab being open keeps the worker warm — no separate
+// per-stream keepalive needed.
+const KEEPALIVE_MS = 20_000;
 
 // The content script runs at document_start and writes
 // `document.documentElement.dataset.courieraiExtId` before any page script
@@ -190,6 +195,7 @@ export function sendToExtension(
 
     let done = false;
     let stopped = false;
+    let aborted = false;
     let firstChunk = true;
     const port = chrome.runtime.connect(extensionId);
 
@@ -216,19 +222,20 @@ export function sendToExtension(
             case 'error':
                 done = true;
                 console.error(LOG, '← stream error', response.message);
-                handlers.onError(response.message);
+                handlers.onError(response.message, 'api');
                 port.disconnect();
                 break;
         }
     });
 
     port.onDisconnect.addListener(() => {
-        if (!done) {
+        if (!done && !aborted) {
+            done = true;
             const msg =
                 chrome.runtime.lastError?.message ??
                 'Extension disconnected unexpectedly.';
             console.error(LOG, '✗ unexpected port disconnect', msg);
-            handlers.onError(msg);
+            handlers.onError(msg, 'extension');
         }
     });
 
@@ -236,7 +243,10 @@ export function sendToExtension(
 
     return {
         abort: () => {
-            if (!done) port.disconnect();
+            if (!done) {
+                aborted = true;
+                port.disconnect();
+            }
         },
         stop: (truncatedContent: string) => {
             if (done || stopped) return;
@@ -262,7 +272,14 @@ export function subscribeToBroadcast(handlers: {
     let port: chrome.runtime.Port | null = null;
     let unsubscribed = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
     let everConnected = false;
+
+    const clearKeepalive = () => {
+        if (keepaliveTimer === null) return;
+        clearInterval(keepaliveTimer);
+        keepaliveTimer = null;
+    };
 
     function connect() {
         if (unsubscribed) return;
@@ -290,8 +307,22 @@ export function subscribeToBroadcast(handlers: {
         port.onDisconnect.addListener(() => {
             console.log(LOG, 'broadcast: disconnected, reconnecting in 1s');
             port = null;
+            clearKeepalive();
             if (!unsubscribed) reconnectTimer = setTimeout(connect, 1000);
         });
+
+        // Heartbeat: keeps the SW's 30s idle timer reset for as long as this
+        // tab is open, so storage ops and new turns hit a warm worker.
+        keepaliveTimer = setInterval(() => {
+            if (!port) return;
+            try {
+                const msg: BroadcastRequest = { type: 'keepalive' };
+                port.postMessage(msg);
+            } catch (err) {
+                console.warn(LOG, 'broadcast keepalive failed', err);
+                clearKeepalive();
+            }
+        }, KEEPALIVE_MS);
     }
 
     connect();
@@ -300,6 +331,7 @@ export function subscribeToBroadcast(handlers: {
         unsubscribe: () => {
             unsubscribed = true;
             if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+            clearKeepalive();
             if (port) port.disconnect();
         },
     };

@@ -5,6 +5,7 @@
         BroadcastEvent,
         ChatMessage,
         ChatMeta,
+        StreamErrorSource,
         StoredChat,
         UserSettings,
     } from '@courier/shared';
@@ -51,6 +52,13 @@
     const INITIAL_PAGE_SIZE = 40;
     const LOAD_MORE_PAGE_SIZE = 15;
 
+    function formatStreamError(
+        message: string,
+        source: StreamErrorSource = 'api'
+    ): string {
+        return `${source === 'extension' ? 'Extension' : 'API'} Error: ${message}`;
+    }
+
     // Theme
     let theme = $state('airmail-warm');
     $effect(() => {
@@ -83,6 +91,8 @@
     let modelTier = $state<ModelTier>('latest');
     // Autoscroll — scroll to the bottom as text streams in
     let autoscroll = $state(false);
+    // Global kill switch for provider-hosted web search.
+    let enableWebSearch = $state(false);
     // Tag OpenRouter requests with appTitle/httpReferer for app tracking
     let tagOpenRouterRequests = $state(false);
     // API keys stay on this device unless the user opts into browser-account sync.
@@ -108,6 +118,7 @@
     let adaptiveThinking = $state<boolean>(
         defaultModel.params.thinking?.adaptive !== undefined
     );
+    let webSearch = $state(false);
     let systemPrompt = $state('');
 
     // Chats
@@ -266,6 +277,9 @@
             autoscroll: (v) => {
                 autoscroll = v;
             },
+            enableWebSearch: (v) => {
+                enableWebSearch = v;
+            },
             providerId: (v) => {
                 providerId = v;
             },
@@ -283,6 +297,9 @@
             },
             adaptiveThinking: (v) => {
                 adaptiveThinking = v;
+            },
+            webSearch: (v) => {
+                webSearch = v;
             },
             tagOpenRouterRequests: (v) => {
                 tagOpenRouterRequests = v;
@@ -434,9 +451,11 @@
             submitKeystroke,
             modelTier,
             autoscroll,
+            enableWebSearch,
             providerId,
             modelId,
             adaptiveThinking,
+            webSearch,
             tagOpenRouterRequests,
             syncApiKeys,
         };
@@ -493,6 +512,7 @@
             maxTokens: chat.maxTokens,
             thinkingLevel: chat.thinkingLevel,
             adaptiveThinking: chat.adaptiveThinking,
+            webSearch: chat.webSearch,
             systemPrompt: chat.systemPrompt,
         };
     }
@@ -507,6 +527,7 @@
             maxTokens,
             thinkingLevel,
             adaptiveThinking,
+            webSearch,
         });
         chats = demoChats;
         unloadedMetas = [];
@@ -556,6 +577,7 @@
                 maxTokens,
                 thinkingLevel,
                 adaptiveThinking,
+                webSearch,
             },
             ...chats,
         ];
@@ -576,6 +598,7 @@
             maxTokens = loaded.maxTokens;
             thinkingLevel = loaded.thinkingLevel;
             adaptiveThinking = loaded.adaptiveThinking ?? true;
+            webSearch = loaded.webSearch ?? false;
             systemPrompt = loaded.systemPrompt;
             return;
         }
@@ -588,6 +611,7 @@
         maxTokens = meta.maxTokens;
         thinkingLevel = meta.thinkingLevel;
         adaptiveThinking = meta.adaptiveThinking ?? true;
+        webSearch = meta.webSearch ?? false;
         systemPrompt = meta.systemPrompt;
 
         chatLoading = true;
@@ -772,6 +796,7 @@
                     maxTokens: snap.maxTokens,
                     thinkingLevel: snap.thinkingLevel,
                     adaptiveThinking: snap.adaptiveThinking,
+                    webSearch: enableWebSearch && snap.webSearch,
                     tagOpenRouterRequests,
                 },
                 meta: chatToMeta(snap),
@@ -804,11 +829,11 @@
                         return next;
                     });
                 },
-                onError: (msg) => {
+                onError: (msg, source) => {
                     finishStream();
                     chatErrors = {
                         ...chatErrors,
-                        [chatId]: `API Error: ${msg}`,
+                        [chatId]: formatStreamError(msg, source),
                     };
                     // Discard the placeholder only if no content arrived —
                     // keep partial content otherwise.
@@ -938,7 +963,10 @@
         remoteStreamingChatIds = remoteStreamingChatIds.filter(
             (id) => id !== chatId
         );
-        chatErrors = { ...chatErrors, [chatId]: `API Error: ${message}` };
+        chatErrors = {
+            ...chatErrors,
+            [chatId]: formatStreamError(message),
+        };
         const stored = await loadChat(chatId);
         if (stored) {
             chats = chats.map((c) =>
@@ -1033,6 +1061,7 @@
                     maxTokens,
                     thinkingLevel,
                     adaptiveThinking,
+                    webSearch,
                 },
                 ...chats,
             ];
@@ -1053,6 +1082,7 @@
                     maxTokens,
                     thinkingLevel,
                     adaptiveThinking,
+                    webSearch,
                     ...(isFirst ? { title: content.slice(0, 40) } : {}),
                 };
             });
@@ -1132,6 +1162,7 @@
                       maxTokens,
                       thinkingLevel,
                       adaptiveThinking,
+                      webSearch,
                       messages: [
                           ...c.messages.slice(0, keepUpTo + 1),
                           {
@@ -1234,6 +1265,7 @@
         bind:submitKeystroke
         bind:modelTier
         bind:autoscroll
+        bind:enableWebSearch
         bind:tagOpenRouterRequests
         bind:syncApiKeys
         onnewchat={newChat}
@@ -1281,6 +1313,8 @@
         bind:maxTokens
         bind:thinkingLevel
         bind:adaptiveThinking
+        {enableWebSearch}
+        bind:webSearch
         tokens={activeTokens}
     />
 </div>

@@ -17,6 +17,7 @@
         submitKeystroke = $bindable(),
         modelTier = $bindable(),
         autoscroll = $bindable(),
+        enableWebSearch = $bindable(),
         tagOpenRouterRequests = $bindable(),
         syncApiKeys = $bindable(),
         onclose,
@@ -34,6 +35,7 @@
         submitKeystroke: 'enter' | 'ctrl+enter';
         modelTier: ModelTier;
         autoscroll: boolean;
+        enableWebSearch: boolean;
         tagOpenRouterRequests: boolean;
         syncApiKeys: boolean;
         onclose: () => void;
@@ -110,8 +112,8 @@
     const rangeClass =
         'range-styled appearance-none w-full h-1 bg-surface-raised border-0 rounded p-0 cursor-pointer outline-none';
 
-    const checkboxClass =
-        'shrink-0 w-4 h-4 m-0 cursor-pointer accent-accent-bg';
+    const switchClass =
+        'ios-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200';
 
     const tdBase = 'py-2 px-3 text-fg align-middle';
 </script>
@@ -338,27 +340,39 @@
             </div>
             <div class={[rowBase, themeRow]}>
                 <label for="autoscroll" class={labelClass}>Autoscroll</label>
-                <input
+                <button
                     id="autoscroll"
-                    type="checkbox"
-                    class={checkboxClass}
-                    bind:checked={autoscroll}
-                />
+                    type="button"
+                    class={switchClass}
+                    class:on={autoscroll}
+                    role="switch"
+                    aria-checked={autoscroll}
+                    aria-label="Autoscroll"
+                    onclick={() => {
+                        autoscroll = !autoscroll;
+                    }}
+                >
+                    <span class="ios-switch-thumb"></span>
+                </button>
             </div>
             <div class={[rowBase, themeRow]}>
                 <label for="show-previous" class={labelClass}
                     >Show Previous Generation Models</label
                 >
-                <input
+                <button
                     id="show-previous"
-                    type="checkbox"
-                    class={checkboxClass}
-                    checked={showPrevious}
-                    onchange={(e) =>
-                        togglePrevious(
-                            (e.currentTarget as HTMLInputElement).checked
-                        )}
-                />
+                    type="button"
+                    class={switchClass}
+                    class:on={showPrevious}
+                    role="switch"
+                    aria-checked={showPrevious}
+                    aria-label="Show Previous Generation Models"
+                    onclick={() => {
+                        togglePrevious(!showPrevious);
+                    }}
+                >
+                    <span class="ios-switch-thumb"></span>
+                </button>
             </div>
         </div>
 
@@ -373,15 +387,40 @@
                 <label for="sync-api-keys" class={labelClass}
                     >Sync API Keys Through Browser Account</label
                 >
-                <input
+                <button
                     id="sync-api-keys"
-                    type="checkbox"
-                    class={checkboxClass}
-                    bind:checked={syncApiKeys}
-                    onchange={() => {
+                    type="button"
+                    class={switchClass}
+                    class:on={syncApiKeys}
+                    role="switch"
+                    aria-checked={syncApiKeys}
+                    aria-label="Sync API Keys Through Browser Account"
+                    onclick={() => {
+                        syncApiKeys = !syncApiKeys;
                         setTimeout(refreshSavedKeys, 500);
                     }}
-                />
+                >
+                    <span class="ios-switch-thumb"></span>
+                </button>
+            </div>
+            <div class={[rowBase, themeRow]}>
+                <label for="enable-web-search" class={labelClass}
+                    >Enable Web Search</label
+                >
+                <button
+                    id="enable-web-search"
+                    type="button"
+                    class={switchClass}
+                    class:on={enableWebSearch}
+                    role="switch"
+                    aria-checked={enableWebSearch}
+                    aria-label="Enable Web Search"
+                    onclick={() => {
+                        enableWebSearch = !enableWebSearch;
+                    }}
+                >
+                    <span class="ios-switch-thumb"></span>
+                </button>
             </div>
             <div class={[rowBase, themeRow]}>
                 <div class="flex items-center gap-1.25">
@@ -421,27 +460,39 @@
                 <label for="show-legacy" class={labelClass}
                     >Show Legacy Models</label
                 >
-                <input
+                <button
                     id="show-legacy"
-                    type="checkbox"
-                    class={checkboxClass}
-                    checked={showLegacy}
-                    onchange={(e) =>
-                        toggleLegacy(
-                            (e.currentTarget as HTMLInputElement).checked
-                        )}
-                />
+                    type="button"
+                    class={switchClass}
+                    class:on={showLegacy}
+                    role="switch"
+                    aria-checked={showLegacy}
+                    aria-label="Show Legacy Models"
+                    onclick={() => {
+                        toggleLegacy(!showLegacy);
+                    }}
+                >
+                    <span class="ios-switch-thumb"></span>
+                </button>
             </div>
             <div class={[rowBase, themeRow]}>
                 <label for="tag-openrouter" class={labelClass}
                     >Tag OpenRouter requests with 'CourierAI' for app tracking</label
                 >
-                <input
+                <button
                     id="tag-openrouter"
-                    type="checkbox"
-                    class={checkboxClass}
-                    bind:checked={tagOpenRouterRequests}
-                />
+                    type="button"
+                    class={switchClass}
+                    class:on={tagOpenRouterRequests}
+                    role="switch"
+                    aria-checked={tagOpenRouterRequests}
+                    aria-label="Tag OpenRouter requests with CourierAI for app tracking"
+                    onclick={() => {
+                        tagOpenRouterRequests = !tagOpenRouterRequests;
+                    }}
+                >
+                    <span class="ios-switch-thumb"></span>
+                </button>
             </div>
         </div>
 
@@ -489,6 +540,33 @@
         border-radius: 50%;
         background-color: var(--color-accent-bg);
         cursor: pointer;
+    }
+
+    /* iOS-style switch — matches the ModelConfig sidebar toggle pattern */
+    .ios-switch {
+        background-color: var(--color-surface-raised);
+        border: 1px solid var(--color-border);
+    }
+
+    .ios-switch.on {
+        background-color: var(--color-accent-bg);
+        border-color: var(--color-accent-bg);
+    }
+
+    .ios-switch-thumb {
+        position: absolute;
+        top: 1px;
+        left: 1px;
+        width: 16px;
+        height: 16px;
+        background-color: var(--color-canvas);
+        border-radius: 50%;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+        transition: transform 0.18s ease;
+    }
+
+    .ios-switch.on .ios-switch-thumb {
+        transform: translateX(14px);
     }
 
     /* Info-icon tooltip: hover-driven visibility on a child via parent state */

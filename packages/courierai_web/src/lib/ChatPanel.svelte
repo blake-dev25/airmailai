@@ -457,8 +457,16 @@
 
     function autoResize(e: Event) {
         const ta = e.target as HTMLTextAreaElement;
+        const styles = getComputedStyle(ta);
+        const verticalBorder =
+            parseFloat(styles.borderTopWidth) +
+            parseFloat(styles.borderBottomWidth);
+        const maxHeight = parseFloat(styles.maxHeight);
         ta.style.height = 'auto';
-        ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+        ta.style.height = `${Math.min(
+            ta.scrollHeight + verticalBorder,
+            Number.isFinite(maxHeight) ? maxHeight : Infinity
+        )}px`;
     }
 
     function startEdit(
@@ -762,7 +770,7 @@
                 <Icon name="plus" />
             </button>
             <textarea
-                class="flex-1 max-h-50 px-3.5 py-2.5 bg-canvas border border-border rounded-lg text-fg font-sans text-sm leading-normal resize-none box-border outline-none transition-[border-color] duration-150 focus:border-accent-fg placeholder:text-fg-muted [&::-webkit-scrollbar]:hidden"
+                class="flex-1 min-h-[calc(22px+0.875rem*1.5)] max-h-50 px-3.5 py-2.5 bg-canvas border border-border rounded-lg text-fg font-sans text-sm leading-normal resize-none box-border outline-none transition-[border-color] duration-150 focus:border-accent-fg placeholder:text-fg-muted [&::-webkit-scrollbar]:hidden"
                 placeholder="Write a message"
                 rows="1"
                 bind:value={inputText}

@@ -23,6 +23,7 @@
         submitKeystroke = $bindable(),
         modelTier = $bindable(),
         autoscroll = $bindable(),
+        enableWebSearch = $bindable(),
         tagOpenRouterRequests = $bindable(),
         syncApiKeys = $bindable(),
         onnewchat,
@@ -58,6 +59,7 @@
         submitKeystroke: 'enter' | 'ctrl+enter';
         modelTier: ModelTier;
         autoscroll: boolean;
+        enableWebSearch: boolean;
         tagOpenRouterRequests: boolean;
         syncApiKeys: boolean;
         onnewchat: () => void;
@@ -504,6 +506,7 @@
         bind:submitKeystroke
         bind:modelTier
         bind:autoscroll
+        bind:enableWebSearch
         bind:tagOpenRouterRequests
         bind:syncApiKeys
         onclose={() => (showSettings = false)}

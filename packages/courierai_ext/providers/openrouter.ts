@@ -11,6 +11,7 @@ import type {
     InputText,
 } from '@openrouter/sdk/models';
 import { DEBUG_API_LOGGING } from '../debug';
+import { collectUrlCitationSources, formatSources } from './sources';
 
 const LOG = '[courier:ext]';
 
@@ -108,6 +109,9 @@ export async function streamOpenRouter(
                     ...(effort
                         ? { reasoning: { effort, summary: 'auto' } }
                         : {}),
+                    ...(params.webSearch
+                        ? { tools: [{ type: 'openrouter:web_search' }] }
+                        : {}),
                     stream: true,
                 },
             },
@@ -116,6 +120,7 @@ export async function streamOpenRouter(
 
         let firstChunk = true;
         let usage: StreamUsage | undefined;
+        let sourceChunk = '';
 
         for await (const event of stream) {
             if (event.type === 'response.output_text.delta') {
@@ -130,6 +135,9 @@ export async function streamOpenRouter(
                 if (DEBUG_API_LOGGING) {
                     console.log(LOG, '[debug] full response', event.response);
                 }
+                sourceChunk = formatSources(
+                    collectUrlCitationSources(event.response)
+                );
                 const u = event.response.usage;
                 if (u) {
                     usage = {
@@ -140,6 +148,7 @@ export async function streamOpenRouter(
             }
         }
 
+        if (sourceChunk) handlers.onChunk(sourceChunk);
         console.log(LOG, 'openrouter: stream done');
         handlers.onDone(usage);
     } catch (e) {

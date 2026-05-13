@@ -54,7 +54,17 @@ export interface TurnStopRequest {
     truncatedContent: string;
 }
 
-export type TurnRequest = TurnStartRequest | TurnStopRequest;
+// No-op heartbeat sent over the existing stream port while a provider is
+// quiet. Chrome MV3 keeps the worker alive when messages move over a port;
+// simply having the port open is not enough.
+export interface TurnKeepaliveRequest {
+    type: 'keepalive';
+}
+
+export type TurnRequest =
+    | TurnStartRequest
+    | TurnStopRequest
+    | TurnKeepaliveRequest;
 
 export type ExtensionResponse =
     | { type: 'chunk'; content: string }
@@ -84,10 +94,21 @@ export type BroadcastEvent =
     | { type: 'turn-error'; chatId: string; message: string }
     | { type: 'turn-aborted'; chatId: string };
 
+// Sent from each connected tab over the broadcast port. Only used as a
+// global heartbeat: as long as any tab has the website open, the keepalive
+// resets the SW's 30s idle timer so it stays warm for cross-tab fan-out
+// and for the next turn without a cold-start round trip.
+export interface BroadcastKeepaliveRequest {
+    type: 'keepalive';
+}
+export type BroadcastRequest = BroadcastKeepaliveRequest;
+
 export interface StreamUsage {
     inputTokens: number;
     outputTokens: number;
 }
+
+export type StreamErrorSource = 'api' | 'extension';
 
 // Shared stream-callback shape for both the provider implementations
 // (in the extension background) and the web-side `sendToExtension` wrapper.
@@ -95,7 +116,7 @@ export interface StreamHandlers {
     onChunk: (text: string) => void;
     onThinking?: (text: string) => void;
     onDone: (usage?: StreamUsage) => void;
-    onError: (message: string) => void;
+    onError: (message: string, source?: StreamErrorSource) => void;
 }
 
 export interface UserSettings {
@@ -106,12 +127,14 @@ export interface UserSettings {
     submitKeystroke: 'enter' | 'ctrl+enter';
     modelTier: 'latest' | 'previous' | 'legacy';
     autoscroll: boolean;
+    enableWebSearch: boolean;
     providerId: string;
     modelId: string;
     temperature: number;
     maxTokens: number;
     thinkingLevel: string;
     adaptiveThinking: boolean;
+    webSearch: boolean;
     tagOpenRouterRequests: boolean;
     syncApiKeys: boolean;
     // Content hash of the last accepted ToS/Privacy pair. Empty/missing = never agreed.
@@ -128,12 +151,14 @@ const SETTINGS_KEY_MAP: { [K in keyof UserSettings]: 0 } = {
     submitKeystroke: 0,
     modelTier: 0,
     autoscroll: 0,
+    enableWebSearch: 0,
     providerId: 0,
     modelId: 0,
     temperature: 0,
     maxTokens: 0,
     thinkingLevel: 0,
     adaptiveThinking: 0,
+    webSearch: 0,
     tagOpenRouterRequests: 0,
     syncApiKeys: 0,
     legalAcceptedVersion: 0,
@@ -152,6 +177,7 @@ export interface ChatMeta {
     maxTokens: number;
     thinkingLevel: string;
     adaptiveThinking: boolean;
+    webSearch: boolean;
     systemPrompt: string;
 }
 

@@ -1,6 +1,7 @@
 import type {
     Attachment,
     BroadcastEvent,
+    BroadcastRequest,
     ChatMessage,
     ChatMeta,
     ExtensionResponse,
@@ -398,10 +399,15 @@ export default defineBackground(() => {
     // turn, may send 'stop' mid-stream. Extension owns lock + save end-to-end.
     chrome.runtime.onConnectExternal.addListener((port) => {
         // 'broadcast' ports are long-lived fan-out channels for cross-tab
-        // turn mirroring. They never receive turn requests; they just listen.
+        // turn mirroring. The only inbound traffic is a periodic keepalive
+        // from each tab — its sole job is to reset the SW's 30s idle timer
+        // so we stay warm whenever the website is open.
         if (port.name === 'broadcast') {
             console.log(LOG, 'broadcast port connected');
             broadcastPorts.add(port);
+            port.onMessage.addListener((msg: BroadcastRequest) => {
+                if (msg.type === 'keepalive') return;
+            });
             port.onDisconnect.addListener(() => {
                 console.log(LOG, 'broadcast port disconnected');
                 broadcastPorts.delete(port);
@@ -453,6 +459,8 @@ export default defineBackground(() => {
         });
 
         port.onMessage.addListener(async (msg: TurnRequest) => {
+            if (msg.type === 'keepalive') return;
+
             if (msg.type === 'stop') {
                 if (disposition !== 'streaming') return;
                 console.log(

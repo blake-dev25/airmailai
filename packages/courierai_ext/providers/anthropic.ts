@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { HydratedChatMessage, StreamHandlers } from '@courier/shared';
 import { DEBUG_API_LOGGING } from '../debug';
+import { formatSources, type SourceLink } from './sources';
 
 const LOG = '[courier:ext]';
 
@@ -62,6 +63,79 @@ function toAnthropicParam(msg: HydratedChatMessage): Anthropic.MessageParam {
     return { role: msg.role as 'user' | 'assistant', content: blocks };
 }
 
+function addAnthropicCitation(sources: SourceLink[], citation: unknown): void {
+    if (!citation || typeof citation !== 'object') return;
+    const candidate = citation as {
+        title?: unknown;
+        type?: unknown;
+        url?: unknown;
+    };
+    if (
+        candidate.type === 'web_search_result_location' &&
+        typeof candidate.url === 'string'
+    ) {
+        sources.push({
+            url: candidate.url,
+            title:
+                typeof candidate.title === 'string'
+                    ? candidate.title
+                    : undefined,
+        });
+    }
+}
+
+function collectAnthropicSources(message: unknown): SourceLink[] {
+    if (!message || typeof message !== 'object') return [];
+    const content = (message as { content?: unknown }).content;
+    if (!Array.isArray(content)) return [];
+
+    const sources: SourceLink[] = [];
+    for (const block of content) {
+        if (!block || typeof block !== 'object') continue;
+        const candidate = block as {
+            citations?: unknown;
+            content?: unknown;
+            title?: unknown;
+            type?: unknown;
+            url?: unknown;
+        };
+
+        if (Array.isArray(candidate.citations)) {
+            for (const citation of candidate.citations) {
+                addAnthropicCitation(sources, citation);
+            }
+        }
+
+        if (
+            candidate.type === 'web_search_tool_result' &&
+            Array.isArray(candidate.content)
+        ) {
+            for (const item of candidate.content) {
+                if (!item || typeof item !== 'object') continue;
+                const result = item as {
+                    title?: unknown;
+                    type?: unknown;
+                    url?: unknown;
+                };
+                if (
+                    result.type === 'web_search_result' &&
+                    typeof result.url === 'string'
+                ) {
+                    sources.push({
+                        url: result.url,
+                        title:
+                            typeof result.title === 'string'
+                                ? result.title
+                                : undefined,
+                    });
+                }
+            }
+        }
+    }
+
+    return sources;
+}
+
 export async function streamAnthropic(
     apiKey: string,
     model: string,
@@ -113,6 +187,17 @@ export async function streamAnthropic(
                   } as never,
               }
         : {};
+    const webSearchParam = params.webSearch
+        ? {
+              tools: [
+                  {
+                      type: 'web_search_20260209',
+                      name: 'web_search',
+                      max_uses: 5,
+                  } as never,
+              ],
+          }
+        : {};
 
     try {
         const stream = client.messages.stream(
@@ -126,6 +211,7 @@ export async function streamAnthropic(
                 ...(thinkingEnabled
                     ? { output_config: { effort: thinkingLevel } as never }
                     : {}),
+                ...webSearchParam,
                 ...(systemMsg ? { system: systemMsg.content } : {}),
                 messages: chatMessages,
             },
@@ -153,6 +239,8 @@ export async function streamAnthropic(
         if (DEBUG_API_LOGGING) {
             console.log(LOG, '[debug] full response', finalMsg);
         }
+        const sourceChunk = formatSources(collectAnthropicSources(finalMsg));
+        if (sourceChunk) handlers.onChunk(sourceChunk);
         const usage = finalMsg.usage
             ? {
                   inputTokens: finalMsg.usage.input_tokens,

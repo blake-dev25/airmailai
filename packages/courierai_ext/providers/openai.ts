@@ -5,6 +5,7 @@ import type {
 } from '@courier/shared';
 import OpenAI from 'openai';
 import { DEBUG_API_LOGGING } from '../debug';
+import { collectUrlCitationSources, formatSources } from './sources';
 
 const LOG = '[courier:ext]';
 
@@ -83,6 +84,9 @@ export async function streamOpenAI(
                           } as never,
                       }
                     : {}),
+                ...(params.webSearch
+                    ? { tools: [{ type: 'web_search' }] }
+                    : {}),
                 stream: true,
             },
             { signal }
@@ -90,6 +94,7 @@ export async function streamOpenAI(
 
         let firstChunk = true;
         let usage: StreamUsage | undefined;
+        let sourceChunk = '';
 
         for await (const event of stream) {
             if (event.type === 'response.output_text.delta') {
@@ -111,9 +116,13 @@ export async function streamOpenAI(
                         outputTokens: u.output_tokens,
                     };
                 }
+                sourceChunk = formatSources(
+                    collectUrlCitationSources(event.response)
+                );
             }
         }
 
+        if (sourceChunk) handlers.onChunk(sourceChunk);
         console.log(LOG, 'openai: stream done');
         handlers.onDone(usage);
     } catch (e) {

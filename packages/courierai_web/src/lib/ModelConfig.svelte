@@ -20,6 +20,8 @@
         maxTokens = $bindable(),
         thinkingLevel = $bindable(),
         adaptiveThinking = $bindable(),
+        webSearch = $bindable(),
+        enableWebSearch,
         tokens = null,
     }: {
         providers: ProviderOption[];
@@ -31,6 +33,8 @@
         maxTokens: number;
         thinkingLevel: string;
         adaptiveThinking: boolean;
+        webSearch: boolean;
+        enableWebSearch: boolean;
         tokens?: { input: number; output: number } | null;
     } = $props();
 
@@ -261,6 +265,7 @@
                 temperature = first.params.defaultTemperature;
             thinkingLevel = first.params.thinking?.defaultLevel ?? 'none';
             adaptiveThinking = first.params.thinking?.adaptive !== undefined;
+            webSearch = false;
         }
     }
 
@@ -272,6 +277,7 @@
                 temperature = model.params.defaultTemperature;
             thinkingLevel = model.params.thinking?.defaultLevel ?? 'none';
             adaptiveThinking = model.params.thinking?.adaptive !== undefined;
+            webSearch = false;
         }
     }
 
@@ -533,6 +539,32 @@
                     >
                 </div>
             </div>
+
+            {#if enableWebSearch}
+                <div class={fieldClass}>
+                    <div class={labelRowClass}>
+                        <label for="web-search" class={labelClass}
+                            >Web Search</label
+                        >
+                        <button
+                            id="web-search"
+                            type="button"
+                            class={[
+                                'ios-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
+                            ]}
+                            class:on={webSearch}
+                            role="switch"
+                            aria-checked={webSearch}
+                            aria-label="Web Search"
+                            onclick={() => {
+                                webSearch = !webSearch;
+                            }}
+                        >
+                            <span class="ios-switch-thumb"></span>
+                        </button>
+                    </div>
+                </div>
+            {/if}
         {/if}
     </div>
 

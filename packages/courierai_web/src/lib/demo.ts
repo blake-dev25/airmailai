@@ -7,6 +7,7 @@ interface DemoConfig {
     maxTokens: number;
     thinkingLevel: string;
     adaptiveThinking: boolean;
+    webSearch: boolean;
 }
 
 const eggsBenedict =
