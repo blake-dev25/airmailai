@@ -7,6 +7,7 @@
         ChatMeta,
         StreamErrorSource,
         StoredChat,
+        ToolResult,
         UserSettings,
     } from '@courier/shared';
     import { SETTINGS_KEYS } from '@courier/shared';
@@ -491,11 +492,12 @@
         return {
             id: chat.id,
             messages: messages.map(
-                ({ role, content, thinking, attachments }) => ({
+                ({ role, content, thinking, attachments, toolResults }) => ({
                     role,
                     content,
                     thinking,
                     attachments,
+                    toolResults,
                 })
             ),
             ...(chat.tokens ? { tokens: chat.tokens } : {}),
@@ -737,12 +739,13 @@
 
         const history: ChatMessage[] = snap.messages
             .slice(0, -1)
-            .map(({ role, content, attachments }) => {
+            .map(({ role, content, attachments, toolResults }) => {
                 const atts = hydrateForApi(attachments);
                 return {
                     role,
                     content,
                     ...(atts ? { attachments: atts } : {}),
+                    ...(toolResults?.length ? { toolResults } : {}),
                 };
             });
         const apiMessages = snap.systemPrompt.trim()
@@ -757,11 +760,12 @@
         // blobs travel via apiMessages above.
         const historyForSave: StoredChat['messages'] = snap.messages
             .slice(0, -1)
-            .map(({ role, content, thinking, attachments }) => ({
+            .map(({ role, content, thinking, attachments, toolResults }) => ({
                 role,
                 content,
                 ...(thinking ? { thinking } : {}),
                 ...(attachments ? { attachments } : {}),
+                ...(toolResults?.length ? { toolResults } : {}),
             }));
 
         const modelParams = providers
@@ -814,6 +818,9 @@
                         ...last,
                         thinking: (last.thinking ?? '') + chunk,
                     }));
+                },
+                onToolResults: (toolResults) => {
+                    updateLast((last) => ({ ...last, toolResults }));
                 },
                 onDone: (usage) => {
                     finishStream();
@@ -915,6 +922,21 @@
         });
     }
 
+    function applyRemoteTurnToolResults(
+        chatId: string,
+        toolResults: ToolResult[]
+    ) {
+        if (!remoteStreamingChatIds.includes(chatId)) return;
+        chats = chats.map((c) => {
+            if (c.id !== chatId) return c;
+            if (c.messages.length === 0) return c;
+            const msgs = [...c.messages];
+            const last = msgs[msgs.length - 1];
+            msgs[msgs.length - 1] = { ...last, toolResults };
+            return { ...c, messages: msgs };
+        });
+    }
+
     async function applyRemoteTurnDone(chatId: string) {
         if (!remoteStreamingChatIds.includes(chatId)) return;
         remoteStreamingChatIds = remoteStreamingChatIds.filter(
@@ -989,6 +1011,9 @@
                 return;
             case 'turn-chunk':
                 applyRemoteTurnChunk(event.chatId, event.kind, event.delta);
+                return;
+            case 'turn-tool-results':
+                applyRemoteTurnToolResults(event.chatId, event.toolResults);
                 return;
             case 'turn-done':
                 applyRemoteTurnDone(event.chatId);

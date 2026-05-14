@@ -1,6 +1,8 @@
 import type {
     HydratedChatMessage,
     StreamHandlers,
+    WebSearchSource,
+    WebSearchToolResult,
     StreamUsage,
 } from '@courier/shared';
 import {
@@ -12,7 +14,7 @@ import {
     ThinkingLevel,
 } from '@google/genai';
 import { DEBUG_API_LOGGING } from '../debug';
-import { formatSources, type SourceLink } from './sources';
+import { dedupeSources } from './tool-results';
 
 const LOG = '[courier:ext]';
 
@@ -73,12 +75,12 @@ function buildThinkingConfig(
     };
 }
 
-function collectGoogleSources(chunk: unknown): SourceLink[] {
+function collectGoogleSources(chunk: unknown): WebSearchSource[] {
     if (!chunk || typeof chunk !== 'object') return [];
     const candidates = (chunk as { candidates?: unknown }).candidates;
     if (!Array.isArray(candidates)) return [];
 
-    const sources: SourceLink[] = [];
+    const sources: WebSearchSource[] = [];
     for (const candidate of candidates) {
         if (!candidate || typeof candidate !== 'object') continue;
         const metadata = (candidate as { groundingMetadata?: unknown })
@@ -96,10 +98,9 @@ function collectGoogleSources(chunk: unknown): SourceLink[] {
             if (typeof source.uri === 'string') {
                 sources.push({
                     url: source.uri,
-                    title:
-                        typeof source.title === 'string'
-                            ? source.title
-                            : undefined,
+                    ...(typeof source.title === 'string'
+                        ? { title: source.title }
+                        : {}),
                 });
             }
         }
@@ -158,7 +159,7 @@ export async function streamGoogle(
 
         let firstChunk = true;
         let lastUsage: StreamUsage | undefined;
-        const sources: SourceLink[] = [];
+        const sources: WebSearchSource[] = [];
 
         for await (const chunk of stream) {
             sources.push(...collectGoogleSources(chunk));
@@ -183,8 +184,14 @@ export async function streamGoogle(
             }
         }
 
-        const sourceChunk = formatSources(sources);
-        if (sourceChunk) handlers.onChunk(sourceChunk);
+        const deduped = dedupeSources(sources);
+        if (deduped.length) {
+            const toolResult: WebSearchToolResult = {
+                type: 'web_search',
+                sources: deduped,
+            };
+            handlers.onToolResults?.([toolResult]);
+        }
         console.log(LOG, 'google: stream done');
         if (DEBUG_API_LOGGING) {
             console.log(LOG, '[debug] usage', lastUsage);

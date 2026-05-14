@@ -13,6 +13,7 @@
     import Icon from './Icon.svelte';
     import MessageItem from './MessageItem.svelte';
     import { createSmoothText } from './smoothText.svelte';
+    import { createStickToBottom } from './stickToBottom.svelte';
     import type { Message } from './types';
 
     let {
@@ -72,12 +73,12 @@
     // Per-message UI state keyed by Message.id so it survives mid-chat deletes
     // (an index-keyed Set/index would shift onto the wrong message).
     let expandedThinking = $state(new Set<string>());
+    let expandedSources = $state(new Set<string>());
     let inputText = $state('');
     let messagesEl = $state<HTMLElement | null>(null);
-    let lastScrollTop = 0;
+    let messagesContentEl = $state<HTMLElement | null>(null);
     let textareaEl = $state<HTMLTextAreaElement | null>(null);
     let fileInputEl = $state<HTMLInputElement | null>(null);
-    let isAtBottom = $state(true);
     let isAtTop = $state(true);
     let pendingAttachments = $state<Attachment[]>([]);
     let processingAttachments = $state<
@@ -113,21 +114,19 @@
         )
     );
 
+    const stick = createStickToBottom();
+
     const smooth = createSmoothText({
         mode: () => smoothTextMode,
         streaming: () => untrack(() => isStreaming),
         onReset: () => {
-            if (autoscroll) isAtBottom = true;
+            if (untrack(() => autoscroll)) stick.reSticky();
         },
     });
 
     $effect(() => {
-        void smooth.display;
-        if (!untrack(() => autoscroll)) return;
-        tick().then(() => {
-            if (messagesEl && untrack(() => isAtBottom))
-                messagesEl.scrollTop = messagesEl.scrollHeight;
-        });
+        if (!messagesEl || !messagesContentEl) return;
+        return stick.attach(messagesEl, messagesContentEl, () => autoscroll);
     });
 
     $effect(() => {
@@ -204,21 +203,7 @@
 
     function handleMessagesScroll() {
         if (!messagesEl) return;
-        const { scrollTop, scrollHeight, clientHeight } = messagesEl;
-        // Any upward movement immediately pauses autoscroll — no threshold fight
-        if (scrollTop < lastScrollTop) {
-            isAtBottom = false;
-        } else {
-            isAtBottom = scrollHeight - scrollTop - clientHeight < 80;
-        }
-        lastScrollTop = scrollTop;
-        isAtTop = scrollTop < 20;
-    }
-
-    function scrollToBottom() {
-        if (!messagesEl) return;
-        isAtBottom = true;
-        messagesEl.scrollTop = messagesEl.scrollHeight;
+        isAtTop = messagesEl.scrollTop < 20;
     }
 
     function handleKeydown(e: KeyboardEvent) {
@@ -259,7 +244,7 @@
             return;
         }
 
-        isAtBottom = true;
+        stick.scrollToBottom();
         const atts = pendingAttachments;
         pendingAttachments = [];
         onsend(text, atts.length ? atts : undefined);
@@ -570,6 +555,7 @@
             onscroll={handleMessagesScroll}
         >
             <div
+                bind:this={messagesContentEl}
                 class="[--narrow-chat-width:744px] mx-auto px-5 py-7 flex flex-col gap-7 min-h-full box-border"
                 style="max-width: min(100vw, calc(744px + (100vw - 744px) * {chatWidth /
                     100}));"
@@ -620,6 +606,7 @@
                             {editingDims}
                             hovered={hoveredMessageId === message.id}
                             thinkingExpanded={expandedThinking.has(message.id)}
+                            sourcesExpanded={expandedSources.has(message.id)}
                             onhoverenter={() => setHovered(message.id)}
                             onhoverleave={() => setHovered(null)}
                             onstartedit={(content, bubbleEl) =>
@@ -633,6 +620,13 @@
                                 else next.add(message.id);
                                 expandedThinking = next;
                             }}
+                            onsourcestoggle={() => {
+                                const next = new Set(expandedSources);
+                                if (next.has(message.id))
+                                    next.delete(message.id);
+                                else next.add(message.id);
+                                expandedSources = next;
+                            }}
                             onretry={() => onretry(i)}
                             ondelete={() => ondelete(i)}
                         />
@@ -640,11 +634,11 @@
                 {/if}
             </div>
         </div>
-        {#if !isAtBottom}
+        {#if !stick.sticky}
             <button
                 type="button"
                 class="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center justify-center w-7.5 h-7.5 bg-surface-sunken border border-border rounded-full text-fg cursor-pointer z-5 transition-[background-color] duration-150 animate-fade-up hover:bg-border"
-                onclick={scrollToBottom}
+                onclick={() => stick.scrollToBottom()}
                 aria-label="Scroll to bottom"
             >
                 <Icon name="chevron-down" />

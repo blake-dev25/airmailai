@@ -11,6 +11,7 @@ import type {
     StoredChat,
     StreamHandlers,
     StreamUsage,
+    ToolResult,
     TurnRequest,
     UserSettings,
 } from '@courier/shared';
@@ -153,8 +154,10 @@ function broadcast(event: BroadcastEvent) {
         try {
             port.postMessage(event);
         } catch {
-            // Port may have closed between the iteration and post; cleaned up
-            // by its onDisconnect listener.
+            // Port closed between iteration and post (e.g. tab entered bfcache,
+            // tab closed). Drop it now instead of waiting for onDisconnect so
+            // the next broadcast doesn't hit the same dead port.
+            broadcastPorts.delete(port);
         }
     }
 }
@@ -409,7 +412,15 @@ export default defineBackground(() => {
                 if (msg.type === 'keepalive') return;
             });
             port.onDisconnect.addListener(() => {
-                console.log(LOG, 'broadcast port disconnected');
+                // Read lastError to consume any close reason Chrome attached
+                // (e.g. bfcache eviction). Without this, Chrome surfaces it as
+                // "Unchecked runtime.lastError".
+                const reason = chrome.runtime.lastError?.message;
+                console.log(
+                    LOG,
+                    'broadcast port disconnected',
+                    reason ? `(${reason})` : ''
+                );
                 broadcastPorts.delete(port);
             });
             return;
@@ -432,6 +443,7 @@ export default defineBackground(() => {
         let lockedChatId: string | null = null;
         let assistantContent = '';
         let assistantThinking = '';
+        let assistantToolResults: ToolResult[] = [];
         let streamUsage: StreamUsage | undefined;
         let streamErrorMsg: string | null = null;
         let stopTruncated = '';
@@ -577,6 +589,17 @@ export default defineBackground(() => {
                             });
                         }
                     },
+                    onToolResults: (toolResults) => {
+                        assistantToolResults = toolResults;
+                        if (disposition === 'streaming') {
+                            send({ type: 'tool_results', toolResults });
+                            broadcast({
+                                type: 'turn-tool-results',
+                                chatId: msg.chatId,
+                                toolResults,
+                            });
+                        }
+                    },
                     onDone: (usage) => {
                         streamUsage = usage;
                     },
@@ -626,6 +649,9 @@ export default defineBackground(() => {
                             content: finalContent,
                             ...(assistantThinking
                                 ? { thinking: assistantThinking }
+                                : {}),
+                            ...(assistantToolResults.length
+                                ? { toolResults: assistantToolResults }
                                 : {}),
                         });
                     }

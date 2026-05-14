@@ -1,7 +1,7 @@
 import type { AttachmentRef, ChatMeta, StoredChat } from '@courier/shared';
 
 const DB_NAME = 'courier_ai';
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 const LOG = '[courier:ext]';
 
 const STORE_MESSAGES = 'chat_messages';
@@ -93,6 +93,7 @@ function normalizeChat(chat: StoredChat): StoredChat {
             ...(m.attachments?.length
                 ? { attachments: m.attachments.map(toRef) }
                 : {}),
+            ...(m.toolResults?.length ? { toolResults: m.toolResults } : {}),
         })),
     };
 }

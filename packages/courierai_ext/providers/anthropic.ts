@@ -1,7 +1,10 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type { HydratedChatMessage, StreamHandlers } from '@courier/shared';
+import type {
+    HydratedChatMessage,
+    StreamHandlers,
+    WebSearchToolResult,
+} from '@courier/shared';
 import { DEBUG_API_LOGGING } from '../debug';
-import { formatSources, type SourceLink } from './sources';
 
 const LOG = '[courier:ext]';
 
@@ -14,14 +17,11 @@ function decodeBase64Utf8(data: string): string {
     return new TextDecoder().decode(bytes);
 }
 
-function toAnthropicParam(msg: HydratedChatMessage): Anthropic.MessageParam {
-    if (!msg.attachments?.length) {
-        return { role: msg.role as 'user' | 'assistant', content: msg.content };
-    }
-
+function attachmentBlocks(
+    msg: HydratedChatMessage
+): Anthropic.ContentBlockParam[] {
     const blocks: Anthropic.ContentBlockParam[] = [];
-
-    for (const att of msg.attachments) {
+    for (const att of msg.attachments ?? []) {
         if (att.mediaType === 'application/pdf') {
             blocks.push({
                 type: 'document',
@@ -55,85 +55,146 @@ function toAnthropicParam(msg: HydratedChatMessage): Anthropic.MessageParam {
             });
         }
     }
+    return blocks;
+}
 
+// Reconstruct a previous turn's `server_tool_use` + `web_search_tool_result`
+// pair from a stored ToolResult. Each WebSearchResultBlockParam requires
+// `encrypted_content` and `title` per the SDK types — we fall back to empty
+// string / url to keep the call shape valid even if the original encrypted
+// blob wasn't captured.
+function toolResultBlocks(
+    toolResults: WebSearchToolResult[]
+): Anthropic.ContentBlockParam[] {
+    const blocks: Anthropic.ContentBlockParam[] = [];
+    for (const tr of toolResults) {
+        if (!tr.callId) continue; // Anthropic requires id linkage; skip otherwise.
+        blocks.push({
+            type: 'server_tool_use',
+            id: tr.callId,
+            name: 'web_search',
+            input: { query: '' },
+        });
+        blocks.push({
+            type: 'web_search_tool_result',
+            tool_use_id: tr.callId,
+            content: tr.sources.map((s) => ({
+                type: 'web_search_result',
+                url: s.url,
+                title: s.title ?? s.url,
+                encrypted_content: s.anthropicEncrypted ?? '',
+            })),
+        });
+    }
+    return blocks;
+}
+
+function toAnthropicParam(msg: HydratedChatMessage): Anthropic.MessageParam {
+    const role = msg.role as 'user' | 'assistant';
+
+    const hasAttachments = !!msg.attachments?.length;
+    const hasToolResults = role === 'assistant' && !!msg.toolResults?.length;
+
+    if (!hasAttachments && !hasToolResults) {
+        return { role, content: msg.content };
+    }
+
+    const blocks: Anthropic.ContentBlockParam[] = [];
+    if (hasAttachments) {
+        blocks.push(...attachmentBlocks(msg));
+    }
+    if (hasToolResults) {
+        blocks.push(...toolResultBlocks(msg.toolResults!));
+    }
     if (msg.content) {
         blocks.push({ type: 'text', text: msg.content });
     }
 
-    return { role: msg.role as 'user' | 'assistant', content: blocks };
+    return { role, content: blocks };
 }
 
-function addAnthropicCitation(sources: SourceLink[], citation: unknown): void {
-    if (!citation || typeof citation !== 'object') return;
-    const candidate = citation as {
-        title?: unknown;
-        type?: unknown;
-        url?: unknown;
-    };
-    if (
-        candidate.type === 'web_search_result_location' &&
-        typeof candidate.url === 'string'
-    ) {
-        sources.push({
-            url: candidate.url,
-            title:
-                typeof candidate.title === 'string'
-                    ? candidate.title
-                    : undefined,
-        });
-    }
-}
-
-function collectAnthropicSources(message: unknown): SourceLink[] {
+// Walk the final assistant message and group each `server_tool_use` with its
+// matching `web_search_tool_result` block by `tool_use_id`. Each pair becomes
+// one stored ToolResult so we can reconstruct it on the next turn.
+function collectAnthropicToolResults(message: unknown): WebSearchToolResult[] {
     if (!message || typeof message !== 'object') return [];
     const content = (message as { content?: unknown }).content;
     if (!Array.isArray(content)) return [];
 
-    const sources: SourceLink[] = [];
+    const callIds: string[] = [];
+    const resultsByCallId = new Map<string, WebSearchToolResult>();
+
     for (const block of content) {
         if (!block || typeof block !== 'object') continue;
-        const candidate = block as {
-            citations?: unknown;
-            content?: unknown;
-            title?: unknown;
+        const b = block as {
             type?: unknown;
-            url?: unknown;
+            id?: unknown;
+            name?: unknown;
+            tool_use_id?: unknown;
+            content?: unknown;
         };
 
-        if (Array.isArray(candidate.citations)) {
-            for (const citation of candidate.citations) {
-                addAnthropicCitation(sources, citation);
+        if (
+            b.type === 'server_tool_use' &&
+            b.name === 'web_search' &&
+            typeof b.id === 'string'
+        ) {
+            callIds.push(b.id);
+            if (!resultsByCallId.has(b.id)) {
+                resultsByCallId.set(b.id, {
+                    type: 'web_search',
+                    callId: b.id,
+                    sources: [],
+                });
             }
+            continue;
         }
 
         if (
-            candidate.type === 'web_search_tool_result' &&
-            Array.isArray(candidate.content)
+            b.type === 'web_search_tool_result' &&
+            typeof b.tool_use_id === 'string' &&
+            Array.isArray(b.content)
         ) {
-            for (const item of candidate.content) {
+            const tr = resultsByCallId.get(b.tool_use_id) ?? {
+                type: 'web_search' as const,
+                callId: b.tool_use_id,
+                sources: [],
+            };
+            for (const item of b.content) {
                 if (!item || typeof item !== 'object') continue;
-                const result = item as {
-                    title?: unknown;
+                const r = item as {
                     type?: unknown;
                     url?: unknown;
+                    title?: unknown;
+                    encrypted_content?: unknown;
                 };
                 if (
-                    result.type === 'web_search_result' &&
-                    typeof result.url === 'string'
+                    r.type === 'web_search_result' &&
+                    typeof r.url === 'string'
                 ) {
-                    sources.push({
-                        url: result.url,
-                        title:
-                            typeof result.title === 'string'
-                                ? result.title
-                                : undefined,
+                    tr.sources.push({
+                        url: r.url,
+                        ...(typeof r.title === 'string'
+                            ? { title: r.title }
+                            : {}),
+                        ...(typeof r.encrypted_content === 'string'
+                            ? { anthropicEncrypted: r.encrypted_content }
+                            : {}),
                     });
                 }
+            }
+            if (!resultsByCallId.has(b.tool_use_id)) {
+                callIds.push(b.tool_use_id);
+                resultsByCallId.set(b.tool_use_id, tr);
             }
         }
     }
 
-    return sources;
+    return callIds
+        .map((id) => resultsByCallId.get(id))
+        .filter(
+            (tr): tr is WebSearchToolResult => !!tr && tr.sources.length > 0
+        );
 }
 
 export async function streamAnthropic(
@@ -239,8 +300,8 @@ export async function streamAnthropic(
         if (DEBUG_API_LOGGING) {
             console.log(LOG, '[debug] full response', finalMsg);
         }
-        const sourceChunk = formatSources(collectAnthropicSources(finalMsg));
-        if (sourceChunk) handlers.onChunk(sourceChunk);
+        const toolResults = collectAnthropicToolResults(finalMsg);
+        if (toolResults.length) handlers.onToolResults?.(toolResults);
         const usage = finalMsg.usage
             ? {
                   inputTokens: finalMsg.usage.input_tokens,

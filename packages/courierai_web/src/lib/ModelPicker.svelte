@@ -169,7 +169,7 @@
                     {#each rows as row (row.kind === 'item' ? row.model.id : `header:${row.label}`)}
                         {#if row.kind === 'header'}
                             <div
-                                class="px-2.5 pt-2 pb-1 text-[0.6875rem] font-semibold text-fg-muted uppercase tracking-wider"
+                                class="px-2.5 pt-2 pb-1 text-[0.6875rem] font-bold text-fg-muted uppercase tracking-wider"
                             >
                                 {row.label}
                             </div>

@@ -2,20 +2,27 @@ import type {
     HydratedChatMessage,
     StreamHandlers,
     StreamUsage,
+    WebSearchToolResult,
 } from '@courier/shared';
 import { OpenRouter } from '@openrouter/sdk';
 import type {
     EasyInputMessage,
     EasyInputMessageContentInputImage,
     InputFile,
+    InputsUnion,
     InputText,
+    OutputWebSearchCallItem,
 } from '@openrouter/sdk/models';
 import { DEBUG_API_LOGGING } from '../debug';
-import { collectUrlCitationSources, formatSources } from './sources';
+import {
+    buildResponsesToolResults,
+    collectUrlCitationSources,
+    collectWebSearchCallIds,
+} from './tool-results';
 
 const LOG = '[courier:ext]';
 
-function toResponsesInput(msg: HydratedChatMessage): EasyInputMessage {
+function messageInputItem(msg: HydratedChatMessage): EasyInputMessage {
     if (!msg.attachments?.length) {
         return { role: msg.role as 'user' | 'assistant', content: msg.content };
     }
@@ -45,6 +52,34 @@ function toResponsesInput(msg: HydratedChatMessage): EasyInputMessage {
     }
 
     return { role: msg.role as 'user' | 'assistant', content: parts };
+}
+
+// Re-inject prior `web_search_call` items so the model sees that it already
+// searched. OpenRouter's Responses API accepts these directly in `input`.
+function webSearchCallItems(
+    toolResults: WebSearchToolResult[]
+): OutputWebSearchCallItem[] {
+    return toolResults
+        .filter((tr) => !!tr.callId)
+        .map((tr) => ({
+            type: 'web_search_call',
+            id: tr.callId!,
+            status: 'completed',
+            action: { type: 'search', query: '' },
+        }));
+}
+
+function toResponsesInput(
+    messages: HydratedChatMessage[]
+): Exclude<InputsUnion, string> {
+    const items: Exclude<InputsUnion, string> = [];
+    for (const msg of messages) {
+        if (msg.role === 'assistant' && msg.toolResults?.length) {
+            items.push(...webSearchCallItems(msg.toolResults));
+        }
+        items.push(messageInputItem(msg));
+    }
+    return items;
 }
 
 // Our thinkingLevel vocabulary → OpenRouter's reasoning.effort enum.
@@ -82,9 +117,7 @@ export async function streamOpenRouter(
     });
 
     const systemMsg = messages.find((m) => m.role === 'system');
-    const input = messages
-        .filter((m) => m.role !== 'system')
-        .map(toResponsesInput);
+    const input = toResponsesInput(messages.filter((m) => m.role !== 'system'));
 
     const effort = toEffort(params.thinkingLevel as string | undefined);
 
@@ -120,7 +153,7 @@ export async function streamOpenRouter(
 
         let firstChunk = true;
         let usage: StreamUsage | undefined;
-        let sourceChunk = '';
+        let toolResults: WebSearchToolResult[] = [];
 
         for await (const event of stream) {
             if (event.type === 'response.output_text.delta') {
@@ -135,7 +168,8 @@ export async function streamOpenRouter(
                 if (DEBUG_API_LOGGING) {
                     console.log(LOG, '[debug] full response', event.response);
                 }
-                sourceChunk = formatSources(
+                toolResults = buildResponsesToolResults(
+                    collectWebSearchCallIds(event.response),
                     collectUrlCitationSources(event.response)
                 );
                 const u = event.response.usage;
@@ -148,7 +182,7 @@ export async function streamOpenRouter(
             }
         }
 
-        if (sourceChunk) handlers.onChunk(sourceChunk);
+        if (toolResults.length) handlers.onToolResults?.(toolResults);
         console.log(LOG, 'openrouter: stream done');
         handlers.onDone(usage);
     } catch (e) {

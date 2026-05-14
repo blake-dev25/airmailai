@@ -117,7 +117,9 @@
         );
 
         const groups: Array<{ label: string; models: ModelOption[] }> = [];
-        const stored = provider.models.find((m) => m.id === modelId);
+        const stored = providers
+            .find((p) => p.id === provider.id)
+            ?.models.find((m) => m.id === modelId);
         if (stored && !inTier.has(stored.id)) {
             groups.push({ label: 'From this chat', models: [stored] });
         }
@@ -605,7 +607,12 @@
     <div
         class="py-2 text-[12px] text-fg opacity-40 text-center border-t border-border"
     >
-        Made with &lt;3 by @blake__dev + AI
+        Made with &lt;3 by <a
+            href="https://x.com/blake__dev"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="text-inherit no-underline hover:underline">@blake__dev</a
+        > + AI
     </div>
 
     <svg

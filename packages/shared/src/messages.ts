@@ -17,12 +17,41 @@ export interface Attachment extends AttachmentRef {
     data: string; // base64
 }
 
+// A single source captured from a provider's web search tool. `title` is
+// optional from our perspective but Anthropic's SDK requires it on re-send,
+// so the provider's send-side shaper falls back to `url` when absent.
+// `anthropicEncrypted` is Anthropic's opaque `encrypted_content` blob,
+// required to preserve citation continuity across turns; empty/omitted for
+// providers that don't surface it.
+export interface WebSearchSource {
+    url: string;
+    title?: string;
+    anthropicEncrypted?: string;
+}
+
+// One block of web-search output, mirroring a single provider tool call.
+// `callId` is the real id from the API (anthropic `server_tool_use.id`,
+// openai `web_search_call.id`); absent when the provider doesn't surface
+// one we can reuse (google), or when we don't re-inject (openrouter).
+export interface WebSearchToolResult {
+    type: 'web_search';
+    callId?: string;
+    sources: WebSearchSource[];
+}
+
+// Discriminated union — only `web_search` today, expand later if other
+// server-side tools land.
+export type ToolResult = WebSearchToolResult;
+
 export interface ChatMessage {
     role: 'user' | 'assistant' | 'system';
     content: string;
     // Union: fresh uploads on the current turn carry full Attachment (with
     // data); history items are AttachmentRef and get hydrated server-side.
     attachments?: (Attachment | AttachmentRef)[];
+    // Assistant-only. Carried forward in history so each provider can
+    // reconstruct its native tool-call blocks on the next turn.
+    toolResults?: ToolResult[];
 }
 
 // Post-hydration form. The ext fills bare refs into full attachments before
@@ -31,6 +60,7 @@ export interface HydratedChatMessage {
     role: 'user' | 'assistant' | 'system';
     content: string;
     attachments?: Attachment[];
+    toolResults?: ToolResult[];
 }
 
 // Sent over a port (chrome.runtime.connect) for streaming chat. The 'start'
@@ -69,6 +99,7 @@ export type TurnRequest =
 export type ExtensionResponse =
     | { type: 'chunk'; content: string }
     | { type: 'thinking_chunk'; content: string }
+    | { type: 'tool_results'; toolResults: ToolResult[] }
     | { type: 'done'; usage?: { inputTokens: number; outputTokens: number } }
     | { type: 'error'; message: string };
 
@@ -89,6 +120,11 @@ export type BroadcastEvent =
           chatId: string;
           kind: 'content' | 'thinking';
           delta: string;
+      }
+    | {
+          type: 'turn-tool-results';
+          chatId: string;
+          toolResults: ToolResult[];
       }
     | { type: 'turn-done'; chatId: string }
     | { type: 'turn-error'; chatId: string; message: string }
@@ -115,6 +151,9 @@ export type StreamErrorSource = 'api' | 'extension';
 export interface StreamHandlers {
     onChunk: (text: string) => void;
     onThinking?: (text: string) => void;
+    // Structured tool-call output collected at the end of a stream. Emitted
+    // at most once per turn, after the content stream completes.
+    onToolResults?: (toolResults: ToolResult[]) => void;
     onDone: (usage?: StreamUsage) => void;
     onError: (message: string, source?: StreamErrorSource) => void;
 }
@@ -188,6 +227,7 @@ export interface StoredChat {
         content: string;
         thinking?: string;
         attachments?: AttachmentRef[];
+        toolResults?: ToolResult[];
     }>;
     tokens?: { input: number; output: number };
 }

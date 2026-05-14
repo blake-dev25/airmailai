@@ -14,12 +14,14 @@
         editingDims,
         hovered,
         thinkingExpanded,
+        sourcesExpanded,
         onhoverenter,
         onhoverleave,
         onstartedit,
         onsaveedit,
         oncanceledit,
         onthinkingtoggle,
+        onsourcestoggle,
         onretry,
         ondelete,
     }: {
@@ -33,12 +35,14 @@
         editingDims: { w: number; h: number } | null;
         hovered: boolean;
         thinkingExpanded: boolean;
+        sourcesExpanded: boolean;
         onhoverenter: () => void;
         onhoverleave: () => void;
         onstartedit: (content: string, bubbleEl: HTMLElement | null) => void;
         onsaveedit: () => void;
         oncanceledit: () => void;
         onthinkingtoggle: () => void;
+        onsourcestoggle: () => void;
         onretry: () => void;
         ondelete: () => void;
     } = $props();
@@ -47,14 +51,31 @@
 
     const isUser = $derived(message.role === 'user');
 
+    // Flatten every web_search ToolResult's sources into one deduped list for
+    // display. The model may have made several search calls in one turn, but
+    // the user just wants one collapsible "Sources" section per message.
+    const flatSources = $derived.by(() => {
+        const seen = new Set<string>();
+        const out: { url: string; title?: string }[] = [];
+        for (const tr of message.toolResults ?? []) {
+            if (tr.type !== 'web_search') continue;
+            for (const s of tr.sources) {
+                if (!s.url || seen.has(s.url)) continue;
+                seen.add(s.url);
+                out.push({ url: s.url, title: s.title });
+            }
+        }
+        return out;
+    });
+
     async function copyMessage(content: string) {
         await navigator.clipboard.writeText(content);
     }
 
     const bubbleBase =
-        'max-w-full px-3.5 py-2.5 rounded-[14px] text-sm leading-[1.65] whitespace-pre-wrap wrap-break-word';
+        'max-w-full px-3.5 py-2.5 rounded-[14px] text-sm leading-[1.65] wrap-break-word';
     const bubbleAssistant = `${bubbleBase} bg-bubble-assistant text-on-bubble-assistant rounded-bl-[4px]`;
-    const bubbleUser = `${bubbleBase} bg-bubble-user text-on-bubble-user rounded-br-[4px]`;
+    const bubbleUser = `${bubbleBase} whitespace-pre-wrap bg-bubble-user text-on-bubble-user rounded-br-[4px]`;
 
     const msgActionBtnClass =
         'msg-action-btn relative flex items-center justify-center w-6 h-6 p-0 bg-transparent border-0 rounded-md text-fg opacity-40 cursor-pointer transition-[opacity,background-color] duration-[120ms] enabled:hover:opacity-100 enabled:hover:bg-surface-sunken disabled:opacity-[0.18] disabled:cursor-not-allowed';
@@ -156,6 +177,41 @@
                     {message.content}
                 {:else}
                     <MarkdownMessage content={displayContent} />
+                    {#if flatSources.length}
+                        <div class="mt-2 pt-2 border-t border-current/15">
+                            <button
+                                type="button"
+                                class="flex items-center gap-1.5 w-full bg-transparent border-0 text-on-bubble-assistant font-sans text-xs font-medium opacity-60 cursor-pointer text-left transition-opacity duration-150 hover:opacity-100"
+                                onclick={onsourcestoggle}
+                            >
+                                <span>Sources</span>
+                                <Icon
+                                    name="chevron-right"
+                                    class="transition-transform duration-200 {sourcesExpanded
+                                        ? 'rotate-90'
+                                        : ''}"
+                                />
+                            </button>
+                            {#if sourcesExpanded}
+                                <ol
+                                    class="mt-1.5 pl-5 text-xs leading-[1.6] opacity-80 list-decimal"
+                                >
+                                    {#each flatSources as source (source.url)}
+                                        <li>
+                                            <a
+                                                href={source.url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                class="text-accent-fg hover:underline wrap-break-word"
+                                                >{source.title?.trim() ||
+                                                    source.url}</a
+                                            >
+                                        </li>
+                                    {/each}
+                                </ol>
+                            {/if}
+                        </div>
+                    {/if}
                 {/if}
             </div>
         {/if}

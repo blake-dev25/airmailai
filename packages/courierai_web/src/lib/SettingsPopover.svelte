@@ -477,7 +477,13 @@
             </div>
             <div class={[rowBase, themeRow]}>
                 <label for="tag-openrouter" class={labelClass}
-                    >Tag OpenRouter requests with 'CourierAI' for app tracking</label
+                    >Tag OpenRouter requests with 'CourierAI' for <a
+                        href="https://openrouter.ai/apps?url=https%3A%2F%2Fcourierai.net%2F"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="text-accent-fg no-underline hover:underline"
+                        onclick={(e) => e.stopPropagation()}>app tracking ↗</a
+                    ></label
                 >
                 <button
                     id="tag-openrouter"

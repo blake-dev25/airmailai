@@ -213,6 +213,10 @@ export function sendToExtension(
                 if (stopped) break;
                 handlers.onThinking?.(response.content);
                 break;
+            case 'tool_results':
+                if (stopped) break;
+                handlers.onToolResults?.(response.toolResults);
+                break;
             case 'done':
                 done = true;
                 console.log(LOG, '← stream done');
@@ -281,8 +285,15 @@ export function subscribeToBroadcast(handlers: {
         keepaliveTimer = null;
     };
 
+    const clearReconnect = () => {
+        if (reconnectTimer === null) return;
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+    };
+
     function connect() {
         if (unsubscribed) return;
+        clearReconnect();
         if (!extensionId) {
             // Extension not detected yet — try again shortly.
             reconnectTimer = setTimeout(connect, 1000);
@@ -305,7 +316,15 @@ export function subscribeToBroadcast(handlers: {
         });
 
         port.onDisconnect.addListener(() => {
-            console.log(LOG, 'broadcast: disconnected, reconnecting in 1s');
+            // Read lastError to consume any close reason Chrome attached
+            // (e.g. bfcache eviction). Without this, Chrome surfaces it as
+            // "Unchecked runtime.lastError".
+            const reason = chrome.runtime.lastError?.message;
+            console.log(
+                LOG,
+                'broadcast: disconnected, reconnecting in 1s',
+                reason ? `(${reason})` : ''
+            );
             port = null;
             clearKeepalive();
             if (!unsubscribed) reconnectTimer = setTimeout(connect, 1000);
@@ -325,12 +344,34 @@ export function subscribeToBroadcast(handlers: {
         }, KEEPALIVE_MS);
     }
 
+    // BFCache handling: Chrome closes the port channel when the page enters
+    // bfcache (Chrome 123+). pagehide+persisted means we're freezing — drop
+    // the dead reference so the post-restore keepalive can't fire on it.
+    // pageshow+persisted means we just thawed; reconnect immediately rather
+    // than waiting for the disconnect-driven 1s backoff.
+    const onPageHide = (event: PageTransitionEvent) => {
+        if (!event.persisted) return;
+        console.log(LOG, 'broadcast: page entering bfcache, releasing port');
+        clearKeepalive();
+        clearReconnect();
+        port = null;
+    };
+    const onPageShow = (event: PageTransitionEvent) => {
+        if (!event.persisted) return;
+        console.log(LOG, 'broadcast: page restored from bfcache, reconnecting');
+        connect();
+    };
+    window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('pageshow', onPageShow);
+
     connect();
 
     return {
         unsubscribe: () => {
             unsubscribed = true;
-            if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+            window.removeEventListener('pagehide', onPageHide);
+            window.removeEventListener('pageshow', onPageShow);
+            clearReconnect();
             clearKeepalive();
             if (port) port.disconnect();
         },

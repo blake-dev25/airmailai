@@ -22,7 +22,7 @@ export const PROVIDERS: ProviderOption[] = [
     OPENAI,
     GOOGLE,
     OPENROUTER,
-];
+].sort((a, b) => a.name.localeCompare(b.name));
 
 const TIER_RANK: Record<ModelTier, number> = {
     latest: 0,

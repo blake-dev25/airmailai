@@ -2,14 +2,19 @@ import type {
     HydratedChatMessage,
     StreamHandlers,
     StreamUsage,
+    WebSearchToolResult,
 } from '@courier/shared';
 import OpenAI from 'openai';
 import { DEBUG_API_LOGGING } from '../debug';
-import { collectUrlCitationSources, formatSources } from './sources';
+import {
+    buildResponsesToolResults,
+    collectUrlCitationSources,
+    collectWebSearchCallIds,
+} from './tool-results';
 
 const LOG = '[courier:ext]';
 
-function toOpenAIParam(
+function messageInputItem(
     msg: HydratedChatMessage
 ): OpenAI.Responses.EasyInputMessage {
     if (!msg.attachments?.length) {
@@ -41,6 +46,36 @@ function toOpenAIParam(
     return { role: msg.role as 'user' | 'assistant', content: parts };
 }
 
+// Re-inject prior `web_search_call` items so the model knows it already
+// searched. The Responses API accepts these directly in the input array.
+function webSearchCallItems(
+    toolResults: WebSearchToolResult[]
+): OpenAI.Responses.ResponseFunctionWebSearch[] {
+    return toolResults
+        .filter((tr) => !!tr.callId)
+        .map((tr) => ({
+            type: 'web_search_call',
+            id: tr.callId!,
+            status: 'completed',
+            action: { type: 'search', query: '' },
+        }));
+}
+
+// Build the flat list of input items for the Responses API. Prior web search
+// calls go in *before* the assistant message they belong to.
+function toResponsesInput(
+    messages: HydratedChatMessage[]
+): OpenAI.Responses.ResponseInputItem[] {
+    const items: OpenAI.Responses.ResponseInputItem[] = [];
+    for (const msg of messages) {
+        if (msg.role === 'assistant' && msg.toolResults?.length) {
+            items.push(...webSearchCallItems(msg.toolResults));
+        }
+        items.push(messageInputItem(msg));
+    }
+    return items;
+}
+
 export async function streamOpenAI(
     apiKey: string,
     model: string,
@@ -52,16 +87,16 @@ export async function streamOpenAI(
     const client = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
 
     const systemMsg = messages.find((m) => m.role === 'system');
-    const inputMessages = messages
-        .filter((m) => m.role !== 'system')
-        .map(toOpenAIParam);
+    const inputItems = toResponsesInput(
+        messages.filter((m) => m.role !== 'system')
+    );
 
     const thinkingLevel = params.thinkingLevel as string | undefined;
     const thinkingEnabled = thinkingLevel && thinkingLevel !== 'none';
 
     console.log(LOG, 'openai: stream start', {
         model,
-        inputMessages: inputMessages.length,
+        inputItems: inputItems.length,
         hasSystem: !!systemMsg,
         params,
     });
@@ -70,7 +105,7 @@ export async function streamOpenAI(
         const stream = await client.responses.create(
             {
                 model,
-                input: inputMessages,
+                input: inputItems,
                 ...(systemMsg ? { instructions: systemMsg.content } : {}),
                 max_output_tokens: (params.maxTokens as number) ?? 8192,
                 ...(params.temperature !== undefined
@@ -94,7 +129,7 @@ export async function streamOpenAI(
 
         let firstChunk = true;
         let usage: StreamUsage | undefined;
-        let sourceChunk = '';
+        let toolResults: WebSearchToolResult[] = [];
 
         for await (const event of stream) {
             if (event.type === 'response.output_text.delta') {
@@ -116,13 +151,14 @@ export async function streamOpenAI(
                         outputTokens: u.output_tokens,
                     };
                 }
-                sourceChunk = formatSources(
+                toolResults = buildResponsesToolResults(
+                    collectWebSearchCallIds(event.response),
                     collectUrlCitationSources(event.response)
                 );
             }
         }
 
-        if (sourceChunk) handlers.onChunk(sourceChunk);
+        if (toolResults.length) handlers.onToolResults?.(toolResults);
         console.log(LOG, 'openai: stream done');
         handlers.onDone(usage);
     } catch (e) {

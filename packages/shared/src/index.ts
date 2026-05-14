@@ -15,10 +15,13 @@ export type {
     StreamErrorSource,
     StreamHandlers,
     StreamUsage,
+    ToolResult,
     TurnKeepaliveRequest,
     TurnRequest,
     TurnStartRequest,
     TurnStopRequest,
     UserSettings,
+    WebSearchSource,
+    WebSearchToolResult,
 } from './messages';
 export { SETTINGS_KEYS } from './messages';

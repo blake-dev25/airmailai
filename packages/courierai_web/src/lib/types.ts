@@ -1,4 +1,4 @@
-import type { Attachment, AttachmentRef } from '@courier/shared';
+import type { Attachment, AttachmentRef, ToolResult } from '@courier/shared';
 
 export interface Message {
     // Client-only stable identity. Drives keyed {#each} and per-message UI
@@ -9,6 +9,7 @@ export interface Message {
     content: string;
     thinking?: string;
     attachments?: AttachmentRef[];
+    toolResults?: ToolResult[];
 }
 
 export interface Chat {
