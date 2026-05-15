@@ -6,11 +6,7 @@ import type {
 } from '@courier/shared';
 import OpenAI from 'openai';
 import { DEBUG_API_LOGGING } from '../debug';
-import {
-    buildResponsesToolResults,
-    collectUrlCitationSources,
-    collectWebSearchCallIds,
-} from './tool-results';
+import { buildOpenAIResponsesToolResults } from './tool-results';
 
 const LOG = '[courier:ext]';
 
@@ -46,19 +42,33 @@ function messageInputItem(
     return { role: msg.role as 'user' | 'assistant', content: parts };
 }
 
-// Re-inject prior `web_search_call` items so the model knows it already
-// searched. The Responses API accepts these directly in the input array.
-function webSearchCallItems(
+// Re-inject prior reasoning + `web_search_call` items so the model knows it
+// already searched. The API binds each web_search_call to a preceding
+// reasoning item by id; both must be present on stateless multi-turn calls.
+// Reasoning items come first to match the order in the original response.
+function webSearchPrefixItems(
     toolResults: WebSearchToolResult[]
-): OpenAI.Responses.ResponseFunctionWebSearch[] {
-    return toolResults
-        .filter((tr) => !!tr.callId)
-        .map((tr) => ({
-            type: 'web_search_call',
-            id: tr.callId!,
-            status: 'completed',
-            action: { type: 'search', query: '' },
-        }));
+): OpenAI.Responses.ResponseInputItem[] {
+    const items: OpenAI.Responses.ResponseInputItem[] = [];
+    for (const tr of toolResults) {
+        for (const r of tr.openaiReasoning ?? []) {
+            items.push({
+                type: 'reasoning',
+                id: r.id,
+                summary: [],
+                encrypted_content: r.encryptedContent,
+            });
+        }
+        if (tr.callId) {
+            items.push({
+                type: 'web_search_call',
+                id: tr.callId,
+                status: 'completed',
+                action: { type: 'search', query: '' },
+            });
+        }
+    }
+    return items;
 }
 
 // Build the flat list of input items for the Responses API. Prior web search
@@ -69,7 +79,7 @@ function toResponsesInput(
     const items: OpenAI.Responses.ResponseInputItem[] = [];
     for (const msg of messages) {
         if (msg.role === 'assistant' && msg.toolResults?.length) {
-            items.push(...webSearchCallItems(msg.toolResults));
+            items.push(...webSearchPrefixItems(msg.toolResults));
         }
         items.push(messageInputItem(msg));
     }
@@ -101,31 +111,40 @@ export async function streamOpenAI(
         params,
     });
 
+    const requestBody = {
+        model,
+        input: inputItems,
+        ...(systemMsg ? { instructions: systemMsg.content } : {}),
+        max_output_tokens: (params.maxTokens as number) ?? 8192,
+        ...(params.temperature !== undefined
+            ? { temperature: params.temperature as number }
+            : {}),
+        ...(thinkingEnabled
+            ? {
+                  reasoning: {
+                      effort: thinkingLevel,
+                      summary: 'auto',
+                  } as never,
+              }
+            : {}),
+        ...(params.webSearch
+            ? {
+                  tools: [{ type: 'web_search' as const }],
+                  // Required to replay reasoning items on later turns
+                  // when running stateless — the API binds each
+                  // web_search_call to its preceding reasoning item.
+                  include: ['reasoning.encrypted_content' as const],
+              }
+            : {}),
+        stream: true as const,
+    };
+
+    if (DEBUG_API_LOGGING) {
+        console.log(LOG, '[debug] openai: → request', requestBody);
+    }
+
     try {
-        const stream = await client.responses.create(
-            {
-                model,
-                input: inputItems,
-                ...(systemMsg ? { instructions: systemMsg.content } : {}),
-                max_output_tokens: (params.maxTokens as number) ?? 8192,
-                ...(params.temperature !== undefined
-                    ? { temperature: params.temperature as number }
-                    : {}),
-                ...(thinkingEnabled
-                    ? {
-                          reasoning: {
-                              effort: thinkingLevel,
-                              summary: 'auto',
-                          } as never,
-                      }
-                    : {}),
-                ...(params.webSearch
-                    ? { tools: [{ type: 'web_search' }] }
-                    : {}),
-                stream: true,
-            },
-            { signal }
-        );
+        const stream = await client.responses.create(requestBody, { signal });
 
         let firstChunk = true;
         let usage: StreamUsage | undefined;
@@ -142,7 +161,11 @@ export async function streamOpenAI(
                 handlers.onThinking?.((event as { delta: string }).delta);
             } else if (event.type === 'response.completed') {
                 if (DEBUG_API_LOGGING) {
-                    console.log(LOG, '[debug] full response', event.response);
+                    console.log(
+                        LOG,
+                        '[debug] openai: ← response',
+                        event.response
+                    );
                 }
                 const u = event.response.usage;
                 if (u) {
@@ -151,10 +174,7 @@ export async function streamOpenAI(
                         outputTokens: u.output_tokens,
                     };
                 }
-                toolResults = buildResponsesToolResults(
-                    collectWebSearchCallIds(event.response),
-                    collectUrlCitationSources(event.response)
-                );
+                toolResults = buildOpenAIResponsesToolResults(event.response);
             }
         }
 

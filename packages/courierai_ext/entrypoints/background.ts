@@ -82,7 +82,13 @@ async function hydrateTurn(messages: ChatMessage[]): Promise<{
     const hydrated: HydratedChatMessage[] = [];
     for (const msg of messages) {
         if (!msg.attachments?.length) {
-            hydrated.push({ role: msg.role, content: msg.content });
+            hydrated.push({
+                role: msg.role,
+                content: msg.content,
+                ...(msg.toolResults?.length
+                    ? { toolResults: msg.toolResults }
+                    : {}),
+            });
             continue;
         }
         const filled: Attachment[] = [];
@@ -115,6 +121,9 @@ async function hydrateTurn(messages: ChatMessage[]): Promise<{
             role: msg.role,
             content: msg.content,
             attachments: filled,
+            ...(msg.toolResults?.length
+                ? { toolResults: msg.toolResults }
+                : {}),
         });
     }
     return { hydrated, freshBlobs };
@@ -556,7 +565,7 @@ export default defineBackground(() => {
                 });
 
                 if (DEBUG_API_LOGGING) {
-                    console.log(LOG, '[debug] full request', {
+                    console.log(LOG, '[debug] site → ext request', {
                         provider: msg.provider,
                         model: msg.model,
                         params: msg.params,

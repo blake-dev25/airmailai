@@ -330,6 +330,42 @@
     --color-on-accent-3-bg-hover: #141d22;
 }
 
+/* Dial-up — #008080 (teal desktop), #C0C0C0 (silver chrome), #FF3100 / #009CFF / #FFCE00 accents */
+[data-theme='dial-up'] {
+    --color-canvas: #008080;
+    --color-surface-raised: #c0c0c0;
+    --color-surface-sunken: #dfdfdf;
+    --color-border: #808080;
+    --color-fg: #000000;
+    --color-fg-muted: #404040;
+
+    --color-bubble-user: #000080;
+    --color-on-bubble-user: #ffffff;
+    --color-bubble-assistant: #c0c0c0;
+    --color-on-bubble-assistant: #000000;
+
+    --color-accent-fg: #ff3100;
+    --color-accent-fg-hover: #d92800;
+    --color-accent-bg: #ff3100;
+    --color-accent-bg-hover: #d92800;
+    --color-on-accent-bg: #ffffff;
+    --color-on-accent-bg-hover: #ffffff;
+
+    --color-accent-2-fg: #009cff;
+    --color-accent-2-fg-hover: #0080d4;
+    --color-accent-2-bg: #009cff;
+    --color-accent-2-bg-hover: #0080d4;
+    --color-on-accent-2-bg: #ffffff;
+    --color-on-accent-2-bg-hover: #ffffff;
+
+    --color-accent-3-fg: #ffce00;
+    --color-accent-3-fg-hover: #d9af00;
+    --color-accent-3-bg: #ffce00;
+    --color-accent-3-bg-hover: #d9af00;
+    --color-on-accent-3-bg: #000000;
+    --color-on-accent-3-bg-hover: #000000;
+}
+
 /* Digital Rain — #000000 (black), #00FF41 (neon green), #00B82E (darker green) */
 [data-theme='digital-rain'] {
     --color-canvas: #000000;

@@ -11,20 +11,48 @@ import type {
     InputFile,
     InputsUnion,
     InputText,
-    OutputWebSearchCallItem,
 } from '@openrouter/sdk/models';
 import { DEBUG_API_LOGGING } from '../debug';
-import {
-    buildResponsesToolResults,
-    collectUrlCitationSources,
-    collectWebSearchCallIds,
-} from './tool-results';
+import { collectUrlCitationSources } from './tool-results';
 
 const LOG = '[courier:ext]';
 
+// OpenRouter normalizes/strips upstream encrypted search context on its
+// Responses API passthrough — neither `encrypted_content` reasoning blobs
+// nor `openrouter:web_search` action items survive in a way the model can
+// re-derive URLs from. The only reliable carrier is plain text in the
+// assistant turn. So for replay we append a markdown `Sources:` list to
+// the stored assistant content with the URLs/titles we persisted.
+// Verified vs an encrypted-content replay path (scripts/tool-call-test.ts):
+// text-block lets both gpt-5.5-via-OR and Sonnet-via-OR print URLs verbatim;
+// encrypted-content path refuses on both.
+function withSourcesBlock(
+    text: string,
+    toolResults: WebSearchToolResult[]
+): string {
+    const lines: string[] = [];
+    let n = 1;
+    for (const tr of toolResults) {
+        for (const s of tr.sources) {
+            lines.push(
+                s.title ? `${n}. [${s.title}](${s.url})` : `${n}. ${s.url}`
+            );
+            n++;
+        }
+    }
+    if (!lines.length) return text;
+    const block = 'Sources:\n' + lines.join('\n');
+    return text ? `${text}\n\n${block}` : block;
+}
+
 function messageInputItem(msg: HydratedChatMessage): EasyInputMessage {
+    const content =
+        msg.role === 'assistant' && msg.toolResults?.length
+            ? withSourcesBlock(msg.content, msg.toolResults)
+            : msg.content;
+
     if (!msg.attachments?.length) {
-        return { role: msg.role as 'user' | 'assistant', content: msg.content };
+        return { role: msg.role as 'user' | 'assistant', content };
     }
 
     const parts: Array<
@@ -47,39 +75,17 @@ function messageInputItem(msg: HydratedChatMessage): EasyInputMessage {
         }
     }
 
-    if (msg.content) {
-        parts.push({ type: 'input_text', text: msg.content });
+    if (content) {
+        parts.push({ type: 'input_text', text: content });
     }
 
     return { role: msg.role as 'user' | 'assistant', content: parts };
 }
 
-// Re-inject prior `web_search_call` items so the model sees that it already
-// searched. OpenRouter's Responses API accepts these directly in `input`.
-function webSearchCallItems(
-    toolResults: WebSearchToolResult[]
-): OutputWebSearchCallItem[] {
-    return toolResults
-        .filter((tr) => !!tr.callId)
-        .map((tr) => ({
-            type: 'web_search_call',
-            id: tr.callId!,
-            status: 'completed',
-            action: { type: 'search', query: '' },
-        }));
-}
-
 function toResponsesInput(
     messages: HydratedChatMessage[]
 ): Exclude<InputsUnion, string> {
-    const items: Exclude<InputsUnion, string> = [];
-    for (const msg of messages) {
-        if (msg.role === 'assistant' && msg.toolResults?.length) {
-            items.push(...webSearchCallItems(msg.toolResults));
-        }
-        items.push(messageInputItem(msg));
-    }
-    return items;
+    return messages.map(messageInputItem);
 }
 
 // Our thinkingLevel vocabulary → OpenRouter's reasoning.effort enum.
@@ -128,28 +134,33 @@ export async function streamOpenRouter(
         params,
     });
 
+    const requestBody = {
+        responsesRequest: {
+            model,
+            input,
+            ...(systemMsg ? { instructions: systemMsg.content } : {}),
+            maxOutputTokens: (params.maxTokens as number) ?? 8192,
+            ...(params.temperature !== undefined
+                ? { temperature: params.temperature as number }
+                : {}),
+            ...(effort
+                ? { reasoning: { effort, summary: 'auto' as const } }
+                : {}),
+            ...(params.webSearch
+                ? { tools: [{ type: 'openrouter:web_search' as const }] }
+                : {}),
+            stream: true as const,
+        },
+    };
+
+    if (DEBUG_API_LOGGING) {
+        console.log(LOG, '[debug] openrouter: → request', requestBody);
+    }
+
     try {
-        const stream = await client.beta.responses.send(
-            {
-                responsesRequest: {
-                    model,
-                    input,
-                    ...(systemMsg ? { instructions: systemMsg.content } : {}),
-                    maxOutputTokens: (params.maxTokens as number) ?? 8192,
-                    ...(params.temperature !== undefined
-                        ? { temperature: params.temperature as number }
-                        : {}),
-                    ...(effort
-                        ? { reasoning: { effort, summary: 'auto' } }
-                        : {}),
-                    ...(params.webSearch
-                        ? { tools: [{ type: 'openrouter:web_search' }] }
-                        : {}),
-                    stream: true,
-                },
-            },
-            { signal }
-        );
+        const stream = await client.beta.responses.send(requestBody, {
+            signal,
+        });
 
         let firstChunk = true;
         let usage: StreamUsage | undefined;
@@ -166,12 +177,16 @@ export async function streamOpenRouter(
                 handlers.onThinking?.(event.delta);
             } else if (event.type === 'response.completed') {
                 if (DEBUG_API_LOGGING) {
-                    console.log(LOG, '[debug] full response', event.response);
+                    console.log(
+                        LOG,
+                        '[debug] openrouter: ← response',
+                        event.response
+                    );
                 }
-                toolResults = buildResponsesToolResults(
-                    collectWebSearchCallIds(event.response),
-                    collectUrlCitationSources(event.response)
-                );
+                const sources = collectUrlCitationSources(event.response);
+                toolResults = sources.length
+                    ? [{ type: 'web_search', sources }]
+                    : [];
                 const u = event.response.usage;
                 if (u) {
                     usage = {

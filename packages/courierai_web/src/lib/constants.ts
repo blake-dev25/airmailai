@@ -24,4 +24,5 @@ export const THEMES: ReadonlyArray<{ id: string; name: string }> = [
     { id: 'solarized-dark', name: 'Solarized Dark' },
     { id: 'phosphor', name: 'Phosphor' },
     { id: 'digital-rain', name: 'Digital Rain' },
+    { id: 'dial-up', name: 'Dial-up' },
 ];

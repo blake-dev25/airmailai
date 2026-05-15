@@ -33,10 +33,14 @@ export interface WebSearchSource {
 // `callId` is the real id from the API (anthropic `server_tool_use.id`,
 // openai `web_search_call.id`); absent when the provider doesn't surface
 // one we can reuse (google), or when we don't re-inject (openrouter).
+// `openaiReasoning` carries the reasoning items OpenAI's Responses API
+// binds to each `web_search_call` by id — required on re-inject for
+// stateless (no `previous_response_id`) multi-turn calls.
 export interface WebSearchToolResult {
     type: 'web_search';
     callId?: string;
     sources: WebSearchSource[];
+    openaiReasoning?: Array<{ id: string; encryptedContent: string }>;
 }
 
 // Discriminated union — only `web_search` today, expand later if other

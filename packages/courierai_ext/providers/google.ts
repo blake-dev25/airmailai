@@ -141,27 +141,35 @@ export async function streamGoogle(
         params,
     });
 
+    const requestBody = {
+        model,
+        contents,
+        config: {
+            ...(systemMsg ? { systemInstruction: systemMsg.content } : {}),
+            maxOutputTokens: (params.maxTokens as number) ?? 8192,
+            ...(params.temperature !== undefined
+                ? { temperature: params.temperature as number }
+                : {}),
+            ...(thinkingCfg ? { thinkingConfig: thinkingCfg } : {}),
+            ...(webSearchTools ? { tools: webSearchTools } : {}),
+            ...(signal ? { abortSignal: signal } : {}),
+        },
+    };
+
+    if (DEBUG_API_LOGGING) {
+        console.log(LOG, '[debug] google: → request', requestBody);
+    }
+
     try {
-        const stream = await client.models.generateContentStream({
-            model,
-            contents,
-            config: {
-                ...(systemMsg ? { systemInstruction: systemMsg.content } : {}),
-                maxOutputTokens: (params.maxTokens as number) ?? 8192,
-                ...(params.temperature !== undefined
-                    ? { temperature: params.temperature as number }
-                    : {}),
-                ...(thinkingCfg ? { thinkingConfig: thinkingCfg } : {}),
-                ...(webSearchTools ? { tools: webSearchTools } : {}),
-                ...(signal ? { abortSignal: signal } : {}),
-            },
-        });
+        const stream = await client.models.generateContentStream(requestBody);
 
         let firstChunk = true;
         let lastUsage: StreamUsage | undefined;
         const sources: WebSearchSource[] = [];
+        const debugChunks: unknown[] = [];
 
         for await (const chunk of stream) {
+            if (DEBUG_API_LOGGING) debugChunks.push(chunk);
             sources.push(...collectGoogleSources(chunk));
             for (const part of chunk.candidates?.[0]?.content?.parts ?? []) {
                 if (part.thought && part.text) {
@@ -194,7 +202,10 @@ export async function streamGoogle(
         }
         console.log(LOG, 'google: stream done');
         if (DEBUG_API_LOGGING) {
-            console.log(LOG, '[debug] usage', lastUsage);
+            console.log(LOG, '[debug] google: ← response', {
+                chunks: debugChunks,
+                usage: lastUsage,
+            });
         }
         handlers.onDone(lastUsage);
     } catch (e) {

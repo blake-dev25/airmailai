@@ -55,41 +55,89 @@ export function collectUrlCitationSources(
     return dedupeSources(out);
 }
 
-// OpenAI/OpenRouter both expose `web_search_call` items with an `id` we want
-// to preserve for re-injection. Returns the list of call IDs in order.
-export function collectWebSearchCallIds(response: unknown): string[] {
-    const ids: string[] = [];
-    if (!response || typeof response !== 'object') return ids;
+// Walk the response output in document order and emit one ToolResult per
+// `web_search_call`, with the reasoning items that precede it attached as
+// `openaiReasoning`. The OpenAI Responses API binds each web_search_call to
+// the reasoning item directly before it by id — replaying them out of order
+// (or dropping any) errors with "ws_X provided without required rs_Y".
+//
+// A trailing reasoning item (after the last web_search_call but before the
+// final message) is emitted as a callId-less tool result so it still gets
+// replayed in position.
+//
+// Sources from message annotations are placed on the first emitted tool
+// result. The UI flattens/dedupes across all entries on render anyway.
+export function buildOpenAIResponsesToolResults(
+    response: unknown
+): WebSearchToolResult[] {
+    const out: WebSearchToolResult[] = [];
+    const sources = collectUrlCitationSources(response);
+
+    if (!response || typeof response !== 'object') {
+        return sources.length ? [{ type: 'web_search', sources }] : [];
+    }
     const output = (response as { output?: unknown }).output;
-    if (!Array.isArray(output)) return ids;
+    if (!Array.isArray(output)) {
+        return sources.length ? [{ type: 'web_search', sources }] : [];
+    }
+
+    let pending: Array<{ id: string; encryptedContent: string }> = [];
+    let attachedSources = false;
+    const takeSources = () => {
+        if (attachedSources) return [] as WebSearchSource[];
+        attachedSources = true;
+        return sources;
+    };
 
     for (const item of output) {
         if (!item || typeof item !== 'object') continue;
-        const candidate = item as { id?: unknown; type?: unknown };
+        const candidate = item as {
+            type?: unknown;
+            id?: unknown;
+            encrypted_content?: unknown;
+        };
+
+        if (
+            candidate.type === 'reasoning' &&
+            typeof candidate.id === 'string'
+        ) {
+            const enc =
+                typeof candidate.encrypted_content === 'string'
+                    ? candidate.encrypted_content
+                    : '';
+            // Without encrypted_content there's nothing to replay — drop it.
+            // Caller must request `include: ['reasoning.encrypted_content']`.
+            if (enc.length > 0) {
+                pending.push({ id: candidate.id, encryptedContent: enc });
+            }
+            continue;
+        }
+
         if (
             candidate.type === 'web_search_call' &&
             typeof candidate.id === 'string'
         ) {
-            ids.push(candidate.id);
+            out.push({
+                type: 'web_search',
+                callId: candidate.id,
+                sources: takeSources(),
+                ...(pending.length ? { openaiReasoning: pending } : {}),
+            });
+            pending = [];
         }
     }
-    return ids;
-}
 
-// Build a single ToolResult bundling all citation sources under the first
-// observed call id (typical case: one search call per turn). When there are
-// multiple call ids and we re-inject, providers that need per-call binding
-// can split this back out, but for collection we keep it one entry.
-export function buildResponsesToolResults(
-    callIds: string[],
-    sources: WebSearchSource[]
-): WebSearchToolResult[] {
-    if (callIds.length === 0 && sources.length === 0) return [];
-    return [
-        {
+    if (pending.length) {
+        out.push({
             type: 'web_search',
-            ...(callIds[0] ? { callId: callIds[0] } : {}),
-            sources,
-        },
-    ];
+            sources: takeSources(),
+            openaiReasoning: pending,
+        });
+    }
+
+    if (out.length === 0 && sources.length > 0) {
+        out.push({ type: 'web_search', sources });
+    }
+
+    return out;
 }

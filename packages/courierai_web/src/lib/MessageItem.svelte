@@ -169,13 +169,12 @@
                 >
             </div>
         {:else if displayContent}
-            <div
-                bind:this={bubbleEl}
-                class={isUser ? bubbleUser : bubbleAssistant}
-            >
-                {#if isUser}
+            {#if isUser}
+                <div bind:this={bubbleEl} class={bubbleUser}>
                     {message.content}
-                {:else}
+                </div>
+            {:else}
+                <div bind:this={bubbleEl} class={bubbleAssistant}>
                     <MarkdownMessage content={displayContent} />
                     {#if flatSources.length}
                         <div class="mt-2 pt-2 border-t border-current/15">
@@ -212,14 +211,14 @@
                             {/if}
                         </div>
                     {/if}
-                {/if}
-            </div>
+                </div>
+            {/if}
         {/if}
 
         {#if hovered && !editing && !isLastStreaming}
             <div
                 class={[
-                    'absolute top-full mt-0.5 flex flex-row gap-px animate-actions-appear z-1',
+                    'absolute top-full mt-0.5 flex flex-row gap-px animate-actions-appear z-1 select-none',
                     isUser ? 'right-0' : 'left-0',
                 ]}
             >

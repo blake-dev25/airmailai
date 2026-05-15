@@ -260,24 +260,27 @@ export async function streamAnthropic(
           }
         : {};
 
+    const requestBody = {
+        model,
+        max_tokens: maxTokens,
+        ...(params.temperature !== undefined
+            ? { temperature: params.temperature as number }
+            : {}),
+        ...thinkingParam,
+        ...(thinkingEnabled
+            ? { output_config: { effort: thinkingLevel } as never }
+            : {}),
+        ...webSearchParam,
+        ...(systemMsg ? { system: systemMsg.content } : {}),
+        messages: chatMessages,
+    };
+
+    if (DEBUG_API_LOGGING) {
+        console.log(LOG, '[debug] anthropic: → request', requestBody);
+    }
+
     try {
-        const stream = client.messages.stream(
-            {
-                model,
-                max_tokens: maxTokens,
-                ...(params.temperature !== undefined
-                    ? { temperature: params.temperature as number }
-                    : {}),
-                ...thinkingParam,
-                ...(thinkingEnabled
-                    ? { output_config: { effort: thinkingLevel } as never }
-                    : {}),
-                ...webSearchParam,
-                ...(systemMsg ? { system: systemMsg.content } : {}),
-                messages: chatMessages,
-            },
-            { signal }
-        );
+        const stream = client.messages.stream(requestBody, { signal });
 
         let firstChunk = true;
         for await (const event of stream) {
@@ -298,7 +301,7 @@ export async function streamAnthropic(
         console.log(LOG, 'anthropic: stream done');
         const finalMsg = await stream.finalMessage();
         if (DEBUG_API_LOGGING) {
-            console.log(LOG, '[debug] full response', finalMsg);
+            console.log(LOG, '[debug] anthropic: ← response', finalMsg);
         }
         const toolResults = collectAnthropicToolResults(finalMsg);
         if (toolResults.length) handlers.onToolResults?.(toolResults);
