@@ -60,6 +60,9 @@ export function waitForExtension(): Promise<boolean> {
     return Promise.resolve(extensionId !== null);
 }
 
+// Throws if the extension isn't reachable or returns an error response. Every
+// caller is expected to either await + .catch, or rely on the storage helpers
+// below — which all surface errors loudly rather than swallowing them.
 async function sendStorageMessage(
     request: StorageRequest
 ): Promise<StorageResponse> {
@@ -69,46 +72,47 @@ async function sendStorageMessage(
             'storage: extension not detected, cannot send',
             request.type
         );
-        return { type: 'error', message: 'Extension not detected.' };
+        throw new Error('Extension not detected.');
     }
     console.log(LOG, '→ storage', request.type);
-    return new Promise((resolve) => {
-        chrome.runtime.sendMessage(
-            extensionId as string,
-            request,
-            (response: StorageResponse) => {
-                const result = response ?? {
-                    type: 'error',
-                    message: 'No response from extension.',
-                };
-                if (result.type === 'error') {
-                    console.error(LOG, '← storage error', result.message);
-                } else {
-                    console.log(LOG, '← storage', result.type);
-                }
-                resolve(result);
-            }
+    const response = await new Promise<StorageResponse | undefined>(
+        (resolve) => {
+            chrome.runtime.sendMessage(
+                extensionId as string,
+                request,
+                (resp: StorageResponse) => resolve(resp)
+            );
+        }
+    );
+    if (!response) {
+        console.error(LOG, '← storage: no response', request.type);
+        throw new Error(
+            `Extension didn't respond to ${request.type}. It may have been disabled or updated.`
         );
-    });
+    }
+    if (response.type === 'error') {
+        console.error(LOG, '← storage error', response.message);
+        throw new Error(response.message);
+    }
+    console.log(LOG, '← storage', response.type);
+    return response;
 }
 
 export async function saveApiKey(
     provider: string,
     apiKey: string,
     syncApiKeys: boolean
-): Promise<boolean> {
-    const response = await sendStorageMessage({
+): Promise<void> {
+    await sendStorageMessage({
         type: 'save_key',
         provider,
         apiKey,
         syncApiKeys,
     });
-    return response.type === 'saved';
 }
 
-export async function clearApiKey(provider: string): Promise<boolean> {
-    const response = await sendStorageMessage({ type: 'clear_key', provider });
-    return response.type === 'saved';
+export async function clearApiKey(provider: string): Promise<void> {
+    await sendStorageMessage({ type: 'clear_key', provider });
 }
 
 export async function checkApiKeys(
@@ -116,7 +120,7 @@ export async function checkApiKeys(
 ): Promise<Record<string, boolean>> {
     const response = await sendStorageMessage({ type: 'has_keys', providers });
     if (response.type === 'has_keys') return response.saved;
-    return Object.fromEntries(providers.map((p) => [p, false]));
+    throw new Error(`Unexpected response: ${response.type}`);
 }
 
 export async function saveSettings(
@@ -128,7 +132,7 @@ export async function saveSettings(
 export async function loadSettings(): Promise<Partial<UserSettings>> {
     const response = await sendStorageMessage({ type: 'load_settings' });
     if (response.type === 'settings') return response.settings;
-    return {};
+    throw new Error(`Unexpected response: ${response.type}`);
 }
 
 export async function saveChat(
@@ -145,7 +149,7 @@ export async function deleteChat(chatId: string): Promise<void> {
 export async function loadChatMetas(): Promise<ChatMeta[]> {
     const response = await sendStorageMessage({ type: 'load_chat_metas' });
     if (response.type === 'chat_metas') return response.metas;
-    return [];
+    throw new Error(`Unexpected response: ${response.type}`);
 }
 
 export async function loadChatsByIds(ids: string[]): Promise<StoredChat[]> {
@@ -154,15 +158,17 @@ export async function loadChatsByIds(ids: string[]): Promise<StoredChat[]> {
         ids,
     });
     if (response.type === 'chats') return response.chats;
-    return [];
+    throw new Error(`Unexpected response: ${response.type}`);
 }
 
 export async function loadChat(chatId: string): Promise<StoredChat | null> {
     const response = await sendStorageMessage({ type: 'load_chat', chatId });
     if (response.type === 'chat') return response.chat;
-    return null;
+    throw new Error(`Unexpected response: ${response.type}`);
 }
 
+// Returns null when there's no API key + no cache (legitimate empty state).
+// Throws on fetch failure — caller surfaces via setAppError.
 export async function loadOpenRouterModels(): Promise<
     OpenRouterModel[] | null
 > {
@@ -170,7 +176,7 @@ export async function loadOpenRouterModels(): Promise<
         type: 'load_openrouter_models',
     });
     if (response.type === 'openrouter_models') return response.models;
-    return null;
+    throw new Error(`Unexpected response: ${response.type}`);
 }
 
 export function sendToExtension(

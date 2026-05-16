@@ -5,7 +5,8 @@
         "packages/*"
     ],
     "scripts": {
-        "check": "bun run lint && bun run format:check",
+        "check": "bun run lint && bun run format:check && bun run check:scripts",
+        "check:scripts": "NO_COLOR=1 bunx tsc -p scripts/tsconfig.json",
         "lint": "NO_COLOR=1 eslint .",
         "format": "NO_COLOR=1 prettier . --write",
         "format:check": "NO_COLOR=1 prettier . --check",

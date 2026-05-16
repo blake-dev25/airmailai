@@ -1,42 +1,17 @@
 <script lang="ts">
     import { untrack } from 'svelte';
+    import { appLifecycle } from './appLifecycle.svelte';
+    import { chatStore } from './chatStore.svelte';
     import {
         filterProvidersByTier,
         MODEL_TIERS,
         type ModelOption,
         type ModelTier,
-        type ProviderOption,
     } from './constants';
     import Icon from './Icon.svelte';
     import ModelPicker from './ModelPicker.svelte';
-
-    let {
-        providers,
-        modelTier,
-        initialized,
-        providerId = $bindable(),
-        modelId = $bindable(),
-        temperature = $bindable(),
-        maxTokens = $bindable(),
-        thinkingLevel = $bindable(),
-        adaptiveThinking = $bindable(),
-        webSearch = $bindable(),
-        enableWebSearch,
-        tokens = null,
-    }: {
-        providers: ProviderOption[];
-        modelTier: ModelTier;
-        initialized: boolean;
-        providerId: string;
-        modelId: string;
-        temperature: number;
-        maxTokens: number;
-        thinkingLevel: string;
-        adaptiveThinking: boolean;
-        webSearch: boolean;
-        enableWebSearch: boolean;
-        tokens?: { input: number; output: number } | null;
-    } = $props();
+    import { providersStore } from './providersStore.svelte';
+    import { settingsStore } from './settingsStore.svelte';
 
     const TIER_ORDER: ModelTier[] = ['latest', 'previous', 'legacy'];
     const TIER_LABELS: Record<ModelTier, string> = {
@@ -52,15 +27,17 @@
     }
 
     let filteredProviders = $derived(
-        filterProvidersByTier(providers, modelTier)
+        filterProvidersByTier(providersStore.providers, settingsStore.modelTier)
     );
 
     let providerOptions = $derived.by(() => {
         // Ensure the chat's stored provider stays visible even if it has no
         // in-tier models — otherwise the select would show a blank value.
         const out = [...filteredProviders];
-        if (!out.find((p) => p.id === providerId)) {
-            const stored = providers.find((p) => p.id === providerId);
+        if (!out.find((p) => p.id === settingsStore.providerId)) {
+            const stored = providersStore.providers.find(
+                (p) => p.id === settingsStore.providerId
+            );
             if (stored) out.push(stored);
         }
         return out;
@@ -71,7 +48,7 @@
     // group by vendor here so users can scan by upstream maker.
     let modelGroups = $derived.by(() => {
         const provider =
-            providerOptions.find((p) => p.id === providerId) ??
+            providerOptions.find((p) => p.id === settingsStore.providerId) ??
             providerOptions[0];
         if (!provider)
             return [] as Array<{ label: string; models: ModelOption[] }>;
@@ -117,9 +94,9 @@
         );
 
         const groups: Array<{ label: string; models: ModelOption[] }> = [];
-        const stored = providers
+        const stored = providersStore.providers
             .find((p) => p.id === provider.id)
-            ?.models.find((m) => m.id === modelId);
+            ?.models.find((m) => m.id === settingsStore.modelId);
         if (stored && !inTier.has(stored.id)) {
             groups.push({ label: 'From this chat', models: [stored] });
         }
@@ -147,7 +124,7 @@
         if (badgeEl && !badgeFocused) {
             // contenteditable badge — Svelte yields ownership while editing.
             // eslint-disable-next-line svelte/no-dom-manipulating
-            badgeEl.textContent = temperature.toFixed(2);
+            badgeEl.textContent = settingsStore.temperature.toFixed(2);
         }
     });
 
@@ -159,11 +136,12 @@
         badgeFocused = false;
         if (!currentModel) return;
         const val = parseFloat(badgeEl?.textContent ?? '');
-        temperature = Number.isNaN(val)
-            ? temperature
+        settingsStore.temperature = Number.isNaN(val)
+            ? settingsStore.temperature
             : Math.max(0, Math.min(currentModel.params.temperatureMax!, val));
-        // eslint-disable-next-line svelte/no-dom-manipulating
-        if (badgeEl) badgeEl.textContent = temperature.toFixed(2);
+        if (badgeEl)
+            // eslint-disable-next-line svelte/no-dom-manipulating
+            badgeEl.textContent = settingsStore.temperature.toFixed(2);
     }
 
     function onBadgeKeydown(e: KeyboardEvent) {
@@ -187,8 +165,8 @@
     let maxTokensSliderIndex = $derived(
         maxTokensSnaps.reduce(
             (best, _, i) =>
-                Math.abs(maxTokensSnaps[i] - maxTokens) <
-                Math.abs(maxTokensSnaps[best] - maxTokens)
+                Math.abs(maxTokensSnaps[i] - settingsStore.maxTokens) <
+                Math.abs(maxTokensSnaps[best] - settingsStore.maxTokens)
                     ? i
                     : best,
             0
@@ -198,7 +176,7 @@
     $effect(() => {
         if (maxTokensBadgeEl && !maxTokensBadgeFocused) {
             // eslint-disable-next-line svelte/no-dom-manipulating
-            maxTokensBadgeEl.textContent = String(maxTokens);
+            maxTokensBadgeEl.textContent = String(settingsStore.maxTokens);
         }
     });
 
@@ -210,11 +188,12 @@
         maxTokensBadgeFocused = false;
         if (!currentModel) return;
         const val = parseInt(maxTokensBadgeEl?.textContent ?? '', 10);
-        maxTokens = Number.isNaN(val)
-            ? maxTokens
+        settingsStore.maxTokens = Number.isNaN(val)
+            ? settingsStore.maxTokens
             : Math.max(1, Math.min(currentModel.params.maxOutputTokens, val));
-        // eslint-disable-next-line svelte/no-dom-manipulating
-        if (maxTokensBadgeEl) maxTokensBadgeEl.textContent = String(maxTokens);
+        if (maxTokensBadgeEl)
+            // eslint-disable-next-line svelte/no-dom-manipulating
+            maxTokensBadgeEl.textContent = String(settingsStore.maxTokens);
     }
 
     function onMaxTokensBadgeKeydown(e: KeyboardEvent) {
@@ -231,16 +210,23 @@
     }
 
     let currentProvider = $derived(
-        providers.find((p) => p.id === providerId) ?? providers[0]
+        providersStore.providers.find(
+            (p) => p.id === settingsStore.providerId
+        ) ?? providersStore.providers[0]
     );
     let currentModel = $derived<ModelOption | undefined>(
-        currentProvider.models.find((m) => m.id === modelId) ??
+        currentProvider.models.find((m) => m.id === settingsStore.modelId) ??
             currentProvider.models[0]
     );
     let thinkingConfig = $derived(currentModel?.params.thinking);
     let thinkingIndex = $derived(
         thinkingConfig
-            ? Math.max(0, thinkingConfig.levels.indexOf(thinkingLevel as never))
+            ? Math.max(
+                  0,
+                  (thinkingConfig.levels as readonly string[]).indexOf(
+                      settingsStore.thinkingLevel
+                  )
+              )
             : 0
     );
     let modelPickerEmptyLabel = $derived(
@@ -256,30 +242,38 @@
     }
 
     function onProviderChange(e: Event) {
-        providerId = (e.currentTarget as HTMLSelectElement).value;
-        const filtered = filteredProviders.find((p) => p.id === providerId);
-        const fallback = providers.find((p) => p.id === providerId);
+        settingsStore.providerId = (e.currentTarget as HTMLSelectElement).value;
+        const filtered = filteredProviders.find(
+            (p) => p.id === settingsStore.providerId
+        );
+        const fallback = providersStore.providers.find(
+            (p) => p.id === settingsStore.providerId
+        );
         const first = filtered?.models[0] ?? fallback?.models[0];
         if (first) {
-            modelId = first.id;
-            maxTokens = first.params.defaultMaxTokens;
+            settingsStore.modelId = first.id;
+            settingsStore.maxTokens = first.params.defaultMaxTokens;
             if (first.params.defaultTemperature !== undefined)
-                temperature = first.params.defaultTemperature;
-            thinkingLevel = first.params.thinking?.defaultLevel ?? 'none';
-            adaptiveThinking = first.params.thinking?.adaptive !== undefined;
-            webSearch = false;
+                settingsStore.temperature = first.params.defaultTemperature;
+            settingsStore.thinkingLevel =
+                first.params.thinking?.defaultLevel ?? 'none';
+            settingsStore.adaptiveThinking =
+                first.params.thinking?.adaptive !== undefined;
+            settingsStore.webSearch = false;
         }
     }
 
     function onModelChange(id: string) {
         const model = currentProvider.models.find((m) => m.id === id);
         if (model) {
-            maxTokens = model.params.defaultMaxTokens;
+            settingsStore.maxTokens = model.params.defaultMaxTokens;
             if (model.params.defaultTemperature !== undefined)
-                temperature = model.params.defaultTemperature;
-            thinkingLevel = model.params.thinking?.defaultLevel ?? 'none';
-            adaptiveThinking = model.params.thinking?.adaptive !== undefined;
-            webSearch = false;
+                settingsStore.temperature = model.params.defaultTemperature;
+            settingsStore.thinkingLevel =
+                model.params.thinking?.defaultLevel ?? 'none';
+            settingsStore.adaptiveThinking =
+                model.params.thinking?.adaptive !== undefined;
+            settingsStore.webSearch = false;
         }
     }
 
@@ -308,26 +302,30 @@
         if (!currentModel) return;
         const params = currentModel.params;
         untrack(() => {
-            if (maxTokens > params.maxOutputTokens)
-                maxTokens = params.maxOutputTokens;
-            if (maxTokens < 1) maxTokens = 1;
+            if (settingsStore.maxTokens > params.maxOutputTokens)
+                settingsStore.maxTokens = params.maxOutputTokens;
+            if (settingsStore.maxTokens < 1) settingsStore.maxTokens = 1;
             if (
                 params.temperatureMax !== undefined &&
-                temperature > params.temperatureMax
+                settingsStore.temperature > params.temperatureMax
             )
-                temperature = params.defaultTemperature ?? 1;
+                settingsStore.temperature = params.defaultTemperature ?? 1;
             // If the loaded thinkingLevel isn't valid for this model, fall back to default
             if (
                 params.thinking &&
-                !params.thinking.levels.includes(thinkingLevel as never)
+                !(params.thinking.levels as readonly string[]).includes(
+                    settingsStore.thinkingLevel
+                )
             ) {
-                thinkingLevel = params.thinking.defaultLevel;
+                settingsStore.thinkingLevel = params.thinking.defaultLevel;
             }
-            if (!params.thinking) thinkingLevel = 'none';
+            if (!params.thinking) settingsStore.thinkingLevel = 'none';
             // Coerce adaptiveThinking to a valid state for the current model
             const adaptiveSupport = params.thinking?.adaptive;
-            if (adaptiveSupport === 'required') adaptiveThinking = true;
-            else if (adaptiveSupport === undefined) adaptiveThinking = false;
+            if (adaptiveSupport === 'required')
+                settingsStore.adaptiveThinking = true;
+            else if (adaptiveSupport === undefined)
+                settingsStore.adaptiveThinking = false;
         });
     });
 
@@ -366,10 +364,10 @@
                 <select
                     id="provider"
                     class={selectClass}
-                    value={providerId}
+                    value={settingsStore.providerId}
                     onchange={onProviderChange}
                 >
-                    {#if initialized}
+                    {#if appLifecycle.initialized}
                         {#each providerOptions as provider (provider.id)}
                             <option value={provider.id}>{provider.name}</option>
                         {/each}
@@ -383,14 +381,14 @@
             <label for="model" class={labelClass}>Model</label>
             <ModelPicker
                 groups={modelGroups}
-                bind:value={modelId}
+                bind:value={settingsStore.modelId}
                 onchange={onModelChange}
-                disabled={!initialized}
+                disabled={!appLifecycle.initialized}
                 emptyLabel={modelPickerEmptyLabel}
             />
         </div>
 
-        {#if initialized && currentModel}
+        {#if appLifecycle.initialized && currentModel}
             {#if currentModel.params.temperatureMax !== undefined}
                 <div class={fieldClass}>
                     <div class={labelRowClass}>
@@ -402,14 +400,14 @@
                             role="spinbutton"
                             tabindex="0"
                             contenteditable="true"
-                            aria-valuenow={temperature}
+                            aria-valuenow={settingsStore.temperature}
                             aria-valuemin={0}
                             aria-valuemax={currentModel.params.temperatureMax}
                             bind:this={badgeEl}
                             onfocus={onBadgeFocus}
                             onblur={onBadgeBlur}
                             onkeydown={onBadgeKeydown}
-                            >{temperature.toFixed(2)}</span
+                            >{settingsStore.temperature.toFixed(2)}</span
                         >
                     </div>
                     <input
@@ -419,7 +417,7 @@
                         min="0"
                         max={currentModel.params.temperatureMax}
                         step="0.01"
-                        bind:value={temperature}
+                        bind:value={settingsStore.temperature}
                     />
                     <div class={rangeHintsClass}>
                         <span>Precise</span>
@@ -434,7 +432,7 @@
                         <label for="thinking" class={labelClass}>Thinking</label
                         >
                         <span class={valueBadgeClass}
-                            >{levelLabel(thinkingLevel)}</span
+                            >{levelLabel(settingsStore.thinkingLevel)}</span
                         >
                     </div>
                     <input
@@ -446,7 +444,7 @@
                         step="1"
                         value={thinkingIndex}
                         oninput={(e) => {
-                            thinkingLevel =
+                            settingsStore.thinkingLevel =
                                 thinkingConfig!.levels[
                                     +(e.currentTarget as HTMLInputElement).value
                                 ];
@@ -465,7 +463,7 @@
                 </div>
             {/if}
 
-            {#if thinkingConfig?.adaptive && thinkingLevel !== 'none'}
+            {#if thinkingConfig?.adaptive && settingsStore.thinkingLevel !== 'none'}
                 {@const locked = thinkingConfig.adaptive === 'required'}
                 <div class={fieldClass}>
                     <div class={labelRowClass}>
@@ -479,9 +477,9 @@
                                 'ios-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
                                 locked && 'cursor-not-allowed opacity-60',
                             ]}
-                            class:on={adaptiveThinking}
+                            class:on={settingsStore.adaptiveThinking}
                             role="switch"
-                            aria-checked={adaptiveThinking}
+                            aria-checked={settingsStore.adaptiveThinking}
                             aria-label="Adaptive Thinking"
                             disabled={locked}
                             title={locked
@@ -489,7 +487,8 @@
                                 : undefined}
                             onclick={() => {
                                 if (!locked)
-                                    adaptiveThinking = !adaptiveThinking;
+                                    settingsStore.adaptiveThinking =
+                                        !settingsStore.adaptiveThinking;
                             }}
                         >
                             <span class="ios-switch-thumb"></span>
@@ -508,13 +507,14 @@
                         role="spinbutton"
                         tabindex="0"
                         contenteditable="true"
-                        aria-valuenow={maxTokens}
+                        aria-valuenow={settingsStore.maxTokens}
                         aria-valuemin={1}
                         aria-valuemax={currentModel.params.maxOutputTokens}
                         bind:this={maxTokensBadgeEl}
                         onfocus={onMaxTokensBadgeFocus}
                         onblur={onMaxTokensBadgeBlur}
-                        onkeydown={onMaxTokensBadgeKeydown}>{maxTokens}</span
+                        onkeydown={onMaxTokensBadgeKeydown}
+                        >{settingsStore.maxTokens}</span
                     >
                 </div>
                 <input
@@ -526,7 +526,7 @@
                     step="1"
                     value={maxTokensSliderIndex}
                     oninput={(e) => {
-                        maxTokens =
+                        settingsStore.maxTokens =
                             maxTokensSnaps[
                                 +(e.currentTarget as HTMLInputElement).value
                             ];
@@ -542,7 +542,7 @@
                 </div>
             </div>
 
-            {#if enableWebSearch}
+            {#if settingsStore.enableWebSearch}
                 <div class={fieldClass}>
                     <div class={labelRowClass}>
                         <label for="web-search" class={labelClass}
@@ -554,12 +554,13 @@
                             class={[
                                 'ios-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
                             ]}
-                            class:on={webSearch}
+                            class:on={settingsStore.webSearch}
                             role="switch"
-                            aria-checked={webSearch}
+                            aria-checked={settingsStore.webSearch}
                             aria-label="Web Search"
                             onclick={() => {
-                                webSearch = !webSearch;
+                                settingsStore.webSearch =
+                                    !settingsStore.webSearch;
                             }}
                         >
                             <span class="ios-switch-thumb"></span>
@@ -582,20 +583,23 @@
             <div class={detailRowClass}>
                 <span class={detailLabelClass}>Context Window</span>
                 <span class={detailValueClass}>
-                    {#if !initialized || !currentModel}
+                    {#if !appLifecycle.initialized || !currentModel}
                         &nbsp;
-                    {:else if tokens}
-                        {(tokens.input + tokens.output).toLocaleString()} / {currentModel.params.contextWindow.toLocaleString()}
+                    {:else if chatStore.activeTokens}
+                        {(
+                            chatStore.activeTokens.input +
+                            chatStore.activeTokens.output
+                        ).toLocaleString()} / {currentModel.params.contextWindow.toLocaleString()}
                     {:else}
                         {currentModel.params.contextWindow.toLocaleString()}
                     {/if}
                 </span>
             </div>
-            {#if !initialized || !currentModel || currentModel.params.knowledgeCutoff}
+            {#if !appLifecycle.initialized || !currentModel || currentModel.params.knowledgeCutoff}
                 <div class={detailRowClass}>
                     <span class={detailLabelClass}>Knowledge Cutoff</span>
                     <span class={detailValueClass}
-                        >{initialized && currentModel
+                        >{appLifecycle.initialized && currentModel
                             ? currentModel.params.knowledgeCutoff
                             : ' '}</span
                     >

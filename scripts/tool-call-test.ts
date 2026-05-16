@@ -96,7 +96,7 @@ async function callAnthropic(args: Args) {
             type: 'web_search_20260209',
             name: 'web_search',
             max_uses: 5,
-        } as never);
+        } satisfies Anthropic.Messages.WebSearchTool20260209);
     }
     return client.messages.create({
         model: args.model,
@@ -126,17 +126,20 @@ async function callOpenAI(args: Args) {
     const client = new OpenAI({ apiKey: getEnv('OPENAI_API_KEY') });
     const tools: OpenAI.Responses.Tool[] = [];
     if (args.tools.includes('web_search')) {
-        tools.push({ type: 'web_search' } as never);
+        tools.push({ type: 'web_search' as const });
     }
     return client.responses.create({
         model: args.model,
         input: [{ role: 'user', content: args.input }],
         max_output_tokens: 4096,
-        reasoning: { effort: 'medium', summary: 'auto' } as never,
+        reasoning: {
+            effort: 'medium',
+            summary: 'auto',
+        } satisfies OpenAI.Reasoning,
         ...(tools.length
             ? {
                   tools,
-                  include: ['reasoning.encrypted_content'],
+                  include: ['reasoning.encrypted_content' as const],
               }
             : {}),
     });
@@ -145,7 +148,11 @@ async function callOpenAI(args: Args) {
 async function callOpenRouter(args: Args) {
     const { OpenRouter } = await import('@openrouter/sdk');
     const client = new OpenRouter({ apiKey: getEnv('OPENROUTER_API_KEY') });
-    const tools: Array<{ type: string }> = [];
+    // Shapes named locally because the @openrouter/sdk types lag runtime
+    // (see [[openrouter-api-sdk-quirks]]) — we don't satisfies <SDKType>.
+    type OpenRouterWebSearchTool = { type: 'openrouter:web_search' };
+    type OpenRouterReasoning = { effort: 'medium'; summary: 'auto' };
+    const tools: OpenRouterWebSearchTool[] = [];
     if (args.tools.includes('web_search')) {
         tools.push({ type: 'openrouter:web_search' });
     }
@@ -154,9 +161,14 @@ async function callOpenRouter(args: Args) {
             model: args.model,
             input: [{ role: 'user', content: args.input }],
             maxOutputTokens: 4096,
-            reasoning: { effort: 'medium', summary: 'auto' } as never,
-            include: ['reasoning.encrypted_content'] as never,
-            ...(tools.length ? { tools: tools as never } : {}),
+            reasoning: {
+                effort: 'medium',
+                summary: 'auto',
+            } satisfies OpenRouterReasoning,
+            include: [
+                'reasoning.encrypted_content' as const,
+            ] satisfies Array<'reasoning.encrypted_content'>,
+            ...(tools.length ? { tools } : {}),
         },
     });
 }
@@ -166,13 +178,16 @@ async function callOpenRouter(args: Args) {
 // the extension does on a follow-up turn.
 async function replayOpenAI(args: Args) {
     const client = new OpenAI({ apiKey: getEnv('OPENAI_API_KEY') });
-    const tools: OpenAI.Responses.Tool[] = [{ type: 'web_search' } as never];
+    const tools: OpenAI.Responses.Tool[] = [{ type: 'web_search' as const }];
 
     const first = await client.responses.create({
         model: args.model,
         input: [{ role: 'user', content: args.input }],
         max_output_tokens: 4096,
-        reasoning: { effort: 'medium', summary: 'auto' } as never,
+        reasoning: {
+            effort: 'medium',
+            summary: 'auto',
+        } satisfies OpenAI.Reasoning,
         tools,
         include: ['reasoning.encrypted_content'],
     });
@@ -201,36 +216,36 @@ async function replayOpenAI(args: Args) {
     for (const tr of toolResults) {
         for (const r of tr.openaiReasoning ?? []) {
             prefix.push({
-                type: 'reasoning',
+                type: 'reasoning' as const,
                 id: r.id,
                 summary: [],
                 encrypted_content: r.encryptedContent,
-            } as never);
+            });
         }
         if (tr.callId) {
             prefix.push({
-                type: 'web_search_call',
+                type: 'web_search_call' as const,
                 id: tr.callId,
-                status: 'completed',
-                action: { type: 'search', query: '' },
-            } as never);
+                status: 'completed' as const,
+                action: { type: 'search' as const, query: '' },
+            });
         }
     }
 
     // Sterile assistant text — match the OpenRouter replay methodology so
     // the model can't cheat by reading URLs out of its own prior reply.
     const followup: OpenAI.Responses.ResponseInputItem[] = [
-        { role: 'user', content: args.input } as never,
+        { role: 'user' as const, content: args.input },
         ...prefix,
         {
-            role: 'assistant',
+            role: 'assistant' as const,
             content: 'I completed using the tool.',
-        } as never,
+        },
         {
-            role: 'user',
+            role: 'user' as const,
             content:
                 'great. without searching again, please print one of the previously returned urls verbatim',
-        } as never,
+        },
     ];
 
     const groundTruth: string[] = [];
@@ -254,7 +269,10 @@ async function replayOpenAI(args: Args) {
         model: args.model,
         input: followup,
         max_output_tokens: 4096,
-        reasoning: { effort: 'medium', summary: 'auto' } as never,
+        reasoning: {
+            effort: 'medium',
+            summary: 'auto',
+        } satisfies OpenAI.Reasoning,
         tools,
         include: ['reasoning.encrypted_content'],
     });

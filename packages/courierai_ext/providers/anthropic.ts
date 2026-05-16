@@ -236,16 +236,16 @@ export async function streamAnthropic(
     const maxTokens = (params.maxTokens as number) ?? 8192;
     const thinkingParam = thinkingEnabled
         ? adaptiveThinking
-            ? { thinking: { type: 'adaptive' } as never }
+            ? { thinking: { type: 'adaptive' as const } }
             : {
                   thinking: {
-                      type: 'enabled',
+                      type: 'enabled' as const,
                       // budget_tokens must be < max_tokens per Anthropic API
                       budget_tokens: Math.min(
                           BUDGET_TOKENS[thinkingLevel] ?? BUDGET_TOKENS.high,
                           Math.max(1024, maxTokens - 1024)
                       ),
-                  } as never,
+                  },
               }
         : {};
     const webSearchParam = params.webSearch
@@ -255,7 +255,7 @@ export async function streamAnthropic(
                       type: 'web_search_20260209',
                       name: 'web_search',
                       max_uses: 5,
-                  } as never,
+                  } satisfies Anthropic.Messages.WebSearchTool20260209,
               ],
           }
         : {};
@@ -268,7 +268,11 @@ export async function streamAnthropic(
             : {}),
         ...thinkingParam,
         ...(thinkingEnabled
-            ? { output_config: { effort: thinkingLevel } as never }
+            ? {
+                  output_config: {
+                      effort: thinkingLevel as Anthropic.Messages.OutputConfig['effort'],
+                  },
+              }
             : {}),
         ...webSearchParam,
         ...(systemMsg ? { system: systemMsg.content } : {}),

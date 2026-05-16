@@ -1,9 +1,12 @@
 <script lang="ts">
+    import { errorStore, formatErr } from './errorStore.svelte';
     import {
         initMarkdown,
         isHighlighterReady,
         renderMarkdown,
     } from './markdown.js';
+
+    const LOG = '[courier:web]';
 
     let { content }: { content: string } = $props();
 
@@ -14,9 +17,16 @@
 
     $effect(() => {
         if (hasCodeBlock && !highlighterReady) {
-            initMarkdown().then(() => {
-                highlighterReady = true;
-            });
+            initMarkdown()
+                .then(() => {
+                    highlighterReady = true;
+                })
+                .catch((err) => {
+                    console.error(LOG, 'syntax highlighter load failed', err);
+                    errorStore.setAppError(
+                        `Couldn't load syntax highlighter: ${formatErr(err)}`
+                    );
+                });
         }
     });
 
@@ -37,12 +47,20 @@
             if (!btn) return;
             const pre = btn.closest('.code-block')?.querySelector('pre');
             if (!pre) return;
-            navigator.clipboard.writeText(pre.textContent ?? '').then(() => {
-                btn.textContent = 'Copied!';
-                setTimeout(() => {
-                    btn.textContent = 'Copy';
-                }, 2000);
-            });
+            navigator.clipboard
+                .writeText(pre.textContent ?? '')
+                .then(() => {
+                    btn.textContent = 'Copied!';
+                    setTimeout(() => {
+                        btn.textContent = 'Copy';
+                    }, 2000);
+                })
+                .catch((err) => {
+                    console.error(LOG, 'clipboard write failed', err);
+                    errorStore.setAppError(
+                        `Couldn't copy to clipboard: ${formatErr(err)}`
+                    );
+                });
         }
 
         container.addEventListener('click', handleClick);

@@ -375,16 +375,28 @@ async function handleStorage(
 
 export default defineBackground(() => {
     console.log(LOG, 'background ready');
+    // Key storage init runs once at SW boot. If it fails (corrupt sync data,
+    // quota error) we keep going — readApiKey/applyApiKeySyncPreference will
+    // retry through the same promise on demand and surface the error to the
+    // caller (which the web turns into a visible toast).
     initializeKeyStorage().catch((err) =>
         console.error(LOG, 'key storage init failed', err)
     );
 
-    // Internal messages from the popup
+    // Internal messages from the popup. The popup shows a generic
+    // "Something went wrong" — we forward the actual reason so it can do better.
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         if (message.type === 'admin_clear_chats') {
             dbClearChats()
                 .then(() => sendResponse({ ok: true }))
-                .catch(() => sendResponse({ ok: false }));
+                .catch((err) => {
+                    console.error(LOG, 'admin_clear_chats failed', err);
+                    sendResponse({
+                        ok: false,
+                        message:
+                            err instanceof Error ? err.message : String(err),
+                    });
+                });
             return true;
         }
         if (message.type === 'admin_clear_all') {
@@ -394,15 +406,39 @@ export default defineBackground(() => {
                 chrome.storage.sync.clear(),
             ])
                 .then(() => sendResponse({ ok: true }))
-                .catch(() => sendResponse({ ok: false }));
+                .catch((err) => {
+                    console.error(LOG, 'admin_clear_all failed', err);
+                    sendResponse({
+                        ok: false,
+                        message:
+                            err instanceof Error ? err.message : String(err),
+                    });
+                });
             return true;
         }
     });
 
-    // One-off storage operations (save/check API keys, settings, chat history)
+    // One-off storage operations (save/check API keys, settings, chat history).
+    // Any throw inside handleStorage gets converted to a structured error
+    // response so the web side learns about it rather than hanging on a
+    // missing reply.
     chrome.runtime.onMessageExternal.addListener(
         (message: StorageRequest, _sender, sendResponse) => {
-            handleStorage(message).then(sendResponse);
+            handleStorage(message)
+                .then(sendResponse)
+                .catch((err) => {
+                    console.error(
+                        LOG,
+                        'storage handler threw',
+                        message.type,
+                        err
+                    );
+                    sendResponse({
+                        type: 'error',
+                        message:
+                            err instanceof Error ? err.message : String(err),
+                    });
+                });
             return true; // keep channel open for async response
         }
     );
@@ -639,7 +675,7 @@ export default defineBackground(() => {
                 // Re-widen: TS narrows `disposition` based on assignments in
                 // try/catch, but the port listeners can mutate it to 'aborted'
                 // or 'stopped' mid-await — narrowing misses those paths.
-                const disp = disposition as Disposition;
+                let disp = disposition as Disposition;
                 // Save phase. Skipped on 'aborted' (web bailed without stop).
                 if (disp !== 'aborted' && saveCtx && lockedChatId) {
                     const isStop = disp === 'stopped';
@@ -685,7 +721,16 @@ export default defineBackground(() => {
                             saveCtx.freshBlobs
                         );
                     } catch (err) {
+                        // Save failure is loud — flip disposition so the
+                        // post-save reporting below sends an error to the
+                        // source tab and broadcasts a turn-error to mirrors.
+                        // The on-screen text is preserved; only persistence
+                        // failed.
                         console.error(LOG, 'save failed', err);
+                        const msg =
+                            err instanceof Error ? err.message : String(err);
+                        streamErrorMsg = `Couldn't save chat: ${msg}`;
+                        disp = 'errored';
                     }
                 }
 

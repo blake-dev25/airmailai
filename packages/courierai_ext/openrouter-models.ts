@@ -112,7 +112,9 @@ export async function getOpenRouterModels(
         return cache.models;
     }
 
-    // Cold start — must wait for the first fetch.
+    // Cold start — must wait for the first fetch. We rethrow so the web side
+    // can surface "OpenRouter unreachable" rather than silently showing an
+    // empty model picker, but we still seed the cooldown to avoid hammering.
     try {
         const models = await fetchAndSlim(apiKey);
         await writeCache({ version: CACHE_VERSION, models, fetchedAt: now });
@@ -125,7 +127,9 @@ export async function getOpenRouterModels(
             fetchedAt: 0,
             nextRetryAt: now + ERROR_COOLDOWN_MS,
         });
-        return null;
+        throw e instanceof Error
+            ? e
+            : new Error(`OpenRouter fetch failed: ${String(e)}`);
     }
 }
 

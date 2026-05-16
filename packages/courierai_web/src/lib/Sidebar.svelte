@@ -1,79 +1,10 @@
 <script lang="ts">
     import { VList } from 'virtua/svelte';
-    import type { ModelTier } from './constants';
+    import { appLifecycle } from './appLifecycle.svelte';
+    import { chatStore } from './chatStore.svelte';
     import Icon from './Icon.svelte';
     import SettingsPopover from './SettingsPopover.svelte';
-    import type { Chat, SearchResult } from './types';
-
-    let {
-        chats,
-        activeChatId,
-        hasMoreChats,
-        isLoadingMore,
-        streamingChatIds,
-        chatErrors,
-        searchResults,
-        searchQuery,
-        demoMode = false,
-        initialized,
-        theme = $bindable(),
-        fontSizeIndex = $bindable(),
-        chatWidth = $bindable(),
-        smoothTextMode = $bindable(),
-        submitKeystroke = $bindable(),
-        modelTier = $bindable(),
-        autoscroll = $bindable(),
-        enableWebSearch = $bindable(),
-        tagOpenRouterRequests = $bindable(),
-        syncApiKeys = $bindable(),
-        onnewchat,
-        onselectchat,
-        ondeletechat,
-        onrenamechat,
-        onexportchat,
-        onloadmore,
-        onsearch,
-        onclearsearch,
-        onextensionneeded,
-        onapikeysaved,
-        onapikeycleared,
-    }: {
-        chats: Chat[];
-        activeChatId: string | null;
-        hasMoreChats: boolean;
-        isLoadingMore: boolean;
-        streamingChatIds: string[];
-        chatErrors: Record<string, string>;
-        searchResults: SearchResult[] | null;
-        searchQuery: string;
-        demoMode?: boolean;
-        initialized: boolean;
-        theme: string;
-        fontSizeIndex: number;
-        chatWidth: number;
-        smoothTextMode:
-            | 'smooth'
-            | 'boost-on-complete'
-            | 'dump-on-complete'
-            | 'raw';
-        submitKeystroke: 'enter' | 'ctrl+enter';
-        modelTier: ModelTier;
-        autoscroll: boolean;
-        enableWebSearch: boolean;
-        tagOpenRouterRequests: boolean;
-        syncApiKeys: boolean;
-        onnewchat: () => void;
-        onselectchat: (id: string, matchIndex?: number | null) => void;
-        ondeletechat: (id: string) => void;
-        onrenamechat: (id: string, title: string) => void;
-        onexportchat: (id: string) => void;
-        onloadmore: () => void;
-        onsearch: (query: string) => void;
-        onclearsearch: () => void;
-        onextensionneeded: () => void;
-        onapikeysaved: (providerId: string) => void;
-        onapikeycleared: (providerId: string) => void;
-    } = $props();
+    import type { Chat } from './types';
 
     let showSettings = $state(false);
     let historyHovered = $state(false);
@@ -83,11 +14,12 @@
     // Auto-load more when within ~1.5 viewport heights of the bottom — hides
     // the request behind the user's existing scroll momentum.
     function maybeLoadMore() {
-        if (!listRef || !hasMoreChats || isLoadingMore) return;
+        if (!listRef || !chatStore.hasMoreChats || chatStore.isLoadingMore)
+            return;
         const offset = listRef.getScrollOffset();
         const total = listRef.getScrollSize();
         const viewport = listRef.getViewportSize();
-        if (total - offset - viewport < viewport * 1.5) onloadmore();
+        if (total - offset - viewport < viewport * 1.5) chatStore.loadMore();
     }
 
     function highlightSnippet(raw: string, query: string): string {
@@ -135,7 +67,7 @@
 
     function commitRename() {
         if (renamingChatId && renameValue.trim()) {
-            onrenamechat(renamingChatId, renameValue.trim());
+            chatStore.rename(renamingChatId, renameValue.trim());
         }
         renamingChatId = null;
         renameValue = '';
@@ -227,14 +159,14 @@
                 bind:value={searchValue}
                 onkeydown={(e) => {
                     if (e.key === 'Enter' && searchValue.trim())
-                        onsearch(searchValue.trim());
+                        chatStore.search(searchValue.trim());
                     if (e.key === 'Escape') {
                         searchValue = '';
-                        onclearsearch();
+                        chatStore.clearSearch();
                     }
                 }}
                 oninput={() => {
-                    if (!searchValue) onclearsearch();
+                    if (!searchValue) chatStore.clearSearch();
                 }}
             />
             {#if searchValue}
@@ -243,7 +175,7 @@
                     class="shrink-0 flex items-center justify-center w-4 h-4 p-0 bg-transparent border-0 rounded-[3px] text-fg-muted cursor-pointer opacity-60 transition-opacity duration-100 hover:opacity-100"
                     onclick={() => {
                         searchValue = '';
-                        onclearsearch();
+                        chatStore.clearSearch();
                     }}
                     aria-label="Clear search"
                 >
@@ -254,14 +186,14 @@
         <button
             type="button"
             class="flex items-center justify-center gap-2 w-full px-3 py-2.25 bg-accent-bg text-on-accent-bg border-0 rounded-lg text-sm font-medium cursor-pointer transition-[background-color,color] duration-150 hover:bg-accent-bg-hover hover:text-on-accent-bg-hover"
-            onclick={onnewchat}
+            onclick={() => chatStore.newChat()}
         >
             <Icon name="plus" />
             New Chat
         </button>
     </div>
 
-    {#if searchResults !== null}
+    {#if chatStore.searchResults !== null}
         <nav
             class={[
                 'history search-mode flex-1 min-h-0 overflow-y-auto px-2 py-1',
@@ -274,40 +206,45 @@
             <p
                 class="px-2.5 pt-2.5 pb-1 text-[0.6875rem] font-semibold tracking-[0.06em] uppercase text-fg-muted m-0"
             >
-                {searchResults.length} result{searchResults.length === 1
+                {chatStore.searchResults.length} result{chatStore.searchResults
+                    .length === 1
                     ? ''
                     : 's'}
             </p>
-            {#if searchResults.length === 0}
+            {#if chatStore.searchResults.length === 0}
                 <p class="px-2 pt-2 pb-5 text-sm text-fg text-center m-0">
                     No matches found
                 </p>
             {:else}
-                {#each searchResults as result (result.id)}
+                {#each chatStore.searchResults as result (result.id)}
                     <div
                         class={[
                             'group flex items-center rounded-md mb-px transition-[background-color] duration-100 hover:bg-surface-raised',
-                            result.id === activeChatId && 'bg-surface-raised',
+                            result.id === chatStore.activeChatId &&
+                                'bg-surface-raised',
                         ]}
                     >
                         <button
                             type="button"
                             class={chatItemClass}
                             onclick={() =>
-                                onselectchat(result.id, result.matchIndex)}
+                                chatStore.activate(
+                                    result.id,
+                                    result.matchIndex
+                                )}
                             title={result.title}
                         >
                             <span
                                 class={[
                                     chatTitleClass,
-                                    result.id === activeChatId &&
+                                    result.id === chatStore.activeChatId &&
                                         'text-accent-fg',
                                 ]}
                             >
                                 <!-- eslint-disable-next-line svelte/no-at-html-tags -->
                                 {@html highlightSnippet(
                                     result.title,
-                                    searchQuery
+                                    chatStore.searchQuery
                                 )}
                             </span>
                             {#if result.snippet}
@@ -317,7 +254,7 @@
                                     <!-- eslint-disable-next-line svelte/no-at-html-tags -->
                                     {@html highlightSnippet(
                                         result.snippet,
-                                        searchQuery
+                                        chatStore.searchQuery
                                     )}
                                 </span>
                             {/if}
@@ -341,9 +278,9 @@
             >
                 Recent Chats
             </p>
-            {#if !initialized}
+            {#if !appLifecycle.initialized}
                 <!-- Blank until extension responds — avoids "No conversations yet" flash on refresh. -->
-            {:else if chats.length === 0}
+            {:else if chatStore.chats.length === 0}
                 <p class="px-2 pt-2 pb-5 text-sm text-fg text-center m-0">
                     No conversations yet
                 </p>
@@ -351,7 +288,7 @@
                 <div class="flex-1 min-h-0">
                     <VList
                         bind:this={listRef}
-                        data={chats}
+                        data={chatStore.chats}
                         getKey={(c) => c.id}
                         itemSize={32}
                         onscroll={maybeLoadMore}
@@ -361,7 +298,7 @@
                             <div
                                 class={[
                                     'group flex items-center rounded-md mb-px transition-[background-color] duration-100 hover:bg-surface-raised',
-                                    chat.id === activeChatId &&
+                                    chat.id === chatStore.activeChatId &&
                                         'bg-surface-raised',
                                 ]}
                             >
@@ -387,26 +324,28 @@
                                     <button
                                         type="button"
                                         class={chatItemClass}
-                                        onclick={() => onselectchat(chat.id)}
+                                        onclick={() =>
+                                            chatStore.activate(chat.id)}
                                         title={chat.title}
                                     >
                                         <span
                                             class={[
                                                 chatTitleClass,
-                                                chat.id === activeChatId &&
+                                                chat.id ===
+                                                    chatStore.activeChatId &&
                                                     'text-accent-fg',
                                             ]}>{chat.title}</span
                                         >
                                     </button>
                                 {/if}
-                                {#if streamingChatIds.includes(chat.id) && chat.id !== activeChatId}
+                                {#if chatStore.allStreamingChatIds.includes(chat.id) && chat.id !== chatStore.activeChatId}
                                     <span
                                         class="shrink-0 flex items-center justify-center w-5 h-5 mr-0.5 text-xs font-bold text-fg-muted"
                                         aria-label="Streaming"
                                     >
                                         <Icon name="spinner" />
                                     </span>
-                                {:else if chatErrors[chat.id]}
+                                {:else if chatStore.chatErrors[chat.id]}
                                     <span
                                         class="shrink-0 flex items-center justify-center w-5 h-5 mr-0.5 text-xs font-bold text-accent-fg"
                                         aria-label="Error">!</span
@@ -440,8 +379,8 @@
                 showSettings && 'bg-surface-raised text-accent-fg',
             ]}
             onclick={() => {
-                if (demoMode) {
-                    onextensionneeded();
+                if (chatStore.demoMode) {
+                    appLifecycle.requestExtension();
                     return;
                 }
                 showSettings = !showSettings;
@@ -474,7 +413,7 @@
             class="flex items-center gap-2 w-full px-2.5 py-1.75 bg-transparent border-0 rounded text-sm font-sans text-fg cursor-pointer text-left transition-[background-color,color] duration-100 hover:bg-canvas"
             onclick={(e) => {
                 e.stopPropagation();
-                onexportchat(openMenuChat!.id);
+                chatStore.export(openMenuChat!.id);
                 closeMenu();
             }}
         >
@@ -487,7 +426,7 @@
             class="flex items-center gap-2 w-full px-2.5 py-1.75 bg-transparent border-0 rounded text-sm font-sans text-fg cursor-pointer text-left transition-[background-color,color] duration-100 hover:bg-canvas hover:text-accent-fg"
             onclick={(e) => {
                 e.stopPropagation();
-                ondeletechat(openMenuChat!.id);
+                chatStore.remove(openMenuChat!.id);
                 closeMenu();
             }}
         >
@@ -498,21 +437,7 @@
 {/if}
 
 {#if showSettings}
-    <SettingsPopover
-        bind:theme
-        bind:fontSizeIndex
-        bind:chatWidth
-        bind:smoothTextMode
-        bind:submitKeystroke
-        bind:modelTier
-        bind:autoscroll
-        bind:enableWebSearch
-        bind:tagOpenRouterRequests
-        bind:syncApiKeys
-        onclose={() => (showSettings = false)}
-        {onapikeysaved}
-        {onapikeycleared}
-    />
+    <SettingsPopover onclose={() => (showSettings = false)} />
 {/if}
 
 <style>

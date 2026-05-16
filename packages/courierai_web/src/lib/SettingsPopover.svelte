@@ -1,6 +1,6 @@
 <script lang="ts">
-    import type { ModelTier } from './constants';
     import { PROVIDERS, THEMES } from './constants';
+    import { errorStore, formatErr } from './errorStore.svelte';
     import {
         checkApiKeys,
         clearApiKey,
@@ -8,56 +8,28 @@
         waitForExtension,
     } from './extension';
     import Icon from './Icon.svelte';
+    import { providersStore } from './providersStore.svelte';
+    import { settingsStore } from './settingsStore.svelte';
 
-    let {
-        theme = $bindable(),
-        fontSizeIndex = $bindable(),
-        chatWidth = $bindable(),
-        smoothTextMode = $bindable(),
-        submitKeystroke = $bindable(),
-        modelTier = $bindable(),
-        autoscroll = $bindable(),
-        enableWebSearch = $bindable(),
-        tagOpenRouterRequests = $bindable(),
-        syncApiKeys = $bindable(),
-        onclose,
-        onapikeysaved,
-        onapikeycleared,
-    }: {
-        theme: string;
-        fontSizeIndex: number;
-        chatWidth: number;
-        smoothTextMode:
-            | 'smooth'
-            | 'boost-on-complete'
-            | 'dump-on-complete'
-            | 'raw';
-        submitKeystroke: 'enter' | 'ctrl+enter';
-        modelTier: ModelTier;
-        autoscroll: boolean;
-        enableWebSearch: boolean;
-        tagOpenRouterRequests: boolean;
-        syncApiKeys: boolean;
-        onclose: () => void;
-        onapikeysaved: (providerId: string) => void;
-        onapikeycleared: (providerId: string) => void;
-    } = $props();
+    const LOG = '[courier:web]';
+
+    let { onclose }: { onclose: () => void } = $props();
 
     let activeTab = $state<'keys' | 'ui' | 'advanced' | 'changelog'>('keys');
 
-    let showPrevious = $derived(modelTier !== 'latest');
-    let showLegacy = $derived(modelTier === 'legacy');
+    let showPrevious = $derived(settingsStore.modelTier !== 'latest');
+    let showLegacy = $derived(settingsStore.modelTier === 'legacy');
 
     function togglePrevious(checked: boolean) {
         // Unchecking Previous also clears Legacy (cascade), since Legacy
         // implies Previous.
-        modelTier = checked ? 'previous' : 'latest';
+        settingsStore.modelTier = checked ? 'previous' : 'latest';
     }
 
     function toggleLegacy(checked: boolean) {
         // Checking Legacy auto-enables Previous (cascade); unchecking it
         // keeps Previous enabled.
-        modelTier = checked ? 'legacy' : 'previous';
+        settingsStore.modelTier = checked ? 'legacy' : 'previous';
     }
 
     let keyInputs = $state<Record<string, string>>(
@@ -70,7 +42,14 @@
 
     async function refreshSavedKeys() {
         await waitForExtension();
-        savedKeys = await checkApiKeys(PROVIDERS.map((p) => p.id));
+        try {
+            savedKeys = await checkApiKeys(PROVIDERS.map((p) => p.id));
+        } catch (err) {
+            console.error(LOG, 'checkApiKeys failed', err);
+            errorStore.setAppError(
+                `Couldn't read saved API keys: ${formatErr(err)}`
+            );
+        }
     }
 
     $effect(() => {
@@ -80,20 +59,32 @@
     async function handleSave(providerId: string) {
         const key = keyInputs[providerId].trim();
         if (!key) return;
-        const ok = await saveApiKey(providerId, key, syncApiKeys);
-        if (ok) {
-            keyInputs[providerId] = '';
-            savedKeys[providerId] = true;
-            onapikeysaved(providerId);
+        try {
+            await saveApiKey(providerId, key, settingsStore.syncApiKeys);
+        } catch (err) {
+            console.error(LOG, 'saveApiKey failed', providerId, err);
+            errorStore.setAppError(
+                `Couldn't save API key for ${providerId}: ${formatErr(err)}`
+            );
+            return;
         }
+        keyInputs[providerId] = '';
+        savedKeys[providerId] = true;
+        providersStore.onApiKeySaved(providerId);
     }
 
     async function handleClear(providerId: string) {
-        const ok = await clearApiKey(providerId);
-        if (ok) {
-            savedKeys[providerId] = false;
-            onapikeycleared(providerId);
+        try {
+            await clearApiKey(providerId);
+        } catch (err) {
+            console.error(LOG, 'clearApiKey failed', providerId, err);
+            errorStore.setAppError(
+                `Couldn't clear API key for ${providerId}: ${formatErr(err)}`
+            );
+            return;
         }
+        savedKeys[providerId] = false;
+        providersStore.onApiKeyCleared(providerId);
     }
 
     const tabBase =
@@ -282,7 +273,7 @@
                 <select
                     id="theme-select"
                     class={selectClass}
-                    bind:value={theme}
+                    bind:value={settingsStore.theme}
                 >
                     {#each THEMES as t (t.id)}
                         <option value={t.id}>{t.name}</option>
@@ -298,7 +289,7 @@
                     min="0"
                     max="5"
                     step="1"
-                    bind:value={fontSizeIndex}
+                    bind:value={settingsStore.fontSizeIndex}
                 />
                 <div
                     class="flex justify-between text-[0.6875rem] text-fg -mt-1"
@@ -316,7 +307,7 @@
                     min="0"
                     max="100"
                     step="1"
-                    bind:value={chatWidth}
+                    bind:value={settingsStore.chatWidth}
                 />
                 <div
                     class="flex justify-between text-[0.6875rem] text-fg -mt-1"
@@ -332,7 +323,7 @@
                 <select
                     id="submit-keystroke"
                     class={selectClass}
-                    bind:value={submitKeystroke}
+                    bind:value={settingsStore.submitKeystroke}
                 >
                     <option value="enter">Enter</option>
                     <option value="ctrl+enter">Control+Enter</option>
@@ -344,12 +335,12 @@
                     id="autoscroll"
                     type="button"
                     class={switchClass}
-                    class:on={autoscroll}
+                    class:on={settingsStore.autoscroll}
                     role="switch"
-                    aria-checked={autoscroll}
+                    aria-checked={settingsStore.autoscroll}
                     aria-label="Autoscroll"
                     onclick={() => {
-                        autoscroll = !autoscroll;
+                        settingsStore.autoscroll = !settingsStore.autoscroll;
                     }}
                 >
                     <span class="ios-switch-thumb"></span>
@@ -391,12 +382,12 @@
                     id="sync-api-keys"
                     type="button"
                     class={switchClass}
-                    class:on={syncApiKeys}
+                    class:on={settingsStore.syncApiKeys}
                     role="switch"
-                    aria-checked={syncApiKeys}
+                    aria-checked={settingsStore.syncApiKeys}
                     aria-label="Sync API Keys Through Browser Account"
                     onclick={() => {
-                        syncApiKeys = !syncApiKeys;
+                        settingsStore.syncApiKeys = !settingsStore.syncApiKeys;
                         setTimeout(refreshSavedKeys, 500);
                     }}
                 >
@@ -411,12 +402,13 @@
                     id="enable-web-search"
                     type="button"
                     class={switchClass}
-                    class:on={enableWebSearch}
+                    class:on={settingsStore.enableWebSearch}
                     role="switch"
-                    aria-checked={enableWebSearch}
+                    aria-checked={settingsStore.enableWebSearch}
                     aria-label="Enable Web Search"
                     onclick={() => {
-                        enableWebSearch = !enableWebSearch;
+                        settingsStore.enableWebSearch =
+                            !settingsStore.enableWebSearch;
                     }}
                 >
                     <span class="ios-switch-thumb"></span>
@@ -442,7 +434,7 @@
                 <select
                     id="smooth-text-mode"
                     class={selectClass}
-                    bind:value={smoothTextMode}
+                    bind:value={settingsStore.smoothTextMode}
                 >
                     <option value="smooth">Normal rendering</option>
                     <option value="boost-on-complete"
@@ -489,12 +481,13 @@
                     id="tag-openrouter"
                     type="button"
                     class={switchClass}
-                    class:on={tagOpenRouterRequests}
+                    class:on={settingsStore.tagOpenRouterRequests}
                     role="switch"
-                    aria-checked={tagOpenRouterRequests}
+                    aria-checked={settingsStore.tagOpenRouterRequests}
                     aria-label="Tag OpenRouter requests with CourierAI for app tracking"
                     onclick={() => {
-                        tagOpenRouterRequests = !tagOpenRouterRequests;
+                        settingsStore.tagOpenRouterRequests =
+                            !settingsStore.tagOpenRouterRequests;
                     }}
                 >
                     <span class="ios-switch-thumb"></span>

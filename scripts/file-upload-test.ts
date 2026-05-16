@@ -94,10 +94,18 @@ function serializeError(error: unknown): unknown {
     return out;
 }
 
-function toOpenAIContent(filename: string, mimeType: string, data: string) {
+function toOpenAIContent(
+    filename: string,
+    mimeType: string,
+    data: string
+): OpenAI.Responses.ResponseInputMessageContentList {
     if (mimeType.startsWith('image/')) {
         return [
-            { type: 'input_image', image_url: dataUrl(mimeType, data) },
+            {
+                type: 'input_image',
+                image_url: dataUrl(mimeType, data),
+                detail: 'auto',
+            },
             { type: 'input_text', text: PROMPT },
         ];
     }
@@ -112,7 +120,23 @@ function toOpenAIContent(filename: string, mimeType: string, data: string) {
     ];
 }
 
-function toOpenRouterContent(filename: string, mimeType: string, data: string) {
+// Shape named locally because the @openrouter/sdk types lag the
+// runtime API (see [[openrouter-api-sdk-quirks]]) — we don't trust
+// satisfies <SDKType> for OpenRouter even when it happens to align.
+type OpenRouterInputContent =
+    | { type: 'input_text'; text: string }
+    | {
+          type: 'input_image';
+          imageUrl: string;
+          detail: 'auto' | 'high' | 'low';
+      }
+    | { type: 'input_file'; filename: string; fileData: string };
+
+function toOpenRouterContent(
+    filename: string,
+    mimeType: string,
+    data: string
+): OpenRouterInputContent[] {
     if (mimeType.startsWith('image/')) {
         return [
             {
@@ -217,11 +241,7 @@ async function callOpenAI(args: Args, filename: string, data: string) {
         input: [
             {
                 role: 'user',
-                content: toOpenAIContent(
-                    filename,
-                    args.mimeType,
-                    data
-                ) as never,
+                content: toOpenAIContent(filename, args.mimeType, data),
             },
         ],
         max_output_tokens: 4096,
@@ -238,14 +258,10 @@ async function callOpenRouter(args: Args, filename: string, data: string) {
             model: args.model,
             input: [
                 {
-                    role: 'user',
-                    content: toOpenRouterContent(
-                        filename,
-                        args.mimeType,
-                        data
-                    ) as never,
+                    role: 'user' as const,
+                    content: toOpenRouterContent(filename, args.mimeType, data),
                 },
-            ] as never,
+            ],
             maxOutputTokens: 4096,
         },
     });

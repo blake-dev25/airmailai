@@ -65,7 +65,9 @@ marked.use({
             if (highlighter) {
                 const loadedLangs = highlighter.getLoadedLanguages();
                 const language =
-                    lang && loadedLangs.includes(lang as never) ? lang : 'text';
+                    lang && (loadedLangs as readonly string[]).includes(lang)
+                        ? lang
+                        : 'text';
                 const highlighted = highlighter.codeToHtml(text, {
                     lang: language,
                     theme: THEME,

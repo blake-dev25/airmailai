@@ -122,9 +122,9 @@ export async function streamOpenAI(
         ...(thinkingEnabled
             ? {
                   reasoning: {
-                      effort: thinkingLevel,
-                      summary: 'auto',
-                  } as never,
+                      effort: thinkingLevel as OpenAI.Reasoning['effort'],
+                      summary: 'auto' as const,
+                  },
               }
             : {}),
         ...(params.webSearch

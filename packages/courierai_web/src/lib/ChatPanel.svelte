@@ -1,7 +1,9 @@
 <script lang="ts">
     import type { Attachment } from '@courier/shared';
     import { tick, untrack } from 'svelte';
-    import type { ModelOption } from './constants';
+    import { appLifecycle } from './appLifecycle.svelte';
+    import { chatStore } from './chatStore.svelte';
+    import { errorStore } from './errorStore.svelte';
     import {
         formatFileSize,
         getAcceptForProvider,
@@ -12,62 +14,11 @@
     } from './files';
     import Icon from './Icon.svelte';
     import MessageItem from './MessageItem.svelte';
+    import type { ModelOption } from './models';
+    import { providersStore } from './providersStore.svelte';
+    import { settingsStore } from './settingsStore.svelte';
     import { createSmoothText } from './smoothText.svelte';
     import { createStickToBottom } from './stickToBottom.svelte';
-    import type { Message } from './types';
-
-    let {
-        messages,
-        isStreaming = false,
-        streamingLocally = false,
-        chatWidth = 100,
-        streamError = null,
-        loading = false,
-        smoothTextMode = 'smooth',
-        submitKeystroke = 'enter',
-        autoscroll = false,
-        systemPrompt = $bindable(),
-        providerId,
-        model = null,
-        highlightMessageIndex = null,
-        demoMode = false,
-        onsend,
-        onstop,
-        onretry,
-        onedit,
-        ondelete,
-        onclearerror,
-        onextensionneeded,
-    }: {
-        messages: Message[];
-        // True if any tab is streaming this chat (local or remote).
-        isStreaming?: boolean;
-        // True only when *this* tab owns the stream — gates the stop button,
-        // since stop only works against the source tab's port.
-        streamingLocally?: boolean;
-        chatWidth?: number;
-        streamError?: string | null;
-        loading?: boolean;
-        smoothTextMode?:
-            | 'smooth'
-            | 'boost-on-complete'
-            | 'dump-on-complete'
-            | 'raw';
-        submitKeystroke?: 'enter' | 'ctrl+enter';
-        autoscroll?: boolean;
-        systemPrompt: string;
-        providerId: string;
-        model?: ModelOption | null;
-        highlightMessageIndex?: number | null;
-        demoMode?: boolean;
-        onsend: (content: string, attachments?: Attachment[]) => void;
-        onstop: (truncatedContent: string) => void;
-        onretry: (index: number) => void;
-        onedit: (index: number, content: string) => void;
-        ondelete: (index: number) => void;
-        onclearerror: () => void;
-        onextensionneeded: () => void;
-    } = $props();
 
     let systemExpanded = $state(false);
     // Per-message UI state keyed by Message.id so it survives mid-chat deletes
@@ -93,7 +44,9 @@
     let editingDims = $state<{ w: number; h: number } | null>(null);
 
     let uploadGeneration = 0;
-    let filePolicy = $derived(getFilePolicy(providerId, model));
+    let filePolicy = $derived(
+        getFilePolicy(settingsStore.providerId, providersStore.selectedModel)
+    );
     let filePolicyKey = $derived(
         [
             filePolicy.providerId,
@@ -105,7 +58,12 @@
             ...Array.from(filePolicy.mimeTypes).sort(),
         ].join(':')
     );
-    let fileAccept = $derived(getAcceptForProvider(providerId, model));
+    let fileAccept = $derived(
+        getAcceptForProvider(
+            settingsStore.providerId,
+            providersStore.selectedModel
+        )
+    );
     let canAttachFiles = $derived(filePolicy.mimeTypes.size > 0);
     let attachmentTotalBytes = $derived(
         pendingAttachments.reduce(
@@ -117,33 +75,39 @@
     const stick = createStickToBottom();
 
     const smooth = createSmoothText({
-        mode: () => smoothTextMode,
-        streaming: () => untrack(() => isStreaming),
+        mode: () => settingsStore.smoothTextMode,
+        streaming: () => untrack(() => chatStore.isActiveStreaming),
         onReset: () => {
-            if (untrack(() => autoscroll)) stick.reSticky();
+            if (untrack(() => settingsStore.autoscroll)) stick.reSticky();
         },
     });
 
     $effect(() => {
         if (!messagesEl || !messagesContentEl) return;
-        return stick.attach(messagesEl, messagesContentEl, () => autoscroll);
+        return stick.attach(
+            messagesEl,
+            messagesContentEl,
+            () => settingsStore.autoscroll
+        );
     });
 
     $effect(() => {
-        const raw = messages[messages.length - 1]?.content ?? '';
+        const raw =
+            chatStore.activeMessages[chatStore.activeMessages.length - 1]
+                ?.content ?? '';
         smooth.setRaw(raw);
         return () => smooth.cancel();
     });
 
     // dump-on-complete: when the stream ends, snap any remaining un-drained text to the screen.
     $effect(() => {
-        if (smoothTextMode !== 'dump-on-complete') return;
-        if (isStreaming) return;
+        if (settingsStore.smoothTextMode !== 'dump-on-complete') return;
+        if (chatStore.isActiveStreaming) return;
         smooth.flushIfComplete();
     });
 
     $effect(() => {
-        const idx = highlightMessageIndex;
+        const idx = chatStore.highlightMessageIndex;
         if (idx == null) return;
         let cancelled = false;
         tick().then(() => {
@@ -166,7 +130,7 @@
     $effect(() => {
         if (
             editingMessageId !== null &&
-            !messages.some((m) => m.id === editingMessageId)
+            !chatStore.activeMessages.some((m) => m.id === editingMessageId)
         ) {
             editingMessageId = null;
             editingText = '';
@@ -189,14 +153,14 @@
 
         const validation = validateReadyAttachments(
             attachments,
-            providerId,
-            model
+            settingsStore.providerId,
+            providersStore.selectedModel
         );
         if (validation.ok) return;
 
         pendingAttachments = [];
         fileErrors = [
-            `Attached files were removed. ${validation.message}`,
+            `File Error: Attached files were removed. ${validation.message}`,
             ...untrack(() => fileErrors),
         ].slice(0, 3);
     });
@@ -208,7 +172,7 @@
 
     function handleKeydown(e: KeyboardEvent) {
         const shouldSubmit =
-            submitKeystroke === 'ctrl+enter'
+            settingsStore.submitKeystroke === 'ctrl+enter'
                 ? e.key === 'Enter' && e.ctrlKey
                 : e.key === 'Enter' && !e.shiftKey;
         if (shouldSubmit) {
@@ -221,24 +185,24 @@
         const text = inputText.trim();
         if (
             (!text && !pendingAttachments.length) ||
-            isStreaming ||
+            chatStore.isActiveStreaming ||
             processingAttachments.length
         ) {
             return;
         }
-        if (demoMode) {
-            onextensionneeded();
+        if (chatStore.demoMode) {
+            appLifecycle.requestExtension();
             return;
         }
 
         const fileValidation = validateReadyAttachments(
             pendingAttachments,
-            providerId,
-            model
+            settingsStore.providerId,
+            providersStore.selectedModel
         );
         if (!fileValidation.ok) {
             fileErrors = [
-                fileValidation.message,
+                `File Error: ${fileValidation.message}`,
                 ...untrack(() => fileErrors),
             ].slice(0, 3);
             return;
@@ -247,7 +211,7 @@
         stick.scrollToBottom();
         const atts = pendingAttachments;
         pendingAttachments = [];
-        onsend(text, atts.length ? atts : undefined);
+        chatStore.sendMessage(text, atts.length ? atts : undefined);
         inputText = '';
         if (textareaEl) textareaEl.style.height = '';
     }
@@ -256,7 +220,15 @@
     // matches exactly what the user sees — characters queued in the smooth
     // drain are discarded rather than rushed onto the screen.
     function stop() {
-        onstop(smooth.display);
+        chatStore.stop(smooth.display);
+    }
+
+    function handleRetry(index: number) {
+        if (chatStore.demoMode) {
+            appLifecycle.requestExtension();
+            return;
+        }
+        chatStore.retry(index);
     }
 
     function openFilePicker() {
@@ -264,7 +236,10 @@
     }
 
     function addFileError(message: string) {
-        fileErrors = [message, ...untrack(() => fileErrors)].slice(0, 3);
+        fileErrors = [
+            `File Error: ${message}`,
+            ...untrack(() => fileErrors),
+        ].slice(0, 3);
     }
 
     function setProcessingProgress(id: string, progress: number) {
@@ -406,8 +381,8 @@
         if (!files.length) return;
 
         fileErrors = [];
-        const uploadProviderId = providerId;
-        const uploadModel = model;
+        const uploadProviderId = settingsStore.providerId;
+        const uploadModel = providersStore.selectedModel;
         const uploadPolicy = getFilePolicy(uploadProviderId, uploadModel);
         const generation = uploadGeneration;
         const slots = Math.max(
@@ -468,11 +443,13 @@
 
     function saveEdit() {
         if (editingMessageId === null) return;
-        const idx = messages.findIndex((m) => m.id === editingMessageId);
+        const idx = chatStore.activeMessages.findIndex(
+            (m) => m.id === editingMessageId
+        );
         editingMessageId = null;
         const text = editingText;
         editingText = '';
-        if (idx !== -1) onedit(idx, text);
+        if (idx !== -1) chatStore.editMessage(idx, text);
     }
 
     function cancelEdit() {
@@ -514,14 +491,14 @@
                     : ''}"
             />
             <span>System Prompt</span>
-            {#if systemPrompt.trim()}
+            {#if settingsStore.systemPrompt.trim()}
                 <span
                     class="w-1.5 h-1.5 rounded-full bg-accent-bg shrink-0"
                     aria-label="System prompt is set"
                 ></span>
             {/if}
         </button>
-        {#if demoMode}
+        {#if chatStore.demoMode}
             <button
                 type="button"
                 class="absolute top-0 right-4 h-11 flex items-center gap-1.25 px-2 bg-transparent border-0 font-sans text-xs font-medium text-accent-fg cursor-pointer rounded transition-[color,background-color] duration-150 hover:text-accent-fg-hover hover:underline"
@@ -535,7 +512,7 @@
                 <textarea
                     class="w-full min-h-20 max-h-45 px-3 py-2.5 bg-canvas border border-border rounded-lg text-fg font-sans text-sm leading-[1.6] resize-y box-border outline-none transition-[border-color] duration-150 focus:border-accent-fg placeholder:text-fg-muted"
                     placeholder="Give the model a persona, instructions, or context..."
-                    bind:value={systemPrompt}
+                    bind:value={settingsStore.systemPrompt}
                 ></textarea>
             </div>
         {/if}
@@ -557,10 +534,10 @@
             <div
                 bind:this={messagesContentEl}
                 class="[--narrow-chat-width:744px] mx-auto px-5 py-7 flex flex-col gap-7 min-h-full box-border"
-                style="max-width: min(100vw, calc(744px + (100vw - 744px) * {chatWidth /
+                style="max-width: min(100vw, calc(744px + (100vw - 744px) * {settingsStore.chatWidth /
                     100}));"
             >
-                {#if loading}
+                {#if chatStore.chatLoading}
                     <div
                         class="flex flex-col items-center justify-center flex-1 h-full gap-2.5 text-fg"
                     >
@@ -570,7 +547,7 @@
                             Loading...
                         </p>
                     </div>
-                {:else if messages.length === 0}
+                {:else if chatStore.activeMessages.length === 0}
                     <div
                         class="flex flex-col items-center justify-center flex-1 h-full gap-2.5 text-fg"
                     >
@@ -586,20 +563,22 @@
                         </p>
                     </div>
                 {:else}
-                    {#each messages as message, i (message.id)}
+                    {#each chatStore.activeMessages as message, i (message.id)}
                         {@const isLastStreaming =
-                            isStreaming && i === messages.length - 1}
+                            chatStore.isActiveStreaming &&
+                            i === chatStore.activeMessages.length - 1}
                         {@const displayContent =
-                            i === messages.length - 1 &&
+                            i === chatStore.activeMessages.length - 1 &&
                             message.role === 'assistant' &&
-                            (isStreaming || smooth.display !== message.content)
+                            (chatStore.isActiveStreaming ||
+                                smooth.display !== message.content)
                                 ? smooth.display
                                 : message.content}
                         <MessageItem
                             {message}
                             index={i}
                             {displayContent}
-                            {isStreaming}
+                            isStreaming={chatStore.isActiveStreaming}
                             {isLastStreaming}
                             editing={editingMessageId === message.id}
                             bind:editingText
@@ -627,8 +606,8 @@
                                 else next.add(message.id);
                                 expandedSources = next;
                             }}
-                            onretry={() => onretry(i)}
-                            ondelete={() => ondelete(i)}
+                            onretry={() => handleRetry(i)}
+                            ondelete={() => chatStore.deleteMessage(i)}
                         />
                     {/each}
                 {/if}
@@ -646,18 +625,40 @@
         {/if}
     </div>
 
-    <!-- Stream error -->
-    {#if streamError}
+    <!-- App error -->
+    {#if errorStore.appError}
         <div
             class="shrink-0 flex items-center gap-3 px-4 py-2 text-sm text-accent-fg border-t border-border bg-canvas"
             role="alert"
         >
-            <span class="min-w-0 flex-1 wrap-break-word">{streamError}</span>
+            <span class="min-w-0 flex-1 wrap-break-word"
+                >{errorStore.appError}</span
+            >
             <button
                 type="button"
                 class="shrink-0 flex items-center justify-center w-6 h-6 p-0 bg-transparent border-0 rounded-md text-accent-fg cursor-pointer opacity-70 transition-[opacity,background-color] duration-150 hover:opacity-100 hover:bg-surface-sunken"
-                onclick={onclearerror}
-                aria-label="Dismiss API error"
+                onclick={() => errorStore.clearAppError()}
+                aria-label="Dismiss error"
+            >
+                <Icon name="close" />
+            </button>
+        </div>
+    {/if}
+
+    <!-- Stream error -->
+    {#if chatStore.activeStreamError}
+        <div
+            class="shrink-0 flex items-center gap-3 px-4 py-2 text-sm text-accent-fg border-t border-border bg-canvas"
+            role="alert"
+        >
+            <span class="min-w-0 flex-1 wrap-break-word"
+                >{chatStore.activeStreamError}</span
+            >
+            <button
+                type="button"
+                class="shrink-0 flex items-center justify-center w-6 h-6 p-0 bg-transparent border-0 rounded-md text-accent-fg cursor-pointer opacity-70 transition-[opacity,background-color] duration-150 hover:opacity-100 hover:bg-surface-sunken"
+                onclick={() => chatStore.clearActiveChatError()}
+                aria-label="Dismiss error"
             >
                 <Icon name="close" />
             </button>
@@ -755,7 +756,7 @@
                 type="button"
                 class="{sendStyleBase} bg-surface-sunken text-fg border! border-border! enabled:hover:bg-border disabled:opacity-[0.35] disabled:cursor-not-allowed"
                 onclick={openFilePicker}
-                disabled={isStreaming ||
+                disabled={chatStore.isActiveStreaming ||
                     !canAttachFiles ||
                     pendingAttachments.length + processingAttachments.length >=
                         filePolicy.maxAttachments}
@@ -772,7 +773,7 @@
                 onkeydown={handleKeydown}
                 oninput={autoResize}
             ></textarea>
-            {#if isStreaming && streamingLocally}
+            {#if chatStore.isActiveStreaming && chatStore.isActiveLocalStreaming}
                 <button
                     type="button"
                     class="{sendStyleBase} bg-accent-3-bg text-on-accent-3-bg hover:bg-accent-3-bg-hover hover:text-on-accent-3-bg-hover"
@@ -786,7 +787,7 @@
                     type="button"
                     class="{sendStyleBase} bg-accent-3-bg text-on-accent-3-bg enabled:hover:bg-accent-3-bg-hover enabled:hover:text-on-accent-3-bg-hover disabled:opacity-[0.35] disabled:cursor-not-allowed"
                     onclick={submit}
-                    disabled={isStreaming ||
+                    disabled={chatStore.isActiveStreaming ||
                         processingAttachments.length > 0 ||
                         (!inputText.trim() && !pendingAttachments.length)}
                     aria-label="Send message"

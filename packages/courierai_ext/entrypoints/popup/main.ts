@@ -52,7 +52,7 @@ btnClearChats.addEventListener('click', async () => {
     if (res?.ok) {
         setStatus('Chat history deleted.');
     } else {
-        setStatus('Something went wrong.', true);
+        setStatus(res?.message ?? 'Something went wrong.', true);
     }
 });
 
@@ -70,6 +70,6 @@ btnClearAll.addEventListener('click', async () => {
     if (res?.ok) {
         setStatus('All storage deleted.');
     } else {
-        setStatus('Something went wrong.', true);
+        setStatus(res?.message ?? 'Something went wrong.', true);
     }
 });
