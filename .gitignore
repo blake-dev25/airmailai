@@ -30,6 +30,7 @@ logs/
 Thumbs.db
 .vscode/
 .claude/
+.codex/
 
 # deploy scratch/etc
 .deploy-tmp/

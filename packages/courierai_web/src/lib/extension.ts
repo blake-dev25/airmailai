@@ -3,9 +3,11 @@ import type {
     BroadcastRequest,
     ChatMeta,
     ExtensionResponse,
+    HydratedStoredMessage,
     OpenRouterModel,
     StorageRequest,
     StorageResponse,
+    StorageUsage,
     StoredChat,
     StreamHandlers,
     TurnStartRequest,
@@ -135,11 +137,33 @@ export async function loadSettings(): Promise<Partial<UserSettings>> {
     throw new Error(`Unexpected response: ${response.type}`);
 }
 
-export async function saveChat(
-    chat: StoredChat,
-    meta: ChatMeta
+export async function saveMeta(meta: ChatMeta): Promise<void> {
+    await sendStorageMessage({ type: 'save_meta', meta });
+}
+
+export async function putMessage(
+    chatId: string,
+    message: HydratedStoredMessage
 ): Promise<void> {
-    await sendStorageMessage({ type: 'save_chat', chat, meta });
+    await sendStorageMessage({ type: 'put_message', chatId, message });
+}
+
+export async function deleteMessage(
+    chatId: string,
+    messageId: string
+): Promise<void> {
+    await sendStorageMessage({ type: 'delete_message', chatId, messageId });
+}
+
+export async function deleteMessagesAfter(
+    chatId: string,
+    lastKeptId: string
+): Promise<void> {
+    await sendStorageMessage({
+        type: 'delete_messages_after',
+        chatId,
+        lastKeptId,
+    });
 }
 
 export async function deleteChat(chatId: string): Promise<void> {
@@ -177,6 +201,23 @@ export async function loadOpenRouterModels(): Promise<
     });
     if (response.type === 'openrouter_models') return response.models;
     throw new Error(`Unexpected response: ${response.type}`);
+}
+
+export async function getStorageUsage(): Promise<StorageUsage> {
+    const response = await sendStorageMessage({ type: 'get_storage_usage' });
+    if (response.type === 'storage_usage') {
+        const { type: _t, ...usage } = response;
+        return usage;
+    }
+    throw new Error(`Unexpected response: ${response.type}`);
+}
+
+export async function clearAllChats(): Promise<void> {
+    await sendStorageMessage({ type: 'clear_chats' });
+}
+
+export async function clearAllStorage(): Promise<void> {
+    await sendStorageMessage({ type: 'clear_all' });
 }
 
 export function sendToExtension(

@@ -3,12 +3,11 @@ import type {
     BroadcastEvent,
     BroadcastRequest,
     ChatMessage,
-    ChatMeta,
     ExtensionResponse,
     HydratedChatMessage,
+    HydratedStoredMessage,
     StorageRequest,
     StorageResponse,
-    StoredChat,
     StreamHandlers,
     StreamUsage,
     ToolResult,
@@ -17,7 +16,10 @@ import type {
 } from '@courier/shared';
 import { SETTINGS_KEYS } from '@courier/shared';
 import { DEBUG_API_LOGGING } from '../debug';
-import { getOpenRouterModels } from '../openrouter-models';
+import {
+    CACHE_KEY as OPENROUTER_CACHE_KEY,
+    getOpenRouterModels,
+} from '../openrouter-models';
 import { streamAnthropic } from '../providers/anthropic';
 import { streamGoogle } from '../providers/google';
 import { streamOpenAI } from '../providers/openai';
@@ -25,20 +27,17 @@ import { streamOpenRouter } from '../providers/openrouter';
 import {
     dbClearChats,
     dbDeleteChat,
+    dbDeleteMessage,
+    dbDeleteMessagesAfter,
     dbGetFileBlob,
+    dbGetStorageUsage,
     dbLoadChat,
     dbLoadChatMetas,
     dbLoadChats,
     dbLoadChatsByIds,
-    dbSaveChat,
+    dbPutMessage,
+    dbSaveMeta,
 } from '../storage/db';
-
-function base64ToBlob(data: string, mediaType: string): Blob {
-    const binary = atob(data);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return new Blob([bytes], { type: mediaType });
-}
 
 async function blobToBase64(blob: Blob): Promise<string> {
     const buf = new Uint8Array(await blob.arrayBuffer());
@@ -53,27 +52,20 @@ async function blobToBase64(blob: Blob): Promise<string> {
     return btoa(binary);
 }
 
-// Walks the inbound turn messages, pulls bytes out of any fresh uploads
-// (attachments with `data`) into a hash→Blob map, and returns a normalized
-// message list with every attachment turned into a full `Attachment`
-// (provider-ready). History refs are filled in from the per-turn freshBlobs
-// map first, then the files store. Throws if a ref can't be resolved.
-async function hydrateTurn(messages: ChatMessage[]): Promise<{
-    hydrated: HydratedChatMessage[];
-    freshBlobs: Map<string, Blob>;
-}> {
-    const freshBlobs = new Map<string, Blob>();
+// Hydrates inbound turn messages into a provider-ready list — every
+// attachment becomes a full `Attachment` (with `data`) by either keeping the
+// inline upload bytes or pulling the blob from the files store. Throws if a
+// ref can't be resolved.
+//
+// Persistence of the user message itself is the web's responsibility
+// (separate put_message call); we no longer track freshBlobs here.
+async function hydrateTurn(
+    messages: ChatMessage[]
+): Promise<HydratedChatMessage[]> {
     const dataCache = new Map<string, string>();
-
     for (const msg of messages) {
         for (const att of msg.attachments ?? []) {
             if ('data' in att && att.data) {
-                if (!freshBlobs.has(att.hash)) {
-                    freshBlobs.set(
-                        att.hash,
-                        base64ToBlob(att.data, att.mediaType)
-                    );
-                }
                 dataCache.set(att.hash, att.data);
             }
         }
@@ -126,7 +118,7 @@ async function hydrateTurn(messages: ChatMessage[]): Promise<{
                 : {}),
         });
     }
-    return { hydrated, freshBlobs };
+    return hydrated;
 }
 
 type StreamFn = (
@@ -246,29 +238,57 @@ async function readApiKey(provider: string): Promise<string | undefined> {
     return result[apiKeyName(provider)] as string | undefined;
 }
 
+// Serializes chrome.storage writes that touch the api-key keyspace (save_key,
+// clear_key, save_settings — the latter can flip the sync-preference, which
+// mutates the same keys). Per-message IDB writes don't need this — IDB
+// serializes transactions on its own — but chrome.storage has no such
+// guarantee and `applyApiKeySyncPreference` is read-modify-write on
+// chrome.storage.sync.
+let keyOpsChain: Promise<void> = Promise.resolve();
+function enqueueKeyOp<T>(work: () => Promise<T>): Promise<T> {
+    const run = keyOpsChain.then(work, work);
+    keyOpsChain = run.then(
+        () => {},
+        () => {}
+    );
+    return run;
+}
+
 async function handleStorage(
     message: StorageRequest
 ): Promise<StorageResponse> {
     console.log(LOG, '← storage request', message.type);
     switch (message.type) {
         case 'save_key': {
-            console.log(LOG, 'storage: saving API key for', message.provider);
-            await initializeKeyStorage();
-            const key = apiKeyName(message.provider);
-            await chrome.storage.local.set({ [key]: message.apiKey });
-            await applyApiKeySyncPreference(message.syncApiKeys);
-            console.log(LOG, '→ storage response: saved');
-            return { type: 'saved' };
+            return enqueueKeyOp(async () => {
+                console.log(
+                    LOG,
+                    'storage: saving API key for',
+                    message.provider
+                );
+                await initializeKeyStorage();
+                const key = apiKeyName(message.provider);
+                await chrome.storage.local.set({ [key]: message.apiKey });
+                await applyApiKeySyncPreference(message.syncApiKeys);
+                console.log(LOG, '→ storage response: saved');
+                return { type: 'saved' };
+            });
         }
         case 'clear_key': {
-            console.log(LOG, 'storage: clearing API key for', message.provider);
-            const key = apiKeyName(message.provider);
-            await Promise.all([
-                chrome.storage.local.remove(key),
-                chrome.storage.sync.remove(key),
-            ]);
-            console.log(LOG, '→ storage response: saved');
-            return { type: 'saved' };
+            return enqueueKeyOp(async () => {
+                console.log(
+                    LOG,
+                    'storage: clearing API key for',
+                    message.provider
+                );
+                const key = apiKeyName(message.provider);
+                await Promise.all([
+                    chrome.storage.local.remove(key),
+                    chrome.storage.sync.remove(key),
+                ]);
+                console.log(LOG, '→ storage response: saved');
+                return { type: 'saved' };
+            });
         }
         case 'has_keys': {
             await initializeKeyStorage();
@@ -283,25 +303,26 @@ async function handleStorage(
             return { type: 'has_keys', saved };
         }
         case 'save_settings': {
-            await initializeKeyStorage();
-            const currentSyncApiKeys = await getSyncApiKeys();
-            const filtered = Object.fromEntries(
-                SETTINGS_KEYS.filter((k) => k in message.settings).map((k) => [
-                    k,
-                    message.settings[k],
-                ])
-            );
-            const nextSyncApiKeys = filtered[SYNC_API_KEYS_KEY];
-            if (
-                typeof nextSyncApiKeys === 'boolean' &&
-                nextSyncApiKeys !== currentSyncApiKeys
-            ) {
-                await applyApiKeySyncPreference(nextSyncApiKeys);
-            }
-            console.log(LOG, 'storage: saving settings', filtered);
-            await chrome.storage.sync.set(filtered);
-            console.log(LOG, '→ storage response: saved');
-            return { type: 'saved' };
+            return enqueueKeyOp(async () => {
+                await initializeKeyStorage();
+                const currentSyncApiKeys = await getSyncApiKeys();
+                const filtered = Object.fromEntries(
+                    SETTINGS_KEYS.filter((k) => k in message.settings).map(
+                        (k) => [k, message.settings[k]]
+                    )
+                );
+                const nextSyncApiKeys = filtered[SYNC_API_KEYS_KEY];
+                if (
+                    typeof nextSyncApiKeys === 'boolean' &&
+                    nextSyncApiKeys !== currentSyncApiKeys
+                ) {
+                    await applyApiKeySyncPreference(nextSyncApiKeys);
+                }
+                console.log(LOG, 'storage: saving settings', filtered);
+                await chrome.storage.sync.set(filtered);
+                console.log(LOG, '→ storage response: saved');
+                return { type: 'saved' };
+            });
         }
         case 'load_settings': {
             await initializeKeyStorage();
@@ -312,8 +333,23 @@ async function handleStorage(
                 settings: result as Partial<UserSettings>,
             };
         }
-        case 'save_chat': {
-            await dbSaveChat(message.chat, message.meta);
+        case 'save_meta': {
+            await dbSaveMeta(message.meta);
+            console.log(LOG, '→ storage response: saved');
+            return { type: 'saved' };
+        }
+        case 'put_message': {
+            await dbPutMessage(message.message);
+            console.log(LOG, '→ storage response: saved');
+            return { type: 'saved' };
+        }
+        case 'delete_message': {
+            await dbDeleteMessage(message.chatId, message.messageId);
+            console.log(LOG, '→ storage response: saved');
+            return { type: 'saved' };
+        }
+        case 'delete_messages_after': {
+            await dbDeleteMessagesAfter(message.chatId, message.lastKeptId);
             console.log(LOG, '→ storage response: saved');
             return { type: 'saved' };
         }
@@ -369,6 +405,49 @@ async function handleStorage(
                 apiKey ? 'with key' : 'cache only'
             );
             return { type: 'openrouter_models', models };
+        }
+        case 'get_storage_usage': {
+            // API keys can sit in both local and sync (when syncApiKeys is on);
+            // we deliberately count both — the bytes really are stored twice.
+            const [
+                idbUsage,
+                localTotalBytes,
+                openRouterCacheBytes,
+                syncSettingsBytes,
+            ] = await Promise.all([
+                dbGetStorageUsage(),
+                chrome.storage.local.getBytesInUse(null),
+                chrome.storage.local.getBytesInUse(OPENROUTER_CACHE_KEY),
+                chrome.storage.sync.getBytesInUse(null),
+            ]);
+            const localSettingsBytes = localTotalBytes - openRouterCacheBytes;
+            console.log(LOG, '→ storage response: storage_usage', {
+                localSettingsBytes,
+                openRouterCacheBytes,
+                syncSettingsBytes,
+                ...idbUsage,
+            });
+            return {
+                type: 'storage_usage',
+                localSettingsBytes,
+                openRouterCacheBytes,
+                syncSettingsBytes,
+                ...idbUsage,
+            };
+        }
+        case 'clear_chats': {
+            await dbClearChats();
+            console.log(LOG, '→ storage response: saved');
+            return { type: 'saved' };
+        }
+        case 'clear_all': {
+            await Promise.all([
+                dbClearChats(),
+                chrome.storage.local.clear(),
+                chrome.storage.sync.clear(),
+            ]);
+            console.log(LOG, '→ storage response: saved');
+            return { type: 'saved' };
         }
     }
 }
@@ -492,11 +571,9 @@ export default defineBackground(() => {
         let streamUsage: StreamUsage | undefined;
         let streamErrorMsg: string | null = null;
         let stopTruncated = '';
-        let saveCtx: {
-            meta: ChatMeta;
-            history: StoredChat['messages'];
-            freshBlobs: Map<string, Blob>;
-        } | null = null;
+        // Stable id the web pre-allocated for the assistant message we'll
+        // append on completion. Null until turn-start lands.
+        let assistantMessageId: string | null = null;
         let portOpen = true;
 
         const send = (response: ExtensionResponse) => {
@@ -545,6 +622,7 @@ export default defineBackground(() => {
             }
             inflightTurns.set(msg.chatId, controller);
             lockedChatId = msg.chatId;
+            assistantMessageId = msg.assistantMessageId;
             disposition = 'streaming';
 
             // Announce the turn to every other tab so they can mirror state.
@@ -554,7 +632,8 @@ export default defineBackground(() => {
                 chatId: msg.chatId,
                 sourceTabId: msg.sourceTabId,
                 meta: msg.meta,
-                history: msg.historyForSave,
+                history: msg.history,
+                assistantMessageId: msg.assistantMessageId,
             });
 
             try {
@@ -576,23 +655,14 @@ export default defineBackground(() => {
                 }
 
                 let hydratedMessages: HydratedChatMessage[];
-                let freshBlobs: Map<string, Blob>;
                 try {
-                    const result = await hydrateTurn(msg.messages);
-                    hydratedMessages = result.hydrated;
-                    freshBlobs = result.freshBlobs;
+                    hydratedMessages = await hydrateTurn(msg.messages);
                 } catch (e) {
                     console.error(LOG, 'hydrate failed', e);
                     streamErrorMsg = e instanceof Error ? e.message : String(e);
                     disposition = 'errored';
                     return;
                 }
-
-                saveCtx = {
-                    meta: msg.meta,
-                    history: msg.historyForSave,
-                    freshBlobs,
-                };
 
                 console.log(LOG, 'streaming', msg.chatId, {
                     provider: msg.provider,
@@ -676,20 +746,23 @@ export default defineBackground(() => {
                 // try/catch, but the port listeners can mutate it to 'aborted'
                 // or 'stopped' mid-await — narrowing misses those paths.
                 let disp = disposition as Disposition;
-                // Save phase. Skipped on 'aborted' (web bailed without stop).
-                if (disp !== 'aborted' && saveCtx && lockedChatId) {
+                // Append the assistant message. Skipped on 'aborted' (web
+                // bailed without a graceful stop) and when no visible
+                // content landed. Drop-on-empty matches prior behavior on
+                // error/empty-stop. dbPutMessage runs inside its own IDB tx
+                // that re-checks chat existence — if the chat was deleted
+                // mid-stream the row is silently skipped, no orphan.
+                if (disp !== 'aborted' && lockedChatId && assistantMessageId) {
                     const isStop = disp === 'stopped';
                     const finalContent = isStop
                         ? stopTruncated
                         : assistantContent;
 
-                    const newMessages: StoredChat['messages'] = [
-                        ...saveCtx.history,
-                    ];
-                    // Drop the assistant turn entirely if no visible content
-                    // landed (matches prior web-side behavior on error/empty stop).
                     if (finalContent) {
-                        newMessages.push({
+                        const assistantMsg: HydratedStoredMessage = {
+                            chatId: lockedChatId,
+                            id: assistantMessageId,
+                            createdAt: Date.now(),
                             role: 'assistant',
                             content: finalContent,
                             ...(assistantThinking
@@ -698,39 +771,31 @@ export default defineBackground(() => {
                             ...(assistantToolResults.length
                                 ? { toolResults: assistantToolResults }
                                 : {}),
-                        });
-                    }
-
-                    const stored: StoredChat = {
-                        id: lockedChatId,
-                        messages: newMessages,
-                        ...(streamUsage
-                            ? {
-                                  tokens: {
-                                      input: streamUsage.inputTokens,
-                                      output: streamUsage.outputTokens,
-                                  },
-                              }
-                            : {}),
-                    };
-
-                    try {
-                        await dbSaveChat(
-                            stored,
-                            saveCtx.meta,
-                            saveCtx.freshBlobs
-                        );
-                    } catch (err) {
-                        // Save failure is loud — flip disposition so the
-                        // post-save reporting below sends an error to the
-                        // source tab and broadcasts a turn-error to mirrors.
-                        // The on-screen text is preserved; only persistence
-                        // failed.
-                        console.error(LOG, 'save failed', err);
-                        const msg =
-                            err instanceof Error ? err.message : String(err);
-                        streamErrorMsg = `Couldn't save chat: ${msg}`;
-                        disp = 'errored';
+                            ...(streamUsage
+                                ? {
+                                      tokens: {
+                                          input: streamUsage.inputTokens,
+                                          output: streamUsage.outputTokens,
+                                      },
+                                  }
+                                : {}),
+                        };
+                        try {
+                            await dbPutMessage(assistantMsg);
+                        } catch (err) {
+                            // Save failure is loud — flip disposition so the
+                            // post-save reporting below sends an error to the
+                            // source tab and broadcasts a turn-error to
+                            // mirrors. The on-screen text is preserved; only
+                            // persistence failed.
+                            console.error(LOG, 'save failed', err);
+                            const m =
+                                err instanceof Error
+                                    ? err.message
+                                    : String(err);
+                            streamErrorMsg = `Couldn't save assistant message: ${m}`;
+                            disp = 'errored';
+                        }
                     }
                 }
 

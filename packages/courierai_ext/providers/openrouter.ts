@@ -17,15 +17,24 @@ import { collectUrlCitationSources } from './tool-results';
 
 const LOG = '[courier:ext]';
 
-// OpenRouter normalizes/strips upstream encrypted search context on its
-// Responses API passthrough — neither `encrypted_content` reasoning blobs
-// nor `openrouter:web_search` action items survive in a way the model can
-// re-derive URLs from. The only reliable carrier is plain text in the
-// assistant turn. So for replay we append a markdown `Sources:` list to
-// the stored assistant content with the URLs/titles we persisted.
-// Verified vs an encrypted-content replay path (scripts/tool-call-test.ts):
-// text-block lets both gpt-5.5-via-OR and Sonnet-via-OR print URLs verbatim;
-// encrypted-content path refuses on both.
+// OpenRouter's web search tool type string. Their passthrough prefixes with
+// `openrouter:` — hoist so any future rename is visible at the top of the
+// file rather than buried in the request body.
+const WEB_SEARCH_TOOL_TYPE = 'openrouter:web_search' as const;
+
+// WORKAROUND — do not copy this pattern for other providers. OpenRouter
+// normalizes/strips upstream encrypted search context on its Responses API
+// passthrough — neither `encrypted_content` reasoning blobs nor
+// `openrouter:web_search` action items survive in a way the model can
+// re-derive URLs from. Since OpenRouter doesn't support the validation
+// signatures the upstream providers use, the only reliable carrier here is
+// plain text in the assistant turn, so for replay we append a markdown
+// `Sources:` list to the stored assistant content with the URLs/titles
+// we persisted. Verified vs an encrypted-content replay path
+// (scripts/tool-call-test.ts): text-block lets both gpt-5.5-via-OR and
+// Sonnet-via-OR print URLs verbatim; encrypted-content path refuses on both.
+// Real providers (see anthropic.ts / openai.ts / google.ts) re-inject
+// native tool-call shapes — do that instead.
 function withSourcesBlock(
     text: string,
     toolResults: WebSearchToolResult[]
@@ -147,7 +156,7 @@ export async function streamOpenRouter(
                 ? { reasoning: { effort, summary: 'auto' as const } }
                 : {}),
             ...(params.webSearch
-                ? { tools: [{ type: 'openrouter:web_search' as const }] }
+                ? { tools: [{ type: WEB_SEARCH_TOOL_TYPE }] }
                 : {}),
             stream: true as const,
         },

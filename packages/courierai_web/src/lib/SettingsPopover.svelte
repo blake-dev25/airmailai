@@ -1,9 +1,13 @@
 <script lang="ts">
+    import type { StorageUsage } from '@courier/shared';
     import { PROVIDERS, THEMES } from './constants';
     import { errorStore, formatErr } from './errorStore.svelte';
     import {
         checkApiKeys,
+        clearAllChats,
+        clearAllStorage,
         clearApiKey,
+        getStorageUsage,
         saveApiKey,
         waitForExtension,
     } from './extension';
@@ -15,7 +19,111 @@
 
     let { onclose }: { onclose: () => void } = $props();
 
-    let activeTab = $state<'keys' | 'ui' | 'advanced' | 'changelog'>('keys');
+    let activeTab = $state<
+        'keys' | 'ui' | 'storage' | 'advanced' | 'changelog'
+    >('keys');
+
+    let storageUsage = $state<StorageUsage | null>(null);
+    let storageLoading = $state(false);
+    let storageBusy = $state(false);
+
+    async function refreshStorageUsage() {
+        storageLoading = true;
+        try {
+            await waitForExtension();
+            storageUsage = await getStorageUsage();
+        } catch (err) {
+            console.error(LOG, 'getStorageUsage failed', err);
+            errorStore.setAppError(
+                `Couldn't read storage usage: ${formatErr(err)}`
+            );
+        } finally {
+            storageLoading = false;
+        }
+    }
+
+    $effect(() => {
+        if (activeTab === 'storage' && storageUsage === null && !storageLoading)
+            refreshStorageUsage();
+    });
+
+    function formatBytes(bytes: number): string {
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        if (bytes < 1024 * 1024 * 1024)
+            return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+        return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+    }
+
+    async function handleClearChats() {
+        if (!confirm('Delete all chat history? This cannot be undone.')) return;
+        storageBusy = true;
+        try {
+            await clearAllChats();
+            await refreshStorageUsage();
+        } catch (err) {
+            console.error(LOG, 'clearAllChats failed', err);
+            errorStore.setAppError(
+                `Couldn't delete chat history: ${formatErr(err)}`
+            );
+        } finally {
+            storageBusy = false;
+        }
+    }
+
+    async function handleClearAll() {
+        if (
+            !confirm(
+                'Delete all storage? This removes your API keys, settings, and all chat history. Cannot be undone.'
+            )
+        )
+            return;
+        storageBusy = true;
+        try {
+            await clearAllStorage();
+            await refreshStorageUsage();
+        } catch (err) {
+            console.error(LOG, 'clearAllStorage failed', err);
+            errorStore.setAppError(
+                `Couldn't delete storage: ${formatErr(err)}`
+            );
+        } finally {
+            storageBusy = false;
+        }
+    }
+
+    let storageTotal = $derived(
+        storageUsage
+            ? storageUsage.localSettingsBytes +
+                  storageUsage.openRouterCacheBytes +
+                  storageUsage.syncSettingsBytes +
+                  storageUsage.chatHistoryBytes +
+                  storageUsage.filesBytes
+            : 0
+    );
+
+    let storageRows = $derived([
+        {
+            label: 'Local Settings',
+            bytes: storageUsage?.localSettingsBytes ?? 0,
+        },
+        {
+            label: 'OpenRouter Model Cache (Local)',
+            bytes: storageUsage?.openRouterCacheBytes ?? 0,
+        },
+        {
+            label: 'Sync Settings',
+            bytes: storageUsage?.syncSettingsBytes ?? 0,
+        },
+        {
+            label: 'Chat History',
+            bytes: storageUsage?.chatHistoryBytes ?? 0,
+        },
+        {
+            label: 'Files',
+            bytes: storageUsage?.filesBytes ?? 0,
+        },
+    ]);
 
     let showPrevious = $derived(settingsStore.modelTier !== 'latest');
     let showLegacy = $derived(settingsStore.modelTier === 'legacy');
@@ -116,7 +224,7 @@
 ></div>
 
 <div
-    class="popover fixed top-1/2 left-1/2 z-50 flex w-[min(560px,calc(100vw-48px))] max-h-[calc(100vh-96px)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-border bg-canvas shadow-[0_8px_40px_oklch(0%_0_0/20%)] select-none [&_input]:select-text"
+    class="popover fixed top-1/2 left-1/2 z-50 flex w-[min(640px,calc(100vw-48px))] max-h-[calc(100vh-96px)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-border bg-canvas shadow-[0_8px_40px_oklch(0%_0_0/20%)] select-none [&_input]:select-text"
     role="dialog"
     aria-label="Settings"
 >
@@ -134,6 +242,13 @@
             onclick={() => (activeTab = 'ui')}
         >
             UI
+        </button>
+        <button
+            type="button"
+            class={[tabBase, activeTab === 'storage' && tabActive]}
+            onclick={() => (activeTab = 'storage')}
+        >
+            Storage
         </button>
         <button
             type="button"
@@ -363,6 +478,55 @@
                     }}
                 >
                     <span class="ios-switch-thumb"></span>
+                </button>
+            </div>
+        </div>
+
+        <div
+            class={[
+                'col-start-1 row-start-1 flex flex-col gap-5 invisible',
+                activeTab === 'storage' && 'visible',
+            ]}
+            aria-hidden={activeTab !== 'storage'}
+        >
+            <div class="flex flex-col gap-2.5">
+                {#each storageRows as row (row.label)}
+                    <div
+                        class="flex items-center justify-between py-1.5 border-b border-border"
+                    >
+                        <span class="text-sm text-fg">{row.label}</span>
+                        <span
+                            class="text-sm tabular-nums text-fg-muted font-mono"
+                        >
+                            {storageUsage ? formatBytes(row.bytes) : '—'}
+                        </span>
+                    </div>
+                {/each}
+                <div class="flex items-center justify-between py-1.5">
+                    <span class="text-sm text-fg font-medium">Total</span>
+                    <span
+                        class="text-sm tabular-nums text-fg font-mono font-medium"
+                    >
+                        {storageUsage ? formatBytes(storageTotal) : '—'}
+                    </span>
+                </div>
+            </div>
+            <div class="flex gap-2">
+                <button
+                    type="button"
+                    class="flex-1 px-3 py-2 border border-accent-fg rounded-md text-sm font-medium cursor-pointer whitespace-nowrap transition-[background-color,color,opacity] duration-150 bg-transparent text-accent-fg enabled:hover:bg-accent-bg enabled:hover:text-on-accent-bg disabled:opacity-[0.35] disabled:cursor-not-allowed"
+                    disabled={storageBusy || storageLoading}
+                    onclick={handleClearChats}
+                >
+                    Delete chat history
+                </button>
+                <button
+                    type="button"
+                    class="flex-1 px-3 py-2 border border-accent-fg rounded-md text-sm font-medium cursor-pointer whitespace-nowrap transition-[background-color,color,opacity] duration-150 bg-transparent text-accent-fg enabled:hover:bg-accent-bg enabled:hover:text-on-accent-bg disabled:opacity-[0.35] disabled:cursor-not-allowed"
+                    disabled={storageBusy || storageLoading}
+                    onclick={handleClearAll}
+                >
+                    Delete all storage
                 </button>
             </div>
         </div>

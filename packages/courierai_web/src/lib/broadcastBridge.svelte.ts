@@ -12,7 +12,8 @@ function handleBroadcastEvent(event: BroadcastEvent): void {
             chatStore.applyRemoteTurnStart(
                 event.chatId,
                 event.meta,
-                event.history
+                event.history,
+                event.assistantMessageId
             );
             return;
         case 'turn-chunk':

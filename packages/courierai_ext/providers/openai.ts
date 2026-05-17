@@ -10,6 +10,11 @@ import { buildOpenAIResponsesToolResults } from './tool-results';
 
 const LOG = '[courier:ext]';
 
+// OpenAI's web search tool type string. Hoisted so it lives next to the
+// other tool-shape choices for this provider — easy to spot/swap if OpenAI
+// renames it.
+const WEB_SEARCH_TOOL_TYPE = 'web_search' as const;
+
 function messageInputItem(
     msg: HydratedChatMessage
 ): OpenAI.Responses.EasyInputMessage {
@@ -129,7 +134,7 @@ export async function streamOpenAI(
             : {}),
         ...(params.webSearch
             ? {
-                  tools: [{ type: 'web_search' as const }],
+                  tools: [{ type: WEB_SEARCH_TOOL_TYPE }],
                   // Required to replay reasoning items on later turns
                   // when running stateless — the API binds each
                   // web_search_call to its preceding reasoning item.

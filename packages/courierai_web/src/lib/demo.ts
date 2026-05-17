@@ -64,6 +64,10 @@ const skyBlue =
 export function buildDemoChats(config: DemoConfig): Chat[] {
     const now = Date.now();
     const id = () => crypto.randomUUID();
+    // Sequential offsets so messages within a chat sort deterministically by
+    // createdAt — same shape as live chats post-refactor.
+    let tick = 0;
+    const next = () => now + tick++;
     return [
         {
             id: 'demo-1',
@@ -71,20 +75,28 @@ export function buildDemoChats(config: DemoConfig): Chat[] {
             messages: [
                 {
                     id: id(),
+                    createdAt: next(),
                     role: 'user',
                     content: 'this is a demo conversation',
                 },
                 {
                     id: id(),
+                    createdAt: next(),
                     role: 'assistant',
                     content: 'great! how can I help you?',
                 },
                 {
                     id: id(),
+                    createdAt: next(),
                     role: 'user',
                     content: 'give me a recipe for eggs benedict',
                 },
-                { id: id(), role: 'assistant', content: eggsBenedict },
+                {
+                    id: id(),
+                    createdAt: next(),
+                    role: 'assistant',
+                    content: eggsBenedict,
+                },
             ],
             createdAt: now,
             systemPrompt: '',
@@ -96,16 +108,28 @@ export function buildDemoChats(config: DemoConfig): Chat[] {
             messages: [
                 {
                     id: id(),
+                    createdAt: next(),
                     role: 'user',
                     content: 'write me a python fizzbuzz script',
                 },
-                { id: id(), role: 'assistant', content: fizzbuzz },
                 {
                     id: id(),
+                    createdAt: next(),
+                    role: 'assistant',
+                    content: fizzbuzz,
+                },
+                {
+                    id: id(),
+                    createdAt: next(),
                     role: 'user',
                     content: 'can you explain how the % operator works there?',
                 },
-                { id: id(), role: 'assistant', content: moduloExplanation },
+                {
+                    id: id(),
+                    createdAt: next(),
+                    role: 'assistant',
+                    content: moduloExplanation,
+                },
             ],
             createdAt: now - 1000,
             systemPrompt: '',
@@ -115,8 +139,18 @@ export function buildDemoChats(config: DemoConfig): Chat[] {
             id: 'demo-3',
             title: 'why is the sky blue?',
             messages: [
-                { id: id(), role: 'user', content: 'why is the sky blue?' },
-                { id: id(), role: 'assistant', content: skyBlue },
+                {
+                    id: id(),
+                    createdAt: next(),
+                    role: 'user',
+                    content: 'why is the sky blue?',
+                },
+                {
+                    id: id(),
+                    createdAt: next(),
+                    role: 'assistant',
+                    content: skyBlue,
+                },
             ],
             createdAt: now - 2000,
             systemPrompt: '',

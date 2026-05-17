@@ -289,6 +289,110 @@ async function replayOpenAI(args: Args) {
     };
 }
 
+// Google replay: text-block strategy. Signed-replay of toolCall/toolResponse
+// parts authorizes the model turn but doesn't carry the grounded URL set —
+// `groundingMetadata` is output-only and `thoughtSignature` is a thought-
+// continuity token, not an encrypted state blob. So we mirror what we do for
+// OpenRouter: append a `Sources:` block to the assistant's prior text and
+// let the model re-read its own message.
+async function replayGoogle(args: Args) {
+    const client = new GoogleGenAI({ apiKey: getEnv('GOOGLE_API_KEY') });
+    const tools: GoogleTool[] = [{ googleSearch: {} }];
+
+    const first = await client.models.generateContent({
+        model: args.model,
+        contents: [{ role: 'user', parts: [{ text: args.input }] }],
+        config: { maxOutputTokens: 4096, tools },
+    });
+
+    const firstCandidate = first.candidates?.[0];
+    const assistantText = (firstCandidate?.content?.parts ?? [])
+        .map((p) => p.text ?? '')
+        .join('');
+
+    const groundTruth: Array<{ url: string; title?: string }> = [];
+    const grounding = (
+        firstCandidate as
+            | {
+                  groundingMetadata?: {
+                      groundingChunks?: Array<{
+                          web?: { uri?: string; title?: string };
+                      }>;
+                  };
+              }
+            | undefined
+    )?.groundingMetadata;
+    for (const gc of grounding?.groundingChunks ?? []) {
+        if (typeof gc.web?.uri === 'string') {
+            groundTruth.push({
+                url: gc.web.uri,
+                ...(typeof gc.web.title === 'string'
+                    ? { title: gc.web.title }
+                    : {}),
+            });
+        }
+    }
+
+    console.error(
+        '=== first turn ===',
+        JSON.stringify(
+            {
+                assistantTextLen: assistantText.length,
+                groundTruthCount: groundTruth.length,
+            },
+            null,
+            2
+        )
+    );
+    console.error('=== ground-truth sources ===');
+    console.error(JSON.stringify(groundTruth, null, 2));
+
+    if (!groundTruth.length) {
+        throw new Error(
+            'No grounded sources captured — model may not have searched'
+        );
+    }
+
+    // Mirror providers/openrouter.ts:withSourcesBlock — markdown-numbered list
+    // appended to the assistant turn so the model can re-read URLs/titles.
+    const sourceLines = groundTruth.map((s, i) =>
+        s.title ? `${i + 1}. [${s.title}](${s.url})` : `${i + 1}. ${s.url}`
+    );
+    const replayedAssistant =
+        (assistantText ? assistantText + '\n\n' : '') +
+        'Sources:\n' +
+        sourceLines.join('\n');
+
+    const followupQuestion =
+        'great. without searching again, please print ALL of the URLs you returned in your previous response, verbatim, one per line.';
+
+    const followup = await client.models.generateContent({
+        model: args.model,
+        contents: [
+            { role: 'user', parts: [{ text: args.input }] },
+            { role: 'model', parts: [{ text: replayedAssistant }] },
+            { role: 'user', parts: [{ text: followupQuestion }] },
+        ],
+        config: { maxOutputTokens: 4096, tools },
+    });
+
+    const reply = (followup.candidates?.[0]?.content?.parts ?? [])
+        .map((p) => p.text ?? '')
+        .join('');
+
+    const urlsPrintedVerbatim = groundTruth
+        .map((s) => s.url)
+        .filter((u) => reply.includes(u));
+
+    return {
+        followupTokens: followup.usageMetadata?.promptTokenCount ?? 0,
+        groundTruthCount: groundTruth.length,
+        urlsPrintedVerbatim: urlsPrintedVerbatim.length,
+        verbatimMatches: urlsPrintedVerbatim,
+        reply,
+    };
+}
+
 // OpenRouter replay: direct HTTP (the SDK silently drops fields like
 // `encrypted_content` on reasoning items). Captures reasoning items with
 // encrypted_content + openrouter:web_search items + url_citation annotations,
@@ -485,7 +589,12 @@ async function main(): Promise<void> {
             console.log(JSON.stringify(response, null, 2));
             return;
         }
-        throw new Error('--replay only supported for openai/openrouter');
+        if (args.provider === 'google') {
+            const response = await replayGoogle(args);
+            console.log(JSON.stringify(response, null, 2));
+            return;
+        }
+        throw new Error('--replay only supported for openai/openrouter/google');
     }
     const response =
         args.provider === 'anthropic'

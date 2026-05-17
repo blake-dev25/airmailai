@@ -18,6 +18,47 @@ import { dedupeSources } from './tool-results';
 
 const LOG = '[courier:ext]';
 
+// We are currently still using the generateContent API because the new
+// Interactions API is still in beta and is subject to breaking changes.
+
+// Google's web search tool is an object KEY (not a discriminator value) in
+// the request body — hoist anyway so anyone scanning provider files finds
+// the tool wiring in a consistent spot.
+const WEB_SEARCH_TOOL_KEY = 'googleSearch' as const;
+
+// WORKAROUND — do not copy this pattern unless the upstream provider gives
+// you no other option. Gemini's googleSearch tool returns its URL set in
+// `Candidate.groundingMetadata`, which is documented as Output-only — the
+// API does not accept it as input on the next turn, and `Content` has no
+// slot to put it in regardless. The `thoughtSignature` on the toolCall /
+// toolResponse / text parts is a thought-continuity token, not an encrypted
+// state blob (confirmed against the @google/genai SDK source), so replaying
+// signed parts tells the model "you searched" but doesn't restore the URL
+// list. Google's own `Chats` history helper drops grounding metadata for
+// the same reason. To give the model retrievable access to the URLs on a
+// follow-up turn, the only carrier is plain text in the assistant turn —
+// so on replay we append a `Sources:` markdown list to the stored assistant
+// content. Verified end-to-end via scripts/tool-call-test.ts: the model
+// recites all URLs verbatim and doesn't re-search.
+function withSourcesBlock(
+    text: string,
+    toolResults: WebSearchToolResult[]
+): string {
+    const lines: string[] = [];
+    let n = 1;
+    for (const tr of toolResults) {
+        for (const s of tr.sources) {
+            lines.push(
+                s.title ? `${n}. [${s.title}](${s.url})` : `${n}. ${s.url}`
+            );
+            n++;
+        }
+    }
+    if (!lines.length) return text;
+    const block = 'Sources:\n' + lines.join('\n');
+    return text ? `${text}\n\n${block}` : block;
+}
+
 function toGoogleContents(messages: HydratedChatMessage[]): Content[] {
     return messages
         .filter((m) => m.role !== 'system')
@@ -25,13 +66,18 @@ function toGoogleContents(messages: HydratedChatMessage[]): Content[] {
             const role = msg.role === 'assistant' ? 'model' : 'user';
             const parts: Part[] = [];
 
+            const content =
+                msg.role === 'assistant' && msg.toolResults?.length
+                    ? withSourcesBlock(msg.content, msg.toolResults)
+                    : msg.content;
+
             for (const att of msg.attachments ?? []) {
                 parts.push({
                     inlineData: { mimeType: att.mediaType, data: att.data },
                 });
             }
-            if (msg.content) {
-                parts.push({ text: msg.content });
+            if (content) {
+                parts.push({ text: content });
             }
 
             return { role, parts };
@@ -131,7 +177,7 @@ export async function streamGoogle(
         wantsThoughts
     );
     const webSearchTools: Tool[] | undefined = params.webSearch
-        ? [{ googleSearch: {} }]
+        ? [{ [WEB_SEARCH_TOOL_KEY]: {} }]
         : undefined;
 
     console.log(LOG, 'google: stream start', {

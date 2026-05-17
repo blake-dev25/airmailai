@@ -3,7 +3,9 @@ import type {
     AttachmentRef,
     ChatMessage,
     ChatMeta,
+    HydratedStoredMessage,
     StoredChat,
+    StoredMessage,
     StreamErrorSource,
     ToolResult,
 } from '@courier/shared';
@@ -11,10 +13,13 @@ import { buildDemoChats } from './demo';
 import { errorStore, formatErr } from './errorStore.svelte';
 import {
     deleteChat,
+    deleteMessage,
+    deleteMessagesAfter,
     loadChat,
     loadChatMetas,
     loadChatsByIds,
-    saveChat,
+    putMessage,
+    saveMeta,
     sendToExtension,
     type StreamHandle,
     tabId,
@@ -34,25 +39,55 @@ function formatStreamError(
     return `${source === 'extension' ? 'Ext' : 'API'} Error: ${message}`;
 }
 
-// Message.id is a client-only handle for keyed {#each} and per-message UI
-// state — strip on persist; regenerate on load.
-function hydrateStoredMessages(stored: StoredChat['messages']): Message[] {
-    return stored.map((m) => ({ ...m, id: crypto.randomUUID() }));
+// Persisted messages already carry id + createdAt — the Message type is a
+// 1:1 client mirror. Strip the chatId (it's already implied by the
+// containing chat).
+function hydrateStoredMessages(stored: StoredMessage[]): Message[] {
+    return stored.map(
+        ({
+            id,
+            createdAt,
+            role,
+            content,
+            thinking,
+            attachments,
+            toolResults,
+            tokens,
+        }) => ({
+            id,
+            createdAt,
+            role,
+            content,
+            ...(thinking ? { thinking } : {}),
+            ...(attachments ? { attachments } : {}),
+            ...(toolResults ? { toolResults } : {}),
+            ...(tokens ? { tokens } : {}),
+        })
+    );
 }
 
-function chatToStored(chat: Chat, messages = chat.messages): StoredChat {
+// Build the wire-shape persistence record for a single message, inlining
+// any fresh upload bytes the chat is still carrying so the ext can store
+// them in one transaction with the message row.
+function messageToHydrated(
+    chatId: string,
+    msg: Message,
+    pendingBlobs?: Map<string, Attachment>
+): HydratedStoredMessage {
+    const attachments = msg.attachments?.map((ref) => {
+        const fresh = pendingBlobs?.get(ref.hash);
+        return fresh ?? ref;
+    });
     return {
-        id: chat.id,
-        messages: messages.map(
-            ({ role, content, thinking, attachments, toolResults }) => ({
-                role,
-                content,
-                thinking,
-                attachments,
-                toolResults,
-            })
-        ),
-        ...(chat.tokens ? { tokens: chat.tokens } : {}),
+        chatId,
+        id: msg.id,
+        createdAt: msg.createdAt,
+        role: msg.role,
+        content: msg.content,
+        ...(msg.thinking ? { thinking: msg.thinking } : {}),
+        ...(attachments?.length ? { attachments } : {}),
+        ...(msg.toolResults?.length ? { toolResults: msg.toolResults } : {}),
+        ...(msg.tokens ? { tokens: msg.tokens } : {}),
     };
 }
 
@@ -118,9 +153,18 @@ class ChatStore {
     activeMessages = $derived(
         this.chats.find((c) => c.id === this.activeChatId)?.messages ?? []
     );
-    activeTokens = $derived(
-        this.chats.find((c) => c.id === this.activeChatId)?.tokens ?? null
-    );
+    // Tokens live on the assistant message that produced them — surface the
+    // most recent assistant turn's usage for the footer/header indicators.
+    activeTokens = $derived.by(() => {
+        const msgs =
+            this.chats.find((c) => c.id === this.activeChatId)?.messages ?? [];
+        for (let i = msgs.length - 1; i >= 0; i--) {
+            if (msgs[i].role === 'assistant' && msgs[i].tokens) {
+                return msgs[i].tokens!;
+            }
+        }
+        return null;
+    });
 
     // --- Initial load + pagination ---
 
@@ -160,7 +204,6 @@ class ChatStore {
                     return {
                         ...meta,
                         messages: hydrateStoredMessages(stored.messages),
-                        ...(stored.tokens ? { tokens: stored.tokens } : {}),
                     };
                 })
                 .filter((c): c is Chat => c !== null);
@@ -191,7 +234,6 @@ class ChatStore {
                 return {
                     ...meta,
                     messages: hydrateStoredMessages(stored.messages),
-                    ...(stored.tokens ? { tokens: stored.tokens } : {}),
                 };
             })
             .filter((c): c is Chat => c !== null);
@@ -349,7 +391,6 @@ class ChatStore {
                 {
                     ...meta,
                     messages: hydrateStoredMessages(full.messages),
-                    ...(full.tokens ? { tokens: full.tokens } : {}),
                 },
             ];
             this.unloadedMetas = this.unloadedMetas.filter((m) => m.id !== id);
@@ -392,14 +433,12 @@ class ChatStore {
         );
         const updated = this.chats.find((c) => c.id === id);
         if (updated && !this.demoMode)
-            saveChat(chatToStored(updated), chatToMeta(updated)).catch(
-                (err) => {
-                    console.error(LOG, 'rename save failed', id, err);
-                    errorStore.setAppError(
-                        `Couldn't rename chat: ${formatErr(err)}`
-                    );
-                }
-            );
+            saveMeta(chatToMeta(updated)).catch((err) => {
+                console.error(LOG, 'rename save failed', id, err);
+                errorStore.setAppError(
+                    `Couldn't rename chat: ${formatErr(err)}`
+                );
+            });
     }
 
     async export(id: string): Promise<void> {
@@ -454,41 +493,44 @@ class ChatStore {
     editMessage(index: number, content: string): void {
         if (!this.activeChatId) return;
         const chatId = this.activeChatId;
+        let editedMsg: Message | undefined;
         this.chats = this.chats.map((c) => {
             if (c.id !== chatId) return c;
             const msgs = [...c.messages];
             msgs[index] = { ...msgs[index], content };
+            editedMsg = msgs[index];
             return { ...c, messages: msgs };
         });
-        const updated = this.chats.find((c) => c.id === chatId);
-        if (updated && !this.demoMode)
-            saveChat(chatToStored(updated), chatToMeta(updated)).catch(
-                (err) => {
-                    console.error(LOG, 'edit save failed', chatId, err);
-                    errorStore.setAppError(
-                        `Couldn't save edited message: ${formatErr(err)}`
-                    );
-                }
-            );
+        if (editedMsg && !this.demoMode) {
+            const chat = this.chats.find((c) => c.id === chatId);
+            putMessage(
+                chatId,
+                messageToHydrated(chatId, editedMsg, chat?.pendingBlobs)
+            ).catch((err) => {
+                console.error(LOG, 'edit save failed', chatId, err);
+                errorStore.setAppError(
+                    `Couldn't save edited message: ${formatErr(err)}`
+                );
+            });
+        }
     }
 
     deleteMessage(index: number): void {
         if (!this.activeChatId) return;
         const chatId = this.activeChatId;
+        const chat = this.chats.find((c) => c.id === chatId);
+        const removedId = chat?.messages[index]?.id;
         this.chats = this.chats.map((c) => {
             if (c.id !== chatId) return c;
             return { ...c, messages: c.messages.filter((_, i) => i !== index) };
         });
-        const updated = this.chats.find((c) => c.id === chatId);
-        if (updated && !this.demoMode)
-            saveChat(chatToStored(updated), chatToMeta(updated)).catch(
-                (err) => {
-                    console.error(LOG, 'delete-msg save failed', chatId, err);
-                    errorStore.setAppError(
-                        `Couldn't delete message: ${formatErr(err)}`
-                    );
-                }
-            );
+        if (removedId && !this.demoMode)
+            deleteMessage(chatId, removedId).catch((err) => {
+                console.error(LOG, 'delete-msg save failed', chatId, err);
+                errorStore.setAppError(
+                    `Couldn't delete message: ${formatErr(err)}`
+                );
+            });
     }
 
     // --- Streaming ---
@@ -509,8 +551,10 @@ class ChatStore {
 
         // Auto-create a chat on first message
         let chatId = this.activeChatId;
+        let createdNewChat = false;
         if (!chatId) {
             chatId = crypto.randomUUID();
+            createdNewChat = true;
             const now = Date.now();
             const title = content.slice(0, 40);
             this.chats = [
@@ -563,9 +607,19 @@ class ChatStore {
             : undefined;
         const userMsg: Message = {
             id: crypto.randomUUID(),
+            createdAt: Date.now(),
             role: 'user',
             content,
             ...(refs ? { attachments: refs } : {}),
+        };
+        // Pre-allocate the assistant message id so streamForChat can hand
+        // the same id to the ext's terminal save — the row that lands in
+        // IDB matches the placeholder we're rendering against.
+        const assistantPlaceholder: Message = {
+            id: crypto.randomUUID(),
+            createdAt: Date.now(),
+            role: 'assistant',
+            content: '',
         };
         this.chats = this.chats.map((c) => {
             if (c.id !== chatId) return c;
@@ -577,22 +631,56 @@ class ChatStore {
             }
             return {
                 ...c,
-                messages: [
-                    ...c.messages,
-                    userMsg,
-                    {
-                        id: crypto.randomUUID(),
-                        role: 'assistant',
-                        content: '',
-                    },
-                ],
+                messages: [...c.messages, userMsg, assistantPlaceholder],
                 ...(nextPending ? { pendingBlobs: nextPending } : {}),
             };
         });
 
+        // Persist meta first if brand new chat, then the user message. Both
+        // are fire-and-forget so we don't block stream startup; the ext's
+        // put_message refuses to write a message under a missing meta row,
+        // so we await meta before the message to avoid that drop. Errors
+        // surface as a toast.
+        if (!this.demoMode) {
+            const chat = this.chats.find((c) => c.id === chatId);
+            if (chat) {
+                const persistUser = () =>
+                    putMessage(
+                        chatId!,
+                        messageToHydrated(chatId!, userMsg, chat.pendingBlobs)
+                    ).catch((err) => {
+                        console.error(LOG, 'persist user msg failed', err);
+                        errorStore.setAppError(
+                            `Couldn't save your message: ${formatErr(err)}`
+                        );
+                    });
+                if (createdNewChat) {
+                    saveMeta(chatToMeta(chat))
+                        .then(persistUser)
+                        .catch((err) => {
+                            console.error(LOG, 'persist new chat failed', err);
+                            errorStore.setAppError(
+                                `Couldn't save chat: ${formatErr(err)}`
+                            );
+                        });
+                } else {
+                    // Existing chats whose config changed (provider/model/
+                    // etc.) get meta re-saved too — fire-and-forget alongside
+                    // the user-message put.
+                    saveMeta(chatToMeta(chat)).catch((err) => {
+                        console.error(LOG, 'persist meta failed', err);
+                        errorStore.setAppError(
+                            `Couldn't save chat config: ${formatErr(err)}`
+                        );
+                    });
+                    void persistUser();
+                }
+            }
+        }
+
         this.streamingChatIds = [...this.streamingChatIds, chatId];
         this.clearChatError(chatId);
-        this.streamForChat(chatId);
+        this.streamForChat(chatId, assistantPlaceholder.id);
     }
 
     retry(index: number): void {
@@ -614,6 +702,14 @@ class ChatStore {
         const keepUpTo = msg.role === 'user' ? index : index - 1;
         if (keepUpTo < 0) return;
 
+        const lastKeptMsg = chat.messages[keepUpTo];
+        const assistantPlaceholder: Message = {
+            id: crypto.randomUUID(),
+            createdAt: Date.now(),
+            role: 'assistant',
+            content: '',
+        };
+
         this.chats = this.chats.map((c) =>
             c.id === chatId
                 ? {
@@ -628,19 +724,36 @@ class ChatStore {
                       webSearch: settingsStore.webSearch,
                       messages: [
                           ...c.messages.slice(0, keepUpTo + 1),
-                          {
-                              id: crypto.randomUUID(),
-                              role: 'assistant',
-                              content: '',
-                          },
+                          assistantPlaceholder,
                       ],
                   }
                 : c
         );
 
+        // Truncate IDB to match: drop every persisted message after the one
+        // we're retrying. Config changes also get persisted so the next
+        // turn uses the freshly-selected provider/model on reload.
+        if (!this.demoMode) {
+            const updated = this.chats.find((c) => c.id === chatId);
+            if (updated) {
+                saveMeta(chatToMeta(updated)).catch((err) => {
+                    console.error(LOG, 'retry: meta save failed', err);
+                    errorStore.setAppError(
+                        `Couldn't save chat config: ${formatErr(err)}`
+                    );
+                });
+            }
+            deleteMessagesAfter(chatId, lastKeptMsg.id).catch((err) => {
+                console.error(LOG, 'retry: truncate failed', err);
+                errorStore.setAppError(
+                    `Couldn't truncate chat history: ${formatErr(err)}`
+                );
+            });
+        }
+
         this.clearChatError(chatId);
         this.streamingChatIds = [...this.streamingChatIds, chatId];
-        this.streamForChat(chatId);
+        this.streamForChat(chatId, assistantPlaceholder.id);
     }
 
     // Graceful stop. ChatPanel passes the currently-visible (smoothed) text so
@@ -674,19 +787,21 @@ class ChatStore {
 
     // Streams an assistant response into the trailing placeholder of `chatId`.
     // Caller is responsible for prepping the chat: messages must end with an
-    // empty assistant message, streamingChatIds must include chatId, and any
-    // prior stream for this chat must be aborted.
+    // empty assistant message (with id === assistantMessageId), the user
+    // message and meta must already be persisted (fire-and-forget is fine),
+    // streamingChatIds must include chatId, and any prior stream for this
+    // chat must be aborted.
     //
-    // The extension owns persistence end-to-end: it acquires a per-chatId
-    // lock, streams, and writes the final StoredChat. The web side only
-    // mirrors chunks into local state for live render.
-    private streamForChat(chatId: string): void {
+    // The ext appends ONE row at end-of-turn (the assistant message); user-
+    // message and edit persistence are the web's responsibility through
+    // put_message / save_meta / delete_messages_after.
+    private streamForChat(chatId: string, assistantMessageId: string): void {
         const snap = this.chats.find((c) => c.id === chatId);
         if (!snap) return;
 
-        // Attach fresh upload bytes (if any) inline so the ext can persist
-        // them. Bare refs pass through and get hydrated server-side from the
-        // files store.
+        // Attach fresh upload bytes (if any) inline so the provider call can
+        // see them. Bare refs pass through and get hydrated server-side from
+        // the files store.
         const pending = snap.pendingBlobs;
         const hydrateForApi = (
             attachments: AttachmentRef[] | undefined
@@ -714,28 +829,43 @@ class ChatStore {
               ]
             : history;
 
-        // What the extension persists at end-of-turn (no system prompt, no
-        // empty placeholder, with thinking preserved). Refs only — fresh
-        // blobs travel via apiMessages above.
-        const historyForSave: StoredChat['messages'] = snap.messages
+        // Pre-turn message state included in the turn-start broadcast so
+        // mirror tabs can render the chat without an extra IDB round-trip.
+        // Refs only — fresh blobs are inlined via apiMessages.
+        const broadcastHistory: StoredMessage[] = snap.messages
             .slice(0, -1)
-            .map(({ role, content, thinking, attachments, toolResults }) => ({
-                role,
-                content,
-                ...(thinking ? { thinking } : {}),
-                ...(attachments ? { attachments } : {}),
-                ...(toolResults?.length ? { toolResults } : {}),
+            .filter(
+                (m): m is Message & { role: 'user' | 'assistant' } =>
+                    m.role === 'user' || m.role === 'assistant'
+            )
+            .map((m) => ({
+                chatId,
+                id: m.id,
+                createdAt: m.createdAt,
+                role: m.role,
+                content: m.content,
+                ...(m.thinking ? { thinking: m.thinking } : {}),
+                ...(m.attachments?.length
+                    ? { attachments: m.attachments }
+                    : {}),
+                ...(m.toolResults?.length
+                    ? { toolResults: m.toolResults }
+                    : {}),
+                ...(m.tokens ? { tokens: m.tokens } : {}),
             }));
 
         const modelParams = providersStore.providers
             .find((p) => p.id === snap.providerId)
             ?.models.find((m) => m.id === snap.modelId)?.params;
 
-        const updateLast = (mutate: (last: Message) => Message) => {
+        const updateAssistantPlaceholder = (
+            mutate: (msg: Message) => Message
+        ) => {
             this.chats = this.chats.map((c) => {
                 if (c.id !== chatId) return c;
-                const msgs = [...c.messages];
-                msgs[msgs.length - 1] = mutate(msgs[msgs.length - 1]);
+                const msgs = c.messages.map((m) =>
+                    m.id === assistantMessageId ? mutate(m) : m
+                );
                 return { ...c, messages: msgs };
             });
         };
@@ -765,37 +895,39 @@ class ChatStore {
                     tagOpenRouterRequests: settingsStore.tagOpenRouterRequests,
                 },
                 meta: chatToMeta(snap),
-                historyForSave,
+                history: broadcastHistory,
+                assistantMessageId,
             },
             {
                 onChunk: (chunk) => {
-                    updateLast((last) => ({
-                        ...last,
-                        content: last.content + chunk,
+                    updateAssistantPlaceholder((m) => ({
+                        ...m,
+                        content: m.content + chunk,
                     }));
                 },
                 onThinking: (chunk) => {
-                    updateLast((last) => ({
-                        ...last,
-                        thinking: (last.thinking ?? '') + chunk,
+                    updateAssistantPlaceholder((m) => ({
+                        ...m,
+                        thinking: (m.thinking ?? '') + chunk,
                     }));
                 },
                 onToolResults: (toolResults) => {
-                    updateLast((last) => ({ ...last, toolResults }));
+                    updateAssistantPlaceholder((m) => ({ ...m, toolResults }));
                 },
                 onDone: (usage) => {
                     finishStream();
-                    this.chats = this.chats.map((c) => {
-                        if (c.id !== chatId) return c;
-                        const next: Chat = { ...c, pendingBlobs: undefined };
-                        if (usage) {
-                            next.tokens = {
+                    if (usage) {
+                        updateAssistantPlaceholder((m) => ({
+                            ...m,
+                            tokens: {
                                 input: usage.inputTokens,
                                 output: usage.outputTokens,
-                            };
-                        }
-                        return next;
-                    });
+                            },
+                        }));
+                    }
+                    this.chats = this.chats.map((c) =>
+                        c.id === chatId ? { ...c, pendingBlobs: undefined } : c
+                    );
                 },
                 onError: (msg, source) => {
                     finishStream();
@@ -810,7 +942,12 @@ class ChatStore {
                         const last = c.messages[c.messages.length - 1];
                         return last?.content
                             ? c
-                            : { ...c, messages: c.messages.slice(0, -1) };
+                            : {
+                                  ...c,
+                                  messages: c.messages.filter(
+                                      (m) => m.id !== assistantMessageId
+                                  ),
+                              };
                     });
                 },
             }
@@ -827,10 +964,12 @@ class ChatStore {
     applyRemoteTurnStart(
         chatId: string,
         meta: ChatMeta,
-        history: StoredChat['messages']
+        history: StoredMessage[],
+        assistantMessageId: string
     ): void {
         const placeholder: Message = {
-            id: crypto.randomUUID(),
+            id: assistantMessageId,
+            createdAt: Date.now(),
             role: 'assistant',
             content: '',
         };
@@ -922,7 +1061,6 @@ class ChatStore {
                     ? {
                           ...c,
                           messages: hydrateStoredMessages(stored!.messages),
-                          ...(stored!.tokens ? { tokens: stored!.tokens } : {}),
                       }
                     : c
             );
@@ -985,7 +1123,6 @@ class ChatStore {
                     ? {
                           ...c,
                           messages: hydrateStoredMessages(stored!.messages),
-                          ...(stored!.tokens ? { tokens: stored!.tokens } : {}),
                       }
                     : c
             );
@@ -1010,7 +1147,6 @@ class ChatStore {
                 ? {
                       ...c,
                       messages: hydrateStoredMessages(stored!.messages),
-                      ...(stored!.tokens ? { tokens: stored!.tokens } : {}),
                   }
                 : c
         );

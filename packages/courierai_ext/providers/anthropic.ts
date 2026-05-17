@@ -8,6 +8,11 @@ import { DEBUG_API_LOGGING } from '../debug';
 
 const LOG = '[courier:ext]';
 
+// Anthropic versions server-side tool definitions by date. Bumping the
+// suffix is the one-liner that breaks the SDK call at runtime — keep it
+// visible up here rather than buried in the request body.
+const WEB_SEARCH_TOOL_TYPE = 'web_search_20260209' as const;
+
 function decodeBase64Utf8(data: string): string {
     const binary = atob(data);
     const bytes = new Uint8Array(binary.length);
@@ -252,7 +257,7 @@ export async function streamAnthropic(
         ? {
               tools: [
                   {
-                      type: 'web_search_20260209',
+                      type: WEB_SEARCH_TOOL_TYPE,
                       name: 'web_search',
                       max_uses: 5,
                   } satisfies Anthropic.Messages.WebSearchTool20260209,
