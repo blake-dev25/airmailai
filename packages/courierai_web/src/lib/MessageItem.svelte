@@ -32,7 +32,7 @@
         isLastStreaming: boolean;
         editing: boolean;
         editingText: string;
-        editingDims: { w: number; h: number } | null;
+        editingDims: { h: number } | null;
         hovered: boolean;
         thinkingExpanded: boolean;
         sourcesExpanded: boolean;
@@ -100,6 +100,7 @@
             isUser
                 ? 'items-end gap-1.5 max-w-[calc(50%+var(--narrow-chat-width)*0.3)]'
                 : 'gap-2 max-w-[calc(50%+var(--narrow-chat-width)/2)]',
+            editing && 'w-full max-w-full!',
         ]}
     >
         {#if isUser}
@@ -151,9 +152,8 @@
         {#if editing}
             <textarea
                 class={editTextareaClass}
-                style={editingDims
-                    ? `width: ${editingDims.w}px; min-height: ${editingDims.h}px;`
-                    : ''}
+                rows="1"
+                style={editingDims ? `min-height: ${editingDims.h}px;` : ''}
                 bind:value={editingText}
             ></textarea>
             <div class="flex gap-1.5">

@@ -69,14 +69,21 @@ export function createStickToBottom() {
                 lastScrollTop = container.scrollTop;
             };
 
+            // True only when there's actually room to scroll — a chat
+            // shorter than the viewport can't be "scrolled away from".
+            const isScrollable = () =>
+                container.scrollHeight > container.clientHeight;
+
             const handleScroll = () => {
                 const { scrollTop, scrollHeight, clientHeight } = container;
                 const distance = scrollHeight - scrollTop - clientHeight;
                 if (userInteracting) {
-                    if (scrollTop < lastScrollTop) {
+                    if (scrollTop < lastScrollTop && isScrollable()) {
                         // Any upward delta during a user gesture detaches —
                         // matches the existing snappy behavior under fast
-                        // streams (no threshold fight).
+                        // streams (no threshold fight). isScrollable guards
+                        // against layout-driven scrollTop clamps (e.g.
+                        // collapsing an expando) being read as user intent.
                         sticky = false;
                     } else if (distance < BOTTOM_THRESHOLD_PX) {
                         sticky = true;
@@ -84,11 +91,6 @@ export function createStickToBottom() {
                 }
                 lastScrollTop = scrollTop;
             };
-
-            // True only when there's actually room to scroll — a chat
-            // shorter than the viewport can't be "scrolled away from".
-            const isScrollable = () =>
-                container.scrollHeight > container.clientHeight;
 
             // Pre-emptively detach on upward wheel so a chunk arriving in
             // the gap between wheel and scroll events can't re-pin and

@@ -41,7 +41,7 @@
     let hoverHideTimer: ReturnType<typeof setTimeout> | null = null;
     let editingMessageId = $state<string | null>(null);
     let editingText = $state('');
-    let editingDims = $state<{ w: number; h: number } | null>(null);
+    let editingDims = $state<{ h: number } | null>(null);
 
     let uploadGeneration = 0;
     let filePolicy = $derived(
@@ -434,9 +434,7 @@
         content: string,
         bubbleEl?: HTMLElement | null
     ) {
-        editingDims = bubbleEl
-            ? { w: bubbleEl.offsetWidth, h: bubbleEl.offsetHeight }
-            : null;
+        editingDims = bubbleEl ? { h: bubbleEl.offsetHeight } : null;
         editingMessageId = id;
         editingText = content;
     }
