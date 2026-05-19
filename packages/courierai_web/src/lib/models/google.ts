@@ -159,6 +159,22 @@ export const GOOGLE: ProviderOption = {
             },
         },
         {
+            id: 'gemini-3.5-flash',
+            name: 'Gemini 3.5 Flash',
+            params: {
+                contextWindow: 1048576,
+                maxOutputTokens: 65536,
+                defaultMaxTokens: 8192,
+                temperatureMax: 2,
+                defaultTemperature: 1,
+                knowledgeCutoff: 'Jan 2025',
+                thinking: {
+                    levels: ['none', 'low', 'high'],
+                    defaultLevel: 'none',
+                },
+            },
+        },
+        {
             id: 'gemini-robotics-er-1.6-preview',
             name: 'Gemini Robotics-ER 1.6 Preview',
             params: {

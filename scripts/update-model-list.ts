@@ -5,10 +5,15 @@
 // availability; provider APIs do that, with targeted official-doc scraping
 // filling gaps where APIs/OpenRouter do not expose the fields CourierAI needs.
 //
-// Run dry (prints, no writes):
+// Run dry (prints, writes JSON snapshots to scripts/.tmp/ but does not touch
+// packages/courierai_web/src/lib/models/):
 //     bun scripts/update-model-list.ts
-// Run with writes:
+// Run with writes (also still writes snapshots):
 //     bun scripts/update-model-list.ts --write
+// Re-emit provider files from saved snapshots, skipping all API/scrape/probe
+// work. Accepts one or more snapshot paths; only the matching provider
+// sections of tiers.ts are touched:
+//     bun scripts/update-model-list.ts --write-from-file scripts/.tmp/run_anthropic_<ts>.json [more...]
 //
 // Bun auto-loads .env at the repo root.
 
@@ -52,10 +57,21 @@ const RUN_OPENAI = RUN_ALL || PROVIDER_FLAGS.has('--openai');
 const RUN_GOOGLE = RUN_ALL || PROVIDER_FLAGS.has('--google');
 const NEEDS_OPENROUTER = RUN_OPENAI || RUN_GOOGLE;
 
+const WRITE_FROM_FILE_IDX = process.argv.indexOf('--write-from-file');
+const WRITE_FROM_FILE_PATHS: string[] = [];
+if (WRITE_FROM_FILE_IDX >= 0) {
+    for (let i = WRITE_FROM_FILE_IDX + 1; i < process.argv.length; i++) {
+        const arg = process.argv[i];
+        if (arg.startsWith('--')) break;
+        WRITE_FROM_FILE_PATHS.push(arg);
+    }
+}
+
 const MODELS_DIR = resolve(
     import.meta.dir,
     '../packages/courierai_web/src/lib/models'
 );
+const SNAPSHOT_DIR = resolve(import.meta.dir, '.tmp');
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/models';
 const WEBPAGE_SCRAPE_DELAY_MS = 2000;
 const MODEL_PROBE_DELAY_MS = 2000;
@@ -291,6 +307,127 @@ async function emitAndMaybeWrite(
         await Bun.write(path, content);
         console.log(`\n✓ wrote ${content.length} bytes to ${path}`);
     }
+}
+
+interface Snapshot {
+    provider: string;
+    providerName: string;
+    generatedAt: string;
+    models: DerivedModel[];
+}
+
+function snapshotTimestamp(): string {
+    // 2026-05-19T14-30-22 — colon-free for Windows filesystems.
+    return new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+}
+
+async function writeSnapshot(
+    provider: string,
+    providerName: string,
+    models: DerivedModel[]
+): Promise<void> {
+    const filename = `run_${provider}_${snapshotTimestamp()}.json`;
+    const path = resolve(SNAPSHOT_DIR, filename);
+    const payload: Snapshot = {
+        provider,
+        providerName,
+        generatedAt: new Date().toISOString(),
+        models,
+    };
+    await Bun.write(path, JSON.stringify(payload, null, 2));
+    console.log(`✓ wrote snapshot: ${path}`);
+}
+
+async function loadSnapshot(path: string): Promise<Snapshot> {
+    const text = await Bun.file(path).text();
+    const data = JSON.parse(text) as Partial<Snapshot>;
+    if (
+        data.provider !== 'anthropic' &&
+        data.provider !== 'openai' &&
+        data.provider !== 'google'
+    ) {
+        throw new Error(
+            `${path}: unknown or missing provider "${data.provider}"`
+        );
+    }
+    if (!Array.isArray(data.models)) {
+        throw new Error(`${path}: missing models array`);
+    }
+    if (typeof data.providerName !== 'string') {
+        throw new Error(`${path}: missing providerName`);
+    }
+    return data as Snapshot;
+}
+
+async function writeFromFiles(paths: string[]): Promise<void> {
+    const loaded: Snapshot[] = [];
+    const seenProviders = new Set<string>();
+    for (const p of paths) {
+        const snap = await loadSnapshot(p);
+        if (seenProviders.has(snap.provider)) {
+            throw new Error(
+                `Multiple snapshots loaded for provider "${snap.provider}"`
+            );
+        }
+        seenProviders.add(snap.provider);
+        console.log(
+            `loaded ${snap.provider} snapshot from ${p} (${snap.models.length} models, generated ${snap.generatedAt})`
+        );
+        loaded.push(snap);
+    }
+
+    for (const { provider, providerName, models } of loaded) {
+        const content = emitProviderFile(provider, providerName, models);
+        const path = resolve(MODELS_DIR, `${provider}.ts`);
+        await Bun.write(path, content);
+        console.log(`✓ wrote ${content.length} bytes to ${path}`);
+    }
+
+    const tiersPath = resolve(MODELS_DIR, 'tiers.ts');
+    let tiersText = await Bun.file(tiersPath).text();
+    const newTiersIds: string[] = [];
+    const staleByProvider: Array<{
+        provider: string;
+        entries: Array<{ id: string; tier: string }>;
+    }> = [];
+
+    for (const { provider, models } of loaded) {
+        const r = updateTiersFile(
+            tiersText,
+            `// ${provider}`,
+            models.map((m) => m.id)
+        );
+        tiersText = r.text;
+        newTiersIds.push(...r.newIds);
+        if (r.staleEntries.length > 0) {
+            staleByProvider.push({ provider, entries: r.staleEntries });
+        }
+    }
+
+    if (newTiersIds.length > 0) {
+        console.log(
+            `\nAdding ${newTiersIds.length} new id(s) to tiers.ts as 'legacy':`
+        );
+        for (const id of newTiersIds) console.log(`   - ${id}`);
+    }
+
+    const totalStale = staleByProvider.reduce(
+        (n, p) => n + p.entries.length,
+        0
+    );
+    if (totalStale > 0) {
+        console.log(
+            `\n⚠ ${totalStale} stale tier entry/entries — model not in current provider file, consider removing from tiers.ts:`
+        );
+        for (const { provider, entries } of staleByProvider) {
+            for (const e of entries) {
+                console.log(`   - [${provider}] ${e.id} (${e.tier})`);
+            }
+        }
+    }
+
+    await Bun.write(tiersPath, tiersText);
+    console.log(`✓ wrote ${tiersPath}`);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -1538,6 +1675,23 @@ async function main(): Promise<void> {
         );
         return;
     }
+    if (WRITE_FROM_FILE_IDX >= 0) {
+        if (WRITE_FROM_FILE_PATHS.length === 0) {
+            throw new Error('--write-from-file requires at least one path');
+        }
+        if (PROVIDER_FLAGS.size > 0) {
+            throw new Error(
+                '--write-from-file cannot be combined with --anthropic/--openai/--google'
+            );
+        }
+        if (WRITE) {
+            throw new Error(
+                '--write-from-file already writes; do not pass --write'
+            );
+        }
+        await writeFromFiles(WRITE_FROM_FILE_PATHS);
+        return;
+    }
 
     const openrouter = NEEDS_OPENROUTER
         ? await fetchOpenRouterIndex()
@@ -1556,6 +1710,7 @@ async function main(): Promise<void> {
         }
         printAnthropicWarnings(anthropic);
 
+        await writeSnapshot('anthropic', 'Anthropic', anthropic);
         await emitAndMaybeWrite(
             'anthropic.ts',
             emitProviderFile('anthropic', 'Anthropic', anthropic)
@@ -1573,6 +1728,7 @@ async function main(): Promise<void> {
         }
         printOpenAIWarnings(openaiResult);
 
+        await writeSnapshot('openai', 'OpenAI', openaiResult.models);
         await emitAndMaybeWrite(
             'openai.ts',
             emitProviderFile('openai', 'OpenAI', openaiResult.models)
@@ -1584,6 +1740,7 @@ async function main(): Promise<void> {
         printGooglePipeline(googleResult);
         printGoogleWarnings(googleResult);
 
+        await writeSnapshot('google', 'Google', googleResult.models);
         await emitAndMaybeWrite(
             'google.ts',
             emitProviderFile('google', 'Google', googleResult.models)
