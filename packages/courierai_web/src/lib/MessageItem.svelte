@@ -1,7 +1,12 @@
 <script lang="ts">
     import Icon from './Icon.svelte';
     import MarkdownMessage from './MarkdownMessage.svelte';
-    import type { Message } from './types';
+    import {
+        messageAttachments,
+        messageText,
+        messageThinking,
+        type Message,
+    } from './types';
 
     let {
         message,
@@ -50,20 +55,56 @@
     let bubbleEl = $state<HTMLElement | null>(null);
 
     const isUser = $derived(message.role === 'user');
+    const attachments = $derived(messageAttachments(message));
+    const thinking = $derived(messageThinking(message));
+    const messageContent = $derived(messageText(message));
 
-    // Flatten every web_search ToolResult's sources into one deduped list for
-    // display. The model may have made several search calls in one turn, but
-    // the user just wants one collapsible "Sources" section per message.
+    // Flatten every source-url part into a deduped citation list. Several
+    // web_search calls in a single turn can repeat the same URL — render
+    // each once.
     const flatSources = $derived.by(() => {
         const seen = new Set<string>();
         const out: { url: string; title?: string }[] = [];
-        for (const tr of message.toolResults ?? []) {
-            if (tr.type !== 'web_search') continue;
-            for (const s of tr.sources) {
-                if (!s.url || seen.has(s.url)) continue;
-                seen.add(s.url);
-                out.push({ url: s.url, title: s.title });
-            }
+        for (const part of message.parts) {
+            if (part.type !== 'source-url') continue;
+            if (!part.url || seen.has(part.url)) continue;
+            seen.add(part.url);
+            out.push({ url: part.url, title: part.title });
+        }
+        return out;
+    });
+
+    // Anthropic citations land as `source-document` parts with citedText
+    // and page numbers in providerMetadata.anthropic. Render a chip per
+    // part (no dedup — each cite is its own location).
+    const docCitations = $derived.by(() => {
+        const out: Array<{
+            title: string;
+            citedText?: string;
+            startPage?: number;
+            endPage?: number;
+        }> = [];
+        for (const part of message.parts) {
+            if (part.type !== 'source-document') continue;
+            const meta = (part.providerMetadata?.anthropic ?? {}) as Record<
+                string,
+                unknown
+            >;
+            out.push({
+                title: part.title,
+                citedText:
+                    typeof meta.citedText === 'string'
+                        ? meta.citedText
+                        : undefined,
+                startPage:
+                    typeof meta.startPageNumber === 'number'
+                        ? meta.startPageNumber
+                        : undefined,
+                endPage:
+                    typeof meta.endPageNumber === 'number'
+                        ? meta.endPageNumber
+                        : undefined,
+            });
         }
         return out;
     });
@@ -104,9 +145,9 @@
         ]}
     >
         {#if isUser}
-            {#if message.attachments?.length}
+            {#if attachments.length}
                 <div class="flex flex-wrap gap-1.5 justify-end">
-                    {#each message.attachments as att (att.hash)}
+                    {#each attachments as att (att.hash)}
                         <span
                             class="inline-flex items-center px-2.5 py-1 bg-bubble-user text-on-bubble-user rounded-lg text-xs font-medium max-w-60 overflow-hidden text-ellipsis whitespace-nowrap"
                             >{att.name}</span
@@ -115,19 +156,19 @@
                 </div>
             {/if}
         {:else}
-            {#if isLastStreaming && !message.content && !message.thinking}
+            {#if isLastStreaming && !messageContent && !thinking}
                 <div class="flex items-center px-3.5 py-2.5 text-fg-muted">
                     <Icon name="spinner" size={16} />
                 </div>
             {/if}
-            {#if message.thinking}
+            {#if thinking}
                 <div class="border border-border rounded-lg overflow-hidden">
                     <button
                         type="button"
                         class="flex items-center gap-1.5 w-full px-2.5 py-1.5 bg-transparent border-0 text-fg font-sans text-xs font-medium opacity-60 cursor-pointer text-left transition-opacity duration-150 hover:opacity-100"
                         onclick={onthinkingtoggle}
                     >
-                        {#if isLastStreaming && !message.content}
+                        {#if isLastStreaming && !messageContent}
                             <Icon name="spinner" />
                         {/if}
                         <span>Thinking</span>
@@ -142,7 +183,7 @@
                         <div
                             class="px-2.5 pt-2 pb-2.5 border-t border-border text-xs leading-[1.6] text-fg opacity-70 whitespace-pre-wrap wrap-break-word"
                         >
-                            {message.thinking}
+                            {thinking}
                         </div>
                     {/if}
                 </div>
@@ -171,11 +212,38 @@
         {:else if displayContent}
             {#if isUser}
                 <div bind:this={bubbleEl} class={bubbleUser}>
-                    {message.content}
+                    {messageContent}
                 </div>
             {:else}
                 <div bind:this={bubbleEl} class={bubbleAssistant}>
                     <MarkdownMessage content={displayContent} />
+                    {#if docCitations.length}
+                        <div class="mt-2 pt-2 border-t border-current/15">
+                            <div
+                                class="flex flex-wrap gap-1.5 text-xs leading-[1.4] opacity-80"
+                            >
+                                {#each docCitations as cite, i (i)}
+                                    <span
+                                        class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-current/20 max-w-full"
+                                        title={cite.citedText ?? ''}
+                                    >
+                                        <Icon name="file" />
+                                        <span
+                                            class="overflow-hidden text-ellipsis whitespace-nowrap max-w-60"
+                                            >{cite.title}{cite.startPage !==
+                                            undefined
+                                                ? cite.endPage !== undefined &&
+                                                  cite.endPage !==
+                                                      cite.startPage
+                                                    ? ` p.${cite.startPage}–${cite.endPage}`
+                                                    : ` p.${cite.startPage}`
+                                                : ''}</span
+                                        >
+                                    </span>
+                                {/each}
+                            </div>
+                        </div>
+                    {/if}
                     {#if flatSources.length}
                         <div class="mt-2 pt-2 border-t border-current/15">
                             <button
@@ -234,7 +302,7 @@
                 <button
                     type="button"
                     class={msgActionBtnClass}
-                    onclick={() => onstartedit(message.content, bubbleEl)}
+                    onclick={() => onstartedit(messageContent, bubbleEl)}
                     disabled={isStreaming}
                     aria-label="Edit"
                 >
@@ -243,7 +311,7 @@
                 <button
                     type="button"
                     class={msgActionBtnClass}
-                    onclick={() => copyMessage(message.content)}
+                    onclick={() => copyMessage(messageContent)}
                     aria-label="Copy"
                 >
                     <Icon name="copy" />

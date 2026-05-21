@@ -1,14 +1,14 @@
 import type {
     Attachment,
-    AttachmentRef,
-    ChatMessage,
     ChatMeta,
+    CourierUIMessage,
+    CourierUIMessageChunk,
     HydratedStoredMessage,
     StoredChat,
     StoredMessage,
     StreamErrorSource,
-    ToolResult,
 } from '@courier/shared';
+import { readUIMessageStream } from 'ai';
 import { buildDemoChats } from './demo';
 import { errorStore, formatErr } from './errorStore.svelte';
 import {
@@ -26,68 +26,92 @@ import {
 } from './extension';
 import { providersStore } from './providersStore.svelte';
 import { settingsStore } from './settingsStore.svelte';
-import type { Chat, Message, SearchResult } from './types';
+import {
+    messageText,
+    type Chat,
+    type Message,
+    type SearchResult,
+} from './types';
 
 const LOG = '[courier:web]';
 const INITIAL_PAGE_SIZE = 40;
 const LOAD_MORE_PAGE_SIZE = 15;
 
-function formatStreamError(
-    message: string,
-    source: StreamErrorSource = 'api'
-): string {
+function formatStreamError(message: string, source: StreamErrorSource): string {
     return `${source === 'extension' ? 'Ext' : 'API'} Error: ${message}`;
 }
 
-// Persisted messages already carry id + createdAt — the Message type is a
-// 1:1 client mirror. Strip the chatId (it's already implied by the
-// containing chat).
-function hydrateStoredMessages(stored: StoredMessage[]): Message[] {
-    return stored.map(
-        ({
-            id,
-            createdAt,
-            role,
-            content,
-            thinking,
-            attachments,
-            toolResults,
-            tokens,
-        }) => ({
-            id,
-            createdAt,
-            role,
-            content,
-            ...(thinking ? { thinking } : {}),
-            ...(attachments ? { attachments } : {}),
-            ...(toolResults ? { toolResults } : {}),
-            ...(tokens ? { tokens } : {}),
-        })
-    );
+// Build a fresh user CourierUIMessage from raw text + attachments. Text
+// part comes first so it reads top-to-bottom; attachments hang off as
+// `data-attachment` parts referencing bytes via hash.
+function buildUserMessage(
+    id: string,
+    createdAt: number,
+    content: string,
+    attachments?: Attachment[]
+): CourierUIMessage {
+    const parts: CourierUIMessage['parts'] = [];
+    if (content) {
+        parts.push({ type: 'text', text: content, state: 'done' });
+    }
+    for (const att of attachments ?? []) {
+        parts.push({
+            type: 'data-attachment',
+            data: {
+                hash: att.hash,
+                name: att.name,
+                mediaType: att.mediaType,
+                sizeBytes: att.sizeBytes,
+            },
+        });
+    }
+    return {
+        id,
+        role: 'user',
+        parts,
+        metadata: { createdAt },
+    };
 }
 
-// Build the wire-shape persistence record for a single message, inlining
-// any fresh upload bytes the chat is still carrying so the ext can store
-// them in one transaction with the message row.
+function buildAssistantPlaceholder(
+    id: string,
+    createdAt: number
+): CourierUIMessage {
+    return {
+        id,
+        role: 'assistant',
+        parts: [],
+        metadata: { createdAt },
+    };
+}
+
+// Wraps a CourierUIMessage as the put_message payload. `pendingBlobs` is
+// the chat's in-flight upload bytes map — we only inline bytes for hashes
+// referenced by THIS message, keyed by hash.
 function messageToHydrated(
     chatId: string,
-    msg: Message,
+    msg: CourierUIMessage,
     pendingBlobs?: Map<string, Attachment>
 ): HydratedStoredMessage {
-    const attachments = msg.attachments?.map((ref) => {
-        const fresh = pendingBlobs?.get(ref.hash);
-        return fresh ?? ref;
-    });
+    const freshBlobs: HydratedStoredMessage['freshBlobs'] = {};
+    let anyFresh = false;
+    if (pendingBlobs?.size) {
+        for (const part of msg.parts) {
+            if (part.type !== 'data-attachment') continue;
+            const data = part.data as { hash: string };
+            const att = pendingBlobs.get(data.hash);
+            if (!att) continue;
+            freshBlobs[att.hash] = {
+                mediaType: att.mediaType,
+                base64: att.data,
+            };
+            anyFresh = true;
+        }
+    }
     return {
         chatId,
-        id: msg.id,
-        createdAt: msg.createdAt,
-        role: msg.role,
-        content: msg.content,
-        ...(msg.thinking ? { thinking: msg.thinking } : {}),
-        ...(attachments?.length ? { attachments } : {}),
-        ...(msg.toolResults?.length ? { toolResults: msg.toolResults } : {}),
-        ...(msg.tokens ? { tokens: msg.tokens } : {}),
+        uiMessage: msg,
+        ...(anyFresh ? { freshBlobs } : {}),
     };
 }
 
@@ -105,6 +129,11 @@ function chatToMeta(chat: Chat): ChatMeta {
         webSearch: chat.webSearch,
         systemPrompt: chat.systemPrompt,
     };
+}
+
+interface RemoteStreamPipeline {
+    controller: ReadableStreamDefaultController<CourierUIMessageChunk>;
+    placeholderId: string;
 }
 
 class ChatStore {
@@ -128,9 +157,12 @@ class ChatStore {
     // appLifecycle when the user picks "look around" without an extension.
     demoMode = $state(false);
 
-    // Handles for active streams — abort() hard-cancels (no save), stop()
-    // gracefully halts and saves with truncated visible content.
+    // Handles for active local streams.
     private streamHandles = new Map<string, StreamHandle>();
+    // Per-chat ReadableStream + reader pipeline for cross-tab broadcast
+    // chunks. AI SDK's readUIMessageStream rebuilds the full UIMessage
+    // from chunks, same way it does for local streams via sendToExtension.
+    private remotePipelines = new Map<string, RemoteStreamPipeline>();
 
     hasMoreChats = $derived(this.unloadedMetas.length > 0);
     isActiveLocalStreaming = $derived(
@@ -153,20 +185,25 @@ class ChatStore {
     activeMessages = $derived(
         this.chats.find((c) => c.id === this.activeChatId)?.messages ?? []
     );
-    // Tokens live on the assistant message that produced them — surface the
-    // most recent assistant turn's usage for the footer/header indicators.
+    // Tokens live in the assistant message metadata that produced them.
+    // Surface the most recent assistant turn's usage for the indicators.
     activeTokens = $derived.by(() => {
         const msgs =
             this.chats.find((c) => c.id === this.activeChatId)?.messages ?? [];
         for (let i = msgs.length - 1; i >= 0; i--) {
-            if (msgs[i].role === 'assistant' && msgs[i].tokens) {
-                return msgs[i].tokens!;
+            const m = msgs[i];
+            if (m.role === 'assistant' && m.metadata?.tokens) {
+                return m.metadata.tokens;
             }
         }
         return null;
     });
 
     // --- Initial load + pagination ---
+
+    private storedToMessages(stored: StoredMessage[]): Message[] {
+        return stored.map((s) => s.uiMessage);
+    }
 
     async loadInitialPage(): Promise<void> {
         let metas: ChatMeta[];
@@ -203,7 +240,7 @@ class ChatStore {
                     if (!stored) return null;
                     return {
                         ...meta,
-                        messages: hydrateStoredMessages(stored.messages),
+                        messages: this.storedToMessages(stored.messages),
                     };
                 })
                 .filter((c): c is Chat => c !== null);
@@ -233,7 +270,7 @@ class ChatStore {
                 if (!stored) return null;
                 return {
                     ...meta,
-                    messages: hydrateStoredMessages(stored.messages),
+                    messages: this.storedToMessages(stored.messages),
                 };
             })
             .filter((c): c is Chat => c !== null);
@@ -275,7 +312,7 @@ class ChatStore {
             let matchIndex: number | null = null;
             let snippet = '';
             for (let i = 0; i < chat.messages.length; i++) {
-                const content = chat.messages[i].content;
+                const content = messageText(chat.messages[i]);
                 const idx = content.toLowerCase().indexOf(q);
                 if (idx !== -1) {
                     matchIndex = i;
@@ -296,10 +333,13 @@ class ChatStore {
                     matchIndex,
                 });
             } else if (chat.title.toLowerCase().includes(q)) {
-                const firstMsg = chat.messages.find((m) => m.content);
-                snippet = firstMsg
-                    ? firstMsg.content.slice(0, 100) +
-                      (firstMsg.content.length > 100 ? '...' : '')
+                const firstMsg = chat.messages.find(
+                    (m) => messageText(m).length > 0
+                );
+                const firstText = firstMsg ? messageText(firstMsg) : '';
+                snippet = firstText
+                    ? firstText.slice(0, 100) +
+                      (firstText.length > 100 ? '...' : '')
                     : '';
                 results.push({
                     id: chat.id,
@@ -390,7 +430,7 @@ class ChatStore {
                 ...this.chats,
                 {
                     ...meta,
-                    messages: hydrateStoredMessages(full.messages),
+                    messages: this.storedToMessages(full.messages),
                 },
             ];
             this.unloadedMetas = this.unloadedMetas.filter((m) => m.id !== id);
@@ -449,7 +489,7 @@ class ChatStore {
         if (messages.length === 0) {
             try {
                 const full = await loadChat(id);
-                if (full) messages = hydrateStoredMessages(full.messages);
+                if (full) messages = this.storedToMessages(full.messages);
             } catch (err) {
                 console.error(LOG, 'export: loadChat failed', id, err);
                 errorStore.setAppError(
@@ -465,10 +505,15 @@ class ChatStore {
         let md = `# ${chat.title}\nModel: ${chat.modelId}\nCreated: ${createdStr}\nExported from: CourierAI\n`;
         for (const msg of messages) {
             md += `\n### ${msg.role === 'user' ? 'User' : 'Assistant'}\n`;
-            if (msg.attachments?.length) {
-                md += `Attachments: ${msg.attachments.map((a) => a.name).join(', ')}\n`;
+            const attachments: string[] = [];
+            for (const part of msg.parts) {
+                if (part.type !== 'data-attachment') continue;
+                attachments.push((part.data as { name: string }).name);
             }
-            md += `${msg.content}\n`;
+            if (attachments.length) {
+                md += `Attachments: ${attachments.join(', ')}\n`;
+            }
+            md += `${messageText(msg)}\n`;
         }
 
         const pad = (n: number) => String(n).padStart(2, '0');
@@ -497,14 +542,30 @@ class ChatStore {
         this.chats = this.chats.map((c) => {
             if (c.id !== chatId) return c;
             const msgs = [...c.messages];
-            msgs[index] = { ...msgs[index], content };
+            const target = msgs[index];
+            if (!target) return c;
+            // Replace text parts with a single new text part; keep
+            // non-text parts (attachments etc.) intact.
+            const nonText = target.parts.filter((p) => p.type !== 'text');
+            const newParts: CourierUIMessage['parts'] = [
+                ...(content
+                    ? [
+                          {
+                              type: 'text' as const,
+                              text: content,
+                              state: 'done' as const,
+                          },
+                      ]
+                    : []),
+                ...nonText,
+            ];
+            msgs[index] = { ...target, parts: newParts };
             editedMsg = msgs[index];
             return { ...c, messages: msgs };
         });
         if (editedMsg && !this.demoMode) {
             const chat = this.chats.find((c) => c.id === chatId);
             putMessage(
-                chatId,
                 messageToHydrated(chatId, editedMsg, chat?.pendingBlobs)
             ).catch((err) => {
                 console.error(LOG, 'edit save failed', chatId, err);
@@ -597,30 +658,17 @@ class ChatStore {
             });
         }
 
-        const refs: AttachmentRef[] | undefined = attachments?.length
-            ? attachments.map(({ hash, name, mediaType, sizeBytes }) => ({
-                  hash,
-                  name,
-                  mediaType,
-                  sizeBytes,
-              }))
-            : undefined;
-        const userMsg: Message = {
-            id: crypto.randomUUID(),
-            createdAt: Date.now(),
-            role: 'user',
-            content,
-            ...(refs ? { attachments: refs } : {}),
-        };
-        // Pre-allocate the assistant message id so streamForChat can hand
-        // the same id to the ext's terminal save — the row that lands in
-        // IDB matches the placeholder we're rendering against.
-        const assistantPlaceholder: Message = {
-            id: crypto.randomUUID(),
-            createdAt: Date.now(),
-            role: 'assistant',
-            content: '',
-        };
+        const userId = crypto.randomUUID();
+        const now = Date.now();
+        const userMsg = buildUserMessage(userId, now, content, attachments);
+        // Pre-allocate the assistant message id so the ext's terminal save
+        // uses the same id as our placeholder.
+        const assistantId = crypto.randomUUID();
+        const assistantPlaceholder = buildAssistantPlaceholder(
+            assistantId,
+            Date.now()
+        );
+
         this.chats = this.chats.map((c) => {
             if (c.id !== chatId) return c;
             const nextPending = attachments?.length
@@ -639,14 +687,12 @@ class ChatStore {
         // Persist meta first if brand new chat, then the user message. Both
         // are fire-and-forget so we don't block stream startup; the ext's
         // put_message refuses to write a message under a missing meta row,
-        // so we await meta before the message to avoid that drop. Errors
-        // surface as a toast.
+        // so we await meta before the message to avoid that drop.
         if (!this.demoMode) {
             const chat = this.chats.find((c) => c.id === chatId);
             if (chat) {
                 const persistUser = () =>
                     putMessage(
-                        chatId!,
                         messageToHydrated(chatId!, userMsg, chat.pendingBlobs)
                     ).catch((err) => {
                         console.error(LOG, 'persist user msg failed', err);
@@ -664,9 +710,6 @@ class ChatStore {
                             );
                         });
                 } else {
-                    // Existing chats whose config changed (provider/model/
-                    // etc.) get meta re-saved too — fire-and-forget alongside
-                    // the user-message put.
                     saveMeta(chatToMeta(chat)).catch((err) => {
                         console.error(LOG, 'persist meta failed', err);
                         errorStore.setAppError(
@@ -680,7 +723,7 @@ class ChatStore {
 
         this.streamingChatIds = [...this.streamingChatIds, chatId];
         this.clearChatError(chatId);
-        this.streamForChat(chatId, assistantPlaceholder.id);
+        this.streamForChat(chatId, assistantId);
     }
 
     retry(index: number): void {
@@ -703,12 +746,11 @@ class ChatStore {
         if (keepUpTo < 0) return;
 
         const lastKeptMsg = chat.messages[keepUpTo];
-        const assistantPlaceholder: Message = {
-            id: crypto.randomUUID(),
-            createdAt: Date.now(),
-            role: 'assistant',
-            content: '',
-        };
+        const assistantId = crypto.randomUUID();
+        const assistantPlaceholder = buildAssistantPlaceholder(
+            assistantId,
+            Date.now()
+        );
 
         this.chats = this.chats.map((c) =>
             c.id === chatId
@@ -753,41 +795,24 @@ class ChatStore {
 
         this.clearChatError(chatId);
         this.streamingChatIds = [...this.streamingChatIds, chatId];
-        this.streamForChat(chatId, assistantPlaceholder.id);
+        this.streamForChat(chatId, assistantId);
     }
 
-    // Graceful stop. ChatPanel passes the currently-visible (smoothed) text so
-    // we save exactly what the user saw — any queued-but-not-drained characters
-    // are discarded. Empty stop discards the assistant turn entirely.
-    stop(truncated: string): void {
+    // Graceful stop. The ext aborts its underlying stream and AI SDK's
+    // onFinish hands us the partial UIMessage assembled by the abort point
+    // — that's what gets saved. We don't truncate to "what user sees"
+    // anymore; the ext is authoritative.
+    stop(): void {
         if (!this.activeChatId) return;
         const chatId = this.activeChatId;
         const handle = this.streamHandles.get(chatId);
         if (!handle) return;
-
-        handle.stop(truncated);
-        this.streamHandles.delete(chatId);
-        this.streamingChatIds = this.streamingChatIds.filter(
-            (id) => id !== chatId
-        );
-
-        this.chats = this.chats.map((c) => {
-            if (c.id !== chatId) return c;
-            if (truncated === '') {
-                return { ...c, messages: c.messages.slice(0, -1) };
-            }
-            const msgs = [...c.messages];
-            msgs[msgs.length - 1] = {
-                ...msgs[msgs.length - 1],
-                content: truncated,
-            };
-            return { ...c, messages: msgs };
-        });
+        handle.stop();
     }
 
     // Streams an assistant response into the trailing placeholder of `chatId`.
     // Caller is responsible for prepping the chat: messages must end with an
-    // empty assistant message (with id === assistantMessageId), the user
+    // empty assistant message (with id === assistantId), the user
     // message and meta must already be persisted (fire-and-forget is fine),
     // streamingChatIds must include chatId, and any prior stream for this
     // chat must be aborted.
@@ -795,79 +820,37 @@ class ChatStore {
     // The ext appends ONE row at end-of-turn (the assistant message); user-
     // message and edit persistence are the web's responsibility through
     // put_message / save_meta / delete_messages_after.
-    private streamForChat(chatId: string, assistantMessageId: string): void {
+    private streamForChat(chatId: string, assistantId: string): void {
         const snap = this.chats.find((c) => c.id === chatId);
         if (!snap) return;
 
-        // Attach fresh upload bytes (if any) inline so the provider call can
-        // see them. Bare refs pass through and get hydrated server-side from
-        // the files store.
-        const pending = snap.pendingBlobs;
-        const hydrateForApi = (
-            attachments: AttachmentRef[] | undefined
-        ): (Attachment | AttachmentRef)[] | undefined => {
-            if (!attachments?.length) return undefined;
-            if (!pending?.size) return attachments;
-            return attachments.map((ref) => pending.get(ref.hash) ?? ref);
-        };
-
-        const history: ChatMessage[] = snap.messages
-            .slice(0, -1)
-            .map(({ role, content, attachments, toolResults }) => {
-                const atts = hydrateForApi(attachments);
-                return {
-                    role,
-                    content,
-                    ...(atts ? { attachments: atts } : {}),
-                    ...(toolResults?.length ? { toolResults } : {}),
-                };
-            });
-        const apiMessages = snap.systemPrompt.trim()
-            ? [
-                  { role: 'system' as const, content: snap.systemPrompt },
-                  ...history,
-              ]
-            : history;
+        // History sent to the ext: everything except the trailing assistant
+        // placeholder. Bare refs travel — the ext loads bytes from its
+        // files store by hash. Fresh uploads were inlined when persisting
+        // the user message, so by the time the stream starts the ext has
+        // every hash this history can reference.
+        const history: CourierUIMessage[] = snap.messages.slice(0, -1);
 
         // Pre-turn message state included in the turn-start broadcast so
         // mirror tabs can render the chat without an extra IDB round-trip.
-        // Refs only — fresh blobs are inlined via apiMessages.
-        const broadcastHistory: StoredMessage[] = snap.messages
-            .slice(0, -1)
-            .filter(
-                (m): m is Message & { role: 'user' | 'assistant' } =>
-                    m.role === 'user' || m.role === 'assistant'
-            )
-            .map((m) => ({
-                chatId,
-                id: m.id,
-                createdAt: m.createdAt,
-                role: m.role,
-                content: m.content,
-                ...(m.thinking ? { thinking: m.thinking } : {}),
-                ...(m.attachments?.length
-                    ? { attachments: m.attachments }
-                    : {}),
-                ...(m.toolResults?.length
-                    ? { toolResults: m.toolResults }
-                    : {}),
-                ...(m.tokens ? { tokens: m.tokens } : {}),
-            }));
+        const broadcastHistory: StoredMessage[] = history.map((m) => ({
+            chatId,
+            uiMessage: m,
+        }));
 
         const modelParams = providersStore.providers
             .find((p) => p.id === snap.providerId)
             ?.models.find((m) => m.id === snap.modelId)?.params;
 
-        const updateAssistantPlaceholder = (
-            mutate: (msg: Message) => Message
-        ) => {
-            this.chats = this.chats.map((c) => {
-                if (c.id !== chatId) return c;
-                const msgs = c.messages.map((m) =>
-                    m.id === assistantMessageId ? mutate(m) : m
-                );
-                return { ...c, messages: msgs };
-            });
+        // In-place mutation on the $state proxy — Svelte 5 tracks the
+        // single-index write and only re-renders the affected message,
+        // skipping the full chats-tree clone that the previous `chats.map`
+        // version paid on every chunk.
+        const replaceAssistant = (next: CourierUIMessage) => {
+            const chat = this.chats.find((c) => c.id === chatId);
+            if (!chat) return;
+            const idx = chat.messages.findIndex((m) => m.id === assistantId);
+            if (idx >= 0) chat.messages[idx] = next;
         };
 
         const finishStream = () => {
@@ -883,7 +866,10 @@ class ChatStore {
                 sourceTabId: tabId,
                 provider: snap.providerId,
                 model: snap.modelId,
-                messages: apiMessages,
+                messages: history,
+                ...(snap.systemPrompt.trim()
+                    ? { system: snap.systemPrompt }
+                    : {}),
                 params: {
                     ...(modelParams?.temperatureMax !== undefined
                         ? { temperature: snap.temperature }
@@ -896,35 +882,14 @@ class ChatStore {
                 },
                 meta: chatToMeta(snap),
                 history: broadcastHistory,
-                assistantMessageId,
+                assistantMessageId: assistantId,
             },
             {
-                onChunk: (chunk) => {
-                    updateAssistantPlaceholder((m) => ({
-                        ...m,
-                        content: m.content + chunk,
-                    }));
+                onMessage: (next) => {
+                    replaceAssistant(next);
                 },
-                onThinking: (chunk) => {
-                    updateAssistantPlaceholder((m) => ({
-                        ...m,
-                        thinking: (m.thinking ?? '') + chunk,
-                    }));
-                },
-                onToolResults: (toolResults) => {
-                    updateAssistantPlaceholder((m) => ({ ...m, toolResults }));
-                },
-                onDone: (usage) => {
+                onDone: () => {
                     finishStream();
-                    if (usage) {
-                        updateAssistantPlaceholder((m) => ({
-                            ...m,
-                            tokens: {
-                                input: usage.inputTokens,
-                                output: usage.outputTokens,
-                            },
-                        }));
-                    }
                     this.chats = this.chats.map((c) =>
                         c.id === chatId ? { ...c, pendingBlobs: undefined } : c
                     );
@@ -935,17 +900,17 @@ class ChatStore {
                         ...this.chatErrors,
                         [chatId]: formatStreamError(msg, source),
                     };
-                    // Discard the placeholder only if no content arrived —
-                    // keep partial content otherwise.
+                    // Discard the placeholder if no parts arrived; keep
+                    // partial content otherwise.
                     this.chats = this.chats.map((c) => {
                         if (c.id !== chatId) return c;
                         const last = c.messages[c.messages.length - 1];
-                        return last?.content
+                        return last?.parts.length
                             ? c
                             : {
                                   ...c,
                                   messages: c.messages.filter(
-                                      (m) => m.id !== assistantMessageId
+                                      (m) => m.id !== assistantId
                                   ),
                               };
                     });
@@ -957,9 +922,11 @@ class ChatStore {
 
     // --- Remote (cross-tab) turn handlers ---
     //
-    // When another tab streams a turn, the extension fans out lifecycle events
-    // to every connected tab. We mirror those into local state so the sidebar
-    // spinner and same-chat live-render work without any tab needing to poll.
+    // When another tab streams a turn, the extension fans out lifecycle
+    // events to every connected tab. Each tab maintains its own
+    // ReadableStream + readUIMessageStream pipeline per remote chat so
+    // chunks rebuild the in-progress assistant message the same way
+    // local streams do — no bespoke chunk accumulator.
 
     applyRemoteTurnStart(
         chatId: string,
@@ -967,13 +934,11 @@ class ChatStore {
         history: StoredMessage[],
         assistantMessageId: string
     ): void {
-        const placeholder: Message = {
-            id: assistantMessageId,
-            createdAt: Date.now(),
-            role: 'assistant',
-            content: '',
-        };
-        const hydratedHistory = hydrateStoredMessages(history);
+        const placeholder = buildAssistantPlaceholder(
+            assistantMessageId,
+            Date.now()
+        );
+        const hydratedHistory = this.storedToMessages(history);
         const existing = this.chats.find((c) => c.id === chatId);
         if (existing) {
             this.chats = this.chats.map((c) =>
@@ -1003,40 +968,70 @@ class ChatStore {
             ];
         }
         this.clearChatError(chatId);
+
+        // Spin up a fresh pipeline for this remote stream. Each enqueued
+        // chunk rebuilds the placeholder via readUIMessageStream and we
+        // splice the result into our chat state.
+        this.closeRemotePipeline(chatId);
+        let controller: ReadableStreamDefaultController<CourierUIMessageChunk>;
+        const stream = new ReadableStream<CourierUIMessageChunk>({
+            start(c) {
+                controller = c;
+            },
+        });
+        const pipeline: RemoteStreamPipeline = {
+            controller: controller!,
+            placeholderId: assistantMessageId,
+        };
+        this.remotePipelines.set(chatId, pipeline);
+        (async () => {
+            try {
+                for await (const msg of readUIMessageStream<CourierUIMessage>({
+                    message: placeholder,
+                    stream,
+                    onError: (e) => {
+                        console.error(
+                            LOG,
+                            'remote readUIMessageStream onError',
+                            e
+                        );
+                    },
+                })) {
+                    if (!this.remotePipelines.has(chatId)) return;
+                    this.chats = this.chats.map((c) => {
+                        if (c.id !== chatId) return c;
+                        const msgs = c.messages.map((m) =>
+                            m.id === assistantMessageId ? msg : m
+                        );
+                        return { ...c, messages: msgs };
+                    });
+                }
+            } catch (e) {
+                console.error(LOG, 'remote UI stream loop threw', e);
+            }
+        })();
     }
 
-    applyRemoteTurnChunk(
-        chatId: string,
-        kind: 'content' | 'thinking',
-        delta: string
-    ): void {
+    applyRemoteTurnChunk(chatId: string, chunk: CourierUIMessageChunk): void {
         if (!this.remoteStreamingChatIds.includes(chatId)) return;
-        this.chats = this.chats.map((c) => {
-            if (c.id !== chatId) return c;
-            if (c.messages.length === 0) return c;
-            const msgs = [...c.messages];
-            const last = msgs[msgs.length - 1];
-            msgs[msgs.length - 1] =
-                kind === 'content'
-                    ? { ...last, content: last.content + delta }
-                    : { ...last, thinking: (last.thinking ?? '') + delta };
-            return { ...c, messages: msgs };
-        });
+        const pipeline = this.remotePipelines.get(chatId);
+        if (!pipeline) return;
+        try {
+            pipeline.controller.enqueue(chunk);
+        } catch (e) {
+            console.warn(LOG, 'remote chunk enqueue failed', e);
+        }
     }
 
-    applyRemoteTurnToolResults(
-        chatId: string,
-        toolResults: ToolResult[]
-    ): void {
-        if (!this.remoteStreamingChatIds.includes(chatId)) return;
-        this.chats = this.chats.map((c) => {
-            if (c.id !== chatId) return c;
-            if (c.messages.length === 0) return c;
-            const msgs = [...c.messages];
-            const last = msgs[msgs.length - 1];
-            msgs[msgs.length - 1] = { ...last, toolResults };
-            return { ...c, messages: msgs };
-        });
+    private closeRemotePipeline(chatId: string): void {
+        const pipeline = this.remotePipelines.get(chatId);
+        if (!pipeline) return;
+        try {
+            pipeline.controller.close();
+        } catch {
+            // already closed
+        }
+        this.remotePipelines.delete(chatId);
     }
 
     async applyRemoteTurnDone(chatId: string): Promise<void> {
@@ -1044,6 +1039,7 @@ class ChatStore {
         this.remoteStreamingChatIds = this.remoteStreamingChatIds.filter(
             (id) => id !== chatId
         );
+        this.closeRemotePipeline(chatId);
         // Refresh from IDB for canonical state — the extension just saved.
         let stored: StoredChat | null;
         try {
@@ -1060,7 +1056,7 @@ class ChatStore {
                 c.id === chatId
                     ? {
                           ...c,
-                          messages: hydrateStoredMessages(stored!.messages),
+                          messages: this.storedToMessages(stored!.messages),
                       }
                     : c
             );
@@ -1072,6 +1068,7 @@ class ChatStore {
         this.remoteStreamingChatIds = this.remoteStreamingChatIds.filter(
             (id) => id !== chatId
         );
+        this.closeRemotePipeline(chatId);
         // Source tab bailed without saving. IDB has the pre-turn state (or
         // nothing if this was the chat's very first turn).
         let stored: StoredChat | null;
@@ -1089,7 +1086,7 @@ class ChatStore {
                 c.id === chatId
                     ? {
                           ...c,
-                          messages: hydrateStoredMessages(stored!.messages),
+                          messages: this.storedToMessages(stored!.messages),
                       }
                     : c
             );
@@ -1104,9 +1101,10 @@ class ChatStore {
         this.remoteStreamingChatIds = this.remoteStreamingChatIds.filter(
             (id) => id !== chatId
         );
+        this.closeRemotePipeline(chatId);
         this.chatErrors = {
             ...this.chatErrors,
-            [chatId]: formatStreamError(message),
+            [chatId]: formatStreamError(message, 'api'),
         };
         let stored: StoredChat | null;
         try {
@@ -1122,7 +1120,7 @@ class ChatStore {
                 c.id === chatId
                     ? {
                           ...c,
-                          messages: hydrateStoredMessages(stored!.messages),
+                          messages: this.storedToMessages(stored!.messages),
                       }
                     : c
             );
@@ -1146,7 +1144,7 @@ class ChatStore {
             c.id === this.activeChatId
                 ? {
                       ...c,
-                      messages: hydrateStoredMessages(stored!.messages),
+                      messages: this.storedToMessages(stored!.messages),
                   }
                 : c
         );

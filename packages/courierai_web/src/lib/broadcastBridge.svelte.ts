@@ -17,17 +17,7 @@ function handleBroadcastEvent(event: BroadcastEvent): void {
             );
             return;
         case 'turn-chunk':
-            chatStore.applyRemoteTurnChunk(
-                event.chatId,
-                event.kind,
-                event.delta
-            );
-            return;
-        case 'turn-tool-results':
-            chatStore.applyRemoteTurnToolResults(
-                event.chatId,
-                event.toolResults
-            );
+            chatStore.applyRemoteTurnChunk(event.chatId, event.chunk);
             return;
         case 'turn-done':
             chatStore.applyRemoteTurnDone(event.chatId);

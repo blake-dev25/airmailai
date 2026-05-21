@@ -1,3 +1,4 @@
+import type { CourierUIMessage } from '@courier/shared';
 import type { Chat } from './types';
 
 interface DemoConfig {
@@ -61,11 +62,35 @@ const skyBlue =
     '- **The sky should technically look violet** since violet scatters even more than blue — but our eyes are less sensitive to violet, and the sun emits more blue than violet to begin with.\n' +
     '- **On Mars the daytime sky is butterscotch-tan** and turns blue near sunset, because dust scatters light differently than gas molecules do.';
 
+function userMsg(
+    id: string,
+    createdAt: number,
+    text: string
+): CourierUIMessage {
+    return {
+        id,
+        role: 'user',
+        parts: [{ type: 'text', text, state: 'done' }],
+        metadata: { createdAt },
+    };
+}
+
+function assistantMsg(
+    id: string,
+    createdAt: number,
+    text: string
+): CourierUIMessage {
+    return {
+        id,
+        role: 'assistant',
+        parts: [{ type: 'text', text, state: 'done' }],
+        metadata: { createdAt },
+    };
+}
+
 export function buildDemoChats(config: DemoConfig): Chat[] {
     const now = Date.now();
     const id = () => crypto.randomUUID();
-    // Sequential offsets so messages within a chat sort deterministically by
-    // createdAt — same shape as live chats post-refactor.
     let tick = 0;
     const next = () => now + tick++;
     return [
@@ -73,30 +98,10 @@ export function buildDemoChats(config: DemoConfig): Chat[] {
             id: 'demo-1',
             title: 'this is a demo conversation',
             messages: [
-                {
-                    id: id(),
-                    createdAt: next(),
-                    role: 'user',
-                    content: 'this is a demo conversation',
-                },
-                {
-                    id: id(),
-                    createdAt: next(),
-                    role: 'assistant',
-                    content: 'great! how can I help you?',
-                },
-                {
-                    id: id(),
-                    createdAt: next(),
-                    role: 'user',
-                    content: 'give me a recipe for eggs benedict',
-                },
-                {
-                    id: id(),
-                    createdAt: next(),
-                    role: 'assistant',
-                    content: eggsBenedict,
-                },
+                userMsg(id(), next(), 'this is a demo conversation'),
+                assistantMsg(id(), next(), 'great! how can I help you?'),
+                userMsg(id(), next(), 'give me a recipe for eggs benedict'),
+                assistantMsg(id(), next(), eggsBenedict),
             ],
             createdAt: now,
             systemPrompt: '',
@@ -106,30 +111,14 @@ export function buildDemoChats(config: DemoConfig): Chat[] {
             id: 'demo-2',
             title: 'write me a python fizzbuzz script',
             messages: [
-                {
-                    id: id(),
-                    createdAt: next(),
-                    role: 'user',
-                    content: 'write me a python fizzbuzz script',
-                },
-                {
-                    id: id(),
-                    createdAt: next(),
-                    role: 'assistant',
-                    content: fizzbuzz,
-                },
-                {
-                    id: id(),
-                    createdAt: next(),
-                    role: 'user',
-                    content: 'can you explain how the % operator works there?',
-                },
-                {
-                    id: id(),
-                    createdAt: next(),
-                    role: 'assistant',
-                    content: moduloExplanation,
-                },
+                userMsg(id(), next(), 'write me a python fizzbuzz script'),
+                assistantMsg(id(), next(), fizzbuzz),
+                userMsg(
+                    id(),
+                    next(),
+                    'can you explain how the % operator works there?'
+                ),
+                assistantMsg(id(), next(), moduloExplanation),
             ],
             createdAt: now - 1000,
             systemPrompt: '',
@@ -139,18 +128,8 @@ export function buildDemoChats(config: DemoConfig): Chat[] {
             id: 'demo-3',
             title: 'why is the sky blue?',
             messages: [
-                {
-                    id: id(),
-                    createdAt: next(),
-                    role: 'user',
-                    content: 'why is the sky blue?',
-                },
-                {
-                    id: id(),
-                    createdAt: next(),
-                    role: 'assistant',
-                    content: skyBlue,
-                },
+                userMsg(id(), next(), 'why is the sky blue?'),
+                assistantMsg(id(), next(), skyBlue),
             ],
             createdAt: now - 2000,
             systemPrompt: '',

@@ -1,195 +1,69 @@
-import type {
-    HydratedChatMessage,
-    StreamHandlers,
-    StreamUsage,
-    WebSearchToolResult,
-} from '@courier/shared';
-import OpenAI from 'openai';
-import { DEBUG_API_LOGGING } from '../debug';
-import { buildOpenAIResponsesToolResults } from './tool-results';
+import { createOpenAI } from '@ai-sdk/openai';
+import { streamText } from 'ai';
+import type { StreamArgs } from './anthropic';
+import { makeDebugFetch } from './debug-fetch';
 
-const LOG = '[courier:ext]';
+// OpenAI's web search tool is exposed by the SDK as `openai.tools.webSearch`.
+// Hoisted so the wiring is in a consistent place across providers.
+const WEB_SEARCH_TOOL = 'webSearch' as const;
 
-// OpenAI's web search tool type string. Hoisted so it lives next to the
-// other tool-shape choices for this provider — easy to spot/swap if OpenAI
-// renames it.
-const WEB_SEARCH_TOOL_TYPE = 'web_search' as const;
+type Effort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 
-function messageInputItem(
-    msg: HydratedChatMessage
-): OpenAI.Responses.EasyInputMessage {
-    if (!msg.attachments?.length) {
-        return { role: msg.role as 'user' | 'assistant', content: msg.content };
+// Our thinkingLevel vocabulary → OpenAI's reasoning.effort enum. 'max' has
+// no equivalent and clamps to 'xhigh'; 'none' returns undefined to skip.
+function toEffort(level: string | undefined): Effort | undefined {
+    if (!level || level === 'none') return undefined;
+    if (level === 'max') return 'xhigh';
+    if (
+        level === 'minimal' ||
+        level === 'low' ||
+        level === 'medium' ||
+        level === 'high' ||
+        level === 'xhigh'
+    ) {
+        return level;
     }
-
-    const parts: OpenAI.Responses.ResponseInputContent[] = [];
-
-    for (const att of msg.attachments) {
-        if (att.mediaType.startsWith('image/')) {
-            parts.push({
-                type: 'input_image',
-                detail: 'auto',
-                image_url: `data:${att.mediaType};base64,${att.data}`,
-            });
-        } else {
-            parts.push({
-                type: 'input_file',
-                filename: att.name,
-                file_data: `data:${att.mediaType};base64,${att.data}`,
-            });
-        }
-    }
-
-    if (msg.content) {
-        parts.push({ type: 'input_text', text: msg.content });
-    }
-
-    return { role: msg.role as 'user' | 'assistant', content: parts };
+    return undefined;
 }
 
-// Re-inject prior reasoning + `web_search_call` items so the model knows it
-// already searched. The API binds each web_search_call to a preceding
-// reasoning item by id; both must be present on stateless multi-turn calls.
-// Reasoning items come first to match the order in the original response.
-function webSearchPrefixItems(
-    toolResults: WebSearchToolResult[]
-): OpenAI.Responses.ResponseInputItem[] {
-    const items: OpenAI.Responses.ResponseInputItem[] = [];
-    for (const tr of toolResults) {
-        for (const r of tr.openaiReasoning ?? []) {
-            items.push({
-                type: 'reasoning',
-                id: r.id,
-                summary: [],
-                encrypted_content: r.encryptedContent,
-            });
-        }
-        if (tr.callId) {
-            items.push({
-                type: 'web_search_call',
-                id: tr.callId,
-                status: 'completed',
-                action: { type: 'search', query: '' },
-            });
-        }
-    }
-    return items;
-}
-
-// Build the flat list of input items for the Responses API. Prior web search
-// calls go in *before* the assistant message they belong to.
-function toResponsesInput(
-    messages: HydratedChatMessage[]
-): OpenAI.Responses.ResponseInputItem[] {
-    const items: OpenAI.Responses.ResponseInputItem[] = [];
-    for (const msg of messages) {
-        if (msg.role === 'assistant' && msg.toolResults?.length) {
-            items.push(...webSearchPrefixItems(msg.toolResults));
-        }
-        items.push(messageInputItem(msg));
-    }
-    return items;
-}
-
-export async function streamOpenAI(
-    apiKey: string,
-    model: string,
-    messages: HydratedChatMessage[],
-    params: Record<string, unknown>,
-    handlers: StreamHandlers,
-    signal?: AbortSignal
-): Promise<void> {
-    const client = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
-
-    const systemMsg = messages.find((m) => m.role === 'system');
-    const inputItems = toResponsesInput(
-        messages.filter((m) => m.role !== 'system')
-    );
-
-    const thinkingLevel = params.thinkingLevel as string | undefined;
-    const thinkingEnabled = thinkingLevel && thinkingLevel !== 'none';
-
-    console.log(LOG, 'openai: stream start', {
-        model,
-        inputItems: inputItems.length,
-        hasSystem: !!systemMsg,
-        params,
+export function streamOpenAI(args: StreamArgs) {
+    const openai = createOpenAI({
+        apiKey: args.apiKey,
+        fetch: makeDebugFetch('openai'),
     });
 
-    const requestBody = {
-        model,
-        input: inputItems,
-        ...(systemMsg ? { instructions: systemMsg.content } : {}),
-        max_output_tokens: (params.maxTokens as number) ?? 8192,
-        ...(params.temperature !== undefined
-            ? { temperature: params.temperature as number }
+    const effort = toEffort(args.params.thinkingLevel as string | undefined);
+    const maxTokens = (args.params.maxTokens as number | undefined) ?? 8192;
+
+    const tools = args.params.webSearch
+        ? { web_search: openai.tools[WEB_SEARCH_TOOL]() }
+        : undefined;
+
+    return streamText({
+        model: openai.responses(args.model),
+        messages: args.messages,
+        maxOutputTokens: maxTokens,
+        ...(args.system ? { system: args.system } : {}),
+        ...(args.params.temperature !== undefined
+            ? { temperature: args.params.temperature as number }
             : {}),
-        ...(thinkingEnabled
+        ...(tools ? { tools } : {}),
+        ...(args.signal ? { abortSignal: args.signal } : {}),
+        ...(effort
             ? {
-                  reasoning: {
-                      effort: thinkingLevel as OpenAI.Reasoning['effort'],
-                      summary: 'auto' as const,
+                  providerOptions: {
+                      openai: {
+                          reasoningEffort: effort,
+                          reasoningSummary: 'auto',
+                          // Required so encrypted reasoning items survive
+                          // stateless multi-turn replays — without it,
+                          // each web_search_call loses its bound reasoning
+                          // ref and the next turn errors with "ws_X
+                          // provided without required rs_Y".
+                          include: ['reasoning.encrypted_content'],
+                      },
                   },
               }
             : {}),
-        ...(params.webSearch
-            ? {
-                  tools: [{ type: WEB_SEARCH_TOOL_TYPE }],
-                  // Required to replay reasoning items on later turns
-                  // when running stateless — the API binds each
-                  // web_search_call to its preceding reasoning item.
-                  include: ['reasoning.encrypted_content' as const],
-              }
-            : {}),
-        stream: true as const,
-    };
-
-    if (DEBUG_API_LOGGING) {
-        console.log(LOG, '[debug] openai: → request', requestBody);
-    }
-
-    try {
-        const stream = await client.responses.create(requestBody, { signal });
-
-        let firstChunk = true;
-        let usage: StreamUsage | undefined;
-        let toolResults: WebSearchToolResult[] = [];
-
-        for await (const event of stream) {
-            if (event.type === 'response.output_text.delta') {
-                if (firstChunk) {
-                    console.log(LOG, 'openai: first chunk received');
-                    firstChunk = false;
-                }
-                handlers.onChunk(event.delta);
-            } else if (event.type === 'response.reasoning_summary_text.delta') {
-                handlers.onThinking?.((event as { delta: string }).delta);
-            } else if (event.type === 'response.completed') {
-                if (DEBUG_API_LOGGING) {
-                    console.log(
-                        LOG,
-                        '[debug] openai: ← response',
-                        event.response
-                    );
-                }
-                const u = event.response.usage;
-                if (u) {
-                    usage = {
-                        inputTokens: u.input_tokens,
-                        outputTokens: u.output_tokens,
-                    };
-                }
-                toolResults = buildOpenAIResponsesToolResults(event.response);
-            }
-        }
-
-        if (toolResults.length) handlers.onToolResults?.(toolResults);
-        console.log(LOG, 'openai: stream done');
-        handlers.onDone(usage);
-    } catch (e) {
-        if (signal?.aborted) return;
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error(LOG, 'openai: error', msg);
-        handlers.onError(msg);
-    }
+    });
 }

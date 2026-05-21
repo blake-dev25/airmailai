@@ -13,6 +13,7 @@
         "@courier/shared": "workspace:*",
         "@lucide/svelte": "^1.14.0",
         "@tailwindcss/typography": "^0.5.19",
+        "ai": "^6.0.185",
         "dompurify": "^3.4.2",
         "marked": "^18.0.3",
         "marked-footnote": "^1.4.0",

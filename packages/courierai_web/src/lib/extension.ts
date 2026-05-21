@@ -1,24 +1,39 @@
+import { readUIMessageStream } from 'ai';
 import type {
     BroadcastEvent,
     BroadcastRequest,
     ChatMeta,
-    ExtensionResponse,
+    CourierUIMessage,
+    CourierUIMessageChunk,
+    ExtensionStreamEvent,
     HydratedStoredMessage,
     OpenRouterModel,
     StorageRequest,
     StorageResponse,
     StorageUsage,
     StoredChat,
-    StreamHandlers,
+    StreamErrorSource,
     TurnStartRequest,
     UserSettings,
 } from '@courier/shared';
 
+export interface StreamHandlers {
+    // Fires every time the streamed UIMessage grows. The argument is the
+    // full reassembled message (placeholder id, role 'assistant', parts).
+    onMessage: (message: CourierUIMessage) => void;
+    // Terminal success — the ext has saved the row. No usage payload here
+    // because tokens land via message-metadata chunks, surfaced through
+    // onMessage.
+    onDone: () => void;
+    onError: (message: string, source: StreamErrorSource) => void;
+}
+
 export interface StreamHandle {
     // Hard cancel: disconnect immediately, no save.
     abort: () => void;
-    // Graceful stop: save with truncated visible content, then disconnect.
-    stop: (truncatedContent: string) => void;
+    // Graceful stop: ext aborts the underlying stream and saves the partial
+    // UIMessage assembled by AI SDK's onFinish.
+    stop: () => void;
 }
 
 // Stable per-tab identifier. Generated once per page load; broadcasted in
@@ -142,10 +157,9 @@ export async function saveMeta(meta: ChatMeta): Promise<void> {
 }
 
 export async function putMessage(
-    chatId: string,
     message: HydratedStoredMessage
 ): Promise<void> {
-    await sendStorageMessage({ type: 'put_message', chatId, message });
+    await sendStorageMessage({ type: 'put_message', message });
 }
 
 export async function deleteMessage(
@@ -220,6 +234,10 @@ export async function clearAllStorage(): Promise<void> {
     await sendStorageMessage({ type: 'clear_all' });
 }
 
+// Wraps a port-based turn stream. Chunks from the ext are fed into AI SDK's
+// `readUIMessageStream`, which rebuilds the full UIMessage as parts arrive
+// — we hand the rebuilt message to the caller via `onMessage` and let it
+// replace its placeholder in-place. No bespoke chunk accumulator needed.
 export function sendToExtension(
     request: Omit<TurnStartRequest, 'type'>,
     handlers: StreamHandlers
@@ -227,7 +245,8 @@ export function sendToExtension(
     if (!extensionId) {
         console.error(LOG, 'chat: extension not detected');
         handlers.onError(
-            'CourierAI extension not detected. Install it and refresh to start chatting.'
+            'CourierAI extension not detected. Install it and refresh to start chatting.',
+            'extension'
         );
         return { abort: () => {}, stop: () => {} };
     }
@@ -241,39 +260,73 @@ export function sendToExtension(
     });
 
     let done = false;
-    let stopped = false;
     let aborted = false;
-    let firstChunk = true;
+    let stopped = false;
     const port = chrome.runtime.connect(extensionId);
 
-    port.onMessage.addListener((response: ExtensionResponse) => {
-        switch (response.type) {
+    // Bridge port → ReadableStream → readUIMessageStream → onMessage. We
+    // close the stream on 'done' / 'error' so readUIMessageStream exits its
+    // for-await loop cleanly.
+    let chunkController: ReadableStreamDefaultController<CourierUIMessageChunk> | null =
+        null;
+    const chunkStream = new ReadableStream<CourierUIMessageChunk>({
+        start(controller) {
+            chunkController = controller;
+        },
+    });
+
+    // Seed with an empty placeholder so readUIMessageStream has a base to
+    // accumulate into. The id matches the assistant placeholder the web
+    // pre-rendered; metadata.createdAt is "now" until the ext sends its
+    // own message-metadata.
+    const placeholder: CourierUIMessage = {
+        id: request.assistantMessageId,
+        role: 'assistant',
+        parts: [],
+        metadata: { createdAt: Date.now() },
+    };
+
+    (async () => {
+        try {
+            for await (const msg of readUIMessageStream<CourierUIMessage>({
+                message: placeholder,
+                stream: chunkStream,
+                onError: (e) => {
+                    console.error(LOG, 'readUIMessageStream onError', e);
+                },
+            })) {
+                handlers.onMessage(msg);
+            }
+        } catch (e) {
+            console.error(LOG, 'UI stream loop threw', e);
+        }
+    })();
+
+    port.onMessage.addListener((event: ExtensionStreamEvent) => {
+        switch (event.type) {
             case 'chunk':
                 if (stopped) break;
-                if (firstChunk) {
-                    console.log(LOG, '← first chunk received');
-                    firstChunk = false;
-                }
-                handlers.onChunk(response.content);
+                chunkController?.enqueue(event.chunk);
                 break;
-            case 'thinking_chunk':
-                if (stopped) break;
-                handlers.onThinking?.(response.content);
-                break;
-            case 'tool_results':
-                if (stopped) break;
-                handlers.onToolResults?.(response.toolResults);
-                break;
-            case 'done':
+            case 'done': {
                 done = true;
-                console.log(LOG, '← stream done');
-                handlers.onDone(response.usage);
+                chunkController?.close();
+                chunkController = null;
+                handlers.onDone();
                 port.disconnect();
                 break;
+            }
             case 'error':
                 done = true;
-                console.error(LOG, '← stream error', response.message);
-                handlers.onError(response.message, 'api');
+                console.error(
+                    LOG,
+                    '← stream error',
+                    event.source,
+                    event.message
+                );
+                chunkController?.close();
+                chunkController = null;
+                handlers.onError(event.message, event.source);
                 port.disconnect();
                 break;
         }
@@ -282,6 +335,8 @@ export function sendToExtension(
     port.onDisconnect.addListener(() => {
         if (!done && !aborted) {
             done = true;
+            chunkController?.close();
+            chunkController = null;
             const msg =
                 chrome.runtime.lastError?.message ??
                 'Extension disconnected unexpectedly.';
@@ -296,13 +351,15 @@ export function sendToExtension(
         abort: () => {
             if (!done) {
                 aborted = true;
+                chunkController?.close();
+                chunkController = null;
                 port.disconnect();
             }
         },
-        stop: (truncatedContent: string) => {
+        stop: () => {
             if (done || stopped) return;
             stopped = true;
-            port.postMessage({ type: 'stop', truncatedContent });
+            port.postMessage({ type: 'stop' });
         },
     };
 }

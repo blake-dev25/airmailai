@@ -1,3 +1,5 @@
+import type { UIMessage, UIMessageChunk } from 'ai';
+
 // Persisted form. Carries everything needed to render an attachment chip and
 // look up the bytes by content-hash. Storage lives in the ext's `files` IDB
 // store keyed by `hash`, dedup'd via refCount across chats.
@@ -8,85 +10,72 @@ export interface AttachmentRef {
     sizeBytes: number;
 }
 
-// In-flight form. Adds the base64-encoded bytes used by provider request
-// shapers. `data` is only present for fresh uploads on the current turn —
-// history attachments arrive as bare refs and are hydrated by the ext from
-// its files store before reaching the provider.
+// In-flight form. Adds the base64-encoded bytes used by fresh uploads. Bytes
+// flow web → ext only on put_message — once stored in the files store, only
+// the ref travels.
 export interface Attachment extends AttachmentRef {
     encodedSizeBytes: number;
     data: string; // base64
 }
 
-// A single source captured from a provider's web search tool. `title` is
-// optional from our perspective but Anthropic's SDK requires it on re-send,
-// so the provider's send-side shaper falls back to `url` when absent.
-// `anthropicEncrypted` is Anthropic's opaque `encrypted_content` blob,
-// required to preserve citation continuity across turns; empty/omitted for
-// providers that don't surface it.
-export interface WebSearchSource {
-    url: string;
-    title?: string;
-    anthropicEncrypted?: string;
-}
-
-// One block of web-search output, mirroring a single provider tool call.
-// `callId` is the real id from the API (anthropic `server_tool_use.id`,
-// openai `web_search_call.id`); absent when the provider doesn't surface
-// one we can reuse (google), or when we don't re-inject (openrouter).
-// `openaiReasoning` carries the reasoning items OpenAI's Responses API
-// binds to each `web_search_call` by id — required on re-inject for
-// stateless (no `previous_response_id`) multi-turn calls.
-export interface WebSearchToolResult {
-    type: 'web_search';
-    callId?: string;
-    sources: WebSearchSource[];
-    openaiReasoning?: Array<{ id: string; encryptedContent: string }>;
-}
-
-// Discriminated union — only `web_search` today, expand later if other
-// server-side tools land.
-export type ToolResult = WebSearchToolResult;
-
-export interface ChatMessage {
-    role: 'user' | 'assistant' | 'system';
-    content: string;
-    // Union: fresh uploads on the current turn carry full Attachment (with
-    // data); history items are AttachmentRef and get hydrated server-side.
-    attachments?: (Attachment | AttachmentRef)[];
-    // Assistant-only. Carried forward in history so each provider can
-    // reconstruct its native tool-call blocks on the next turn.
-    toolResults?: ToolResult[];
-}
-
-// Persisted form. Each message is its own IDB row keyed by [chatId, id], so
-// edits/deletes/appends can run concurrently without clobbering each other.
-// `createdAt` drives load-order via a compound index. `tokens` is assistant-
-// only — produced by the terminal save when the stream reports usage.
-export interface StoredMessage {
-    chatId: string;
-    id: string;
+// Metadata carried on every CourierUIMessage. `createdAt` drives load-order
+// in IDB (compound index reaches into uiMessage.metadata.createdAt) and is
+// also surfaced in the UI. `tokens` lands on assistant messages once usage
+// is reported and feeds the footer/header indicators.
+export interface CourierMessageMetadata {
     createdAt: number;
-    role: 'user' | 'assistant';
-    content: string;
-    thinking?: string;
-    attachments?: AttachmentRef[];
-    toolResults?: ToolResult[];
     tokens?: { input: number; output: number };
 }
 
-// Post-hydration form. The ext fills bare refs into full attachments before
-// handing off to providers, so this is what provider stream fns consume.
-export interface HydratedChatMessage {
-    role: 'user' | 'assistant' | 'system';
-    content: string;
-    attachments?: Attachment[];
-    toolResults?: ToolResult[];
+// Custom `data-*` parts. The only one today is `attachment`: a content-
+// addressed reference whose bytes live in the ext's files store, looked up
+// via convertDataPart on the way to the provider. Bytes never live in the
+// persisted UIMessage — keeps rows small and dedupes across re-uses.
+//
+// Must satisfy AI SDK's `UIDataTypes = Record<string, unknown>` constraint,
+// so we use a `type` with an index signature rather than an `interface`.
+export type CourierDataParts = {
+    attachment: {
+        hash: string;
+        name: string;
+        mediaType: string;
+        sizeBytes: number;
+    };
+} & Record<string, unknown>;
+
+export type CourierUIMessage = UIMessage<
+    CourierMessageMetadata,
+    CourierDataParts
+>;
+
+export type CourierUIMessageChunk = UIMessageChunk<
+    CourierMessageMetadata,
+    CourierDataParts
+>;
+
+// Persisted form. One IDB row per message, keyPath `['chatId', 'uiMessage.id']`,
+// ordered by index `['chatId', 'uiMessage.metadata.createdAt', 'uiMessage.id']`.
+export interface StoredMessage {
+    chatId: string;
+    uiMessage: CourierUIMessage;
+}
+
+// In-flight form sent from web → ext via put_message. `freshBlobs` carries
+// the base64 bytes for any new `data-attachment` parts whose hash isn't yet
+// in the files store. The ext extracts them into the files store and
+// persists the message with bare refs. Map keys are the attachment hashes.
+export interface HydratedStoredMessage {
+    chatId: string;
+    uiMessage: CourierUIMessage;
+    freshBlobs?: Record<string, { mediaType: string; base64: string }>;
 }
 
 // Sent over a port (chrome.runtime.connect) for streaming chat. The 'start'
 // message kicks off a turn; the extension owns the turn lifecycle from here
 // (lock, stream, append-assistant-message-on-completion). The web can send
-// 'stop' mid-stream to cleanly halt and save with truncated visible content.
+// 'stop' mid-stream to cleanly halt and save whatever the SDK assembled by
+// the abort point (no truncatedContent — `onFinish` gives us the authoritative
+// partial UIMessage).
 //
 // `history` is the pre-turn message state used ONLY for cross-tab broadcast
 // (so mirror tabs can render the chat instantly). The extension does NOT
@@ -99,7 +88,13 @@ export interface TurnStartRequest {
     sourceTabId: string;
     provider: string;
     model: string;
-    messages: ChatMessage[];
+    // Chat history WITHOUT the trailing assistant placeholder. All
+    // `data-attachment` parts must reference hashes already in the ext's
+    // files store (the web persists the user message + bytes before
+    // sending this request).
+    messages: CourierUIMessage[];
+    // Optional system prompt; applied via streamText's `system` param.
+    system?: string;
     params?: Record<string, unknown>;
     meta: ChatMeta;
     history: StoredMessage[];
@@ -111,7 +106,6 @@ export interface TurnStartRequest {
 
 export interface TurnStopRequest {
     type: 'stop';
-    truncatedContent: string;
 }
 
 // No-op heartbeat sent over the existing stream port while a provider is
@@ -126,12 +120,17 @@ export type TurnRequest =
     | TurnStopRequest
     | TurnKeepaliveRequest;
 
-export type ExtensionResponse =
-    | { type: 'chunk'; content: string }
-    | { type: 'thinking_chunk'; content: string }
-    | { type: 'tool_results'; toolResults: ToolResult[] }
-    | { type: 'done'; usage?: { inputTokens: number; outputTokens: number } }
-    | { type: 'error'; message: string };
+export type StreamErrorSource = 'api' | 'extension';
+
+// Sent from ext → source tab over the turn port. UIMessageChunk passes
+// through verbatim — that's the wire protocol. Pre-stream errors (no API
+// key, hydrate failure) get their own envelope so we can attribute them
+// to the ext rather than the API; in-stream errors arrive as inline
+// `{ type: 'error', errorText }` chunks per the AI SDK spec.
+export type ExtensionStreamEvent =
+    | { type: 'chunk'; chunk: CourierUIMessageChunk }
+    | { type: 'done' }
+    | { type: 'error'; source: StreamErrorSource; message: string };
 
 // Sent on the long-lived 'broadcast' port from the extension to every
 // connected tab so tabs can mirror cross-tab turn lifecycle. The originating
@@ -149,13 +148,7 @@ export type BroadcastEvent =
     | {
           type: 'turn-chunk';
           chatId: string;
-          kind: 'content' | 'thinking';
-          delta: string;
-      }
-    | {
-          type: 'turn-tool-results';
-          chatId: string;
-          toolResults: ToolResult[];
+          chunk: CourierUIMessageChunk;
       }
     | { type: 'turn-done'; chatId: string }
     | { type: 'turn-error'; chatId: string; message: string }
@@ -169,25 +162,6 @@ export interface BroadcastKeepaliveRequest {
     type: 'keepalive';
 }
 export type BroadcastRequest = BroadcastKeepaliveRequest;
-
-export interface StreamUsage {
-    inputTokens: number;
-    outputTokens: number;
-}
-
-export type StreamErrorSource = 'api' | 'extension';
-
-// Shared stream-callback shape for both the provider implementations
-// (in the extension background) and the web-side `sendToExtension` wrapper.
-export interface StreamHandlers {
-    onChunk: (text: string) => void;
-    onThinking?: (text: string) => void;
-    // Structured tool-call output collected at the end of a stream. Emitted
-    // at most once per turn, after the content stream completes.
-    onToolResults?: (toolResults: ToolResult[]) => void;
-    onDone: (usage?: StreamUsage) => void;
-    onError: (message: string, source?: StreamErrorSource) => void;
-}
 
 export interface UserSettings {
     theme: string;
@@ -253,8 +227,7 @@ export interface ChatMeta {
 
 // Aggregated form: a chat with all its messages, the canonical "load a chat
 // for the UI" shape. Assembled by the extension from the meta row + a range
-// query on chat_messages. Tokens live on the assistant message that produced
-// them (see StoredMessage.tokens) — the UI surfaces the most recent one.
+// query on chat_messages.
 export interface StoredChat {
     id: string;
     messages: StoredMessage[];
@@ -292,7 +265,7 @@ export type StorageRequest =
     | { type: 'save_settings'; settings: Partial<UserSettings> }
     | { type: 'load_settings' }
     | { type: 'save_meta'; meta: ChatMeta }
-    | { type: 'put_message'; chatId: string; message: HydratedStoredMessage }
+    | { type: 'put_message'; message: HydratedStoredMessage }
     | { type: 'delete_message'; chatId: string; messageId: string }
     | { type: 'delete_messages_after'; chatId: string; lastKeptId: string }
     | { type: 'delete_chat'; chatId: string }
@@ -314,21 +287,6 @@ export interface StorageUsage {
     syncSettingsBytes: number;
     chatHistoryBytes: number;
     filesBytes: number;
-}
-
-// In-flight form sent from web → ext. Attachments may carry inline `data`
-// (fresh uploads, base64) — the ext extracts blobs into the files store and
-// persists the message with bare refs.
-export interface HydratedStoredMessage {
-    chatId: string;
-    id: string;
-    createdAt: number;
-    role: 'user' | 'assistant';
-    content: string;
-    thinking?: string;
-    attachments?: (Attachment | AttachmentRef)[];
-    toolResults?: ToolResult[];
-    tokens?: { input: number; output: number };
 }
 
 export type StorageResponse =

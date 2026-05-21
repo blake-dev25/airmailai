@@ -19,6 +19,7 @@
     import { settingsStore } from './settingsStore.svelte';
     import { createSmoothText } from './smoothText.svelte';
     import { createStickToBottom } from './stickToBottom.svelte';
+    import { messageText } from './types';
 
     let systemExpanded = $state(false);
     // Per-message UI state keyed by Message.id so it survives mid-chat deletes
@@ -92,9 +93,9 @@
     });
 
     $effect(() => {
-        const raw =
-            chatStore.activeMessages[chatStore.activeMessages.length - 1]
-                ?.content ?? '';
+        const last =
+            chatStore.activeMessages[chatStore.activeMessages.length - 1];
+        const raw = last ? messageText(last) : '';
         smooth.setRaw(raw);
         return () => smooth.cancel();
     });
@@ -216,11 +217,12 @@
         if (textareaEl) textareaEl.style.height = '';
     }
 
-    // Stop the current stream. Pass smooth.display so the saved/visible text
-    // matches exactly what the user sees — characters queued in the smooth
-    // drain are discarded rather than rushed onto the screen.
+    // Graceful stop — the ext aborts its underlying stream and saves the
+    // partial UIMessage that AI SDK's onFinish assembled up to that point.
+    // The "what user sees == what gets saved" truncation that the old
+    // protocol did is gone; the ext is authoritative.
     function stop() {
-        chatStore.stop(smooth.display);
+        chatStore.stop();
     }
 
     function handleRetry(index: number) {
@@ -565,13 +567,14 @@
                         {@const isLastStreaming =
                             chatStore.isActiveStreaming &&
                             i === chatStore.activeMessages.length - 1}
+                        {@const rawText = messageText(message)}
                         {@const displayContent =
                             i === chatStore.activeMessages.length - 1 &&
                             message.role === 'assistant' &&
                             (chatStore.isActiveStreaming ||
-                                smooth.display !== message.content)
+                                smooth.display !== rawText)
                                 ? smooth.display
-                                : message.content}
+                                : rawText}
                         <MessageItem
                             {message}
                             index={i}
