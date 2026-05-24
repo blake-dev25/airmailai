@@ -1,77 +1,31 @@
 <script lang="ts">
-    import { errorStore, formatErr } from './errorStore.svelte';
-    import {
-        initMarkdown,
-        isHighlighterReady,
-        renderMarkdown,
-    } from './markdown.js';
-
-    const LOG = '[courier:web]';
+    import { reportAppError } from './errorStore.svelte';
+    import { initMarkdown, isHighlighterReady } from './markdown.svelte';
+    import { streamingMarkdown } from './markdown-stream';
 
     let { content }: { content: string } = $props();
 
-    let highlighterReady = $state(isHighlighterReady());
     // Triple-backtick is the only path that reaches Shiki; inline code and
     // 4-space indented blocks render through the plain <pre><code> fallback.
     let hasCodeBlock = $derived(content.includes('```'));
 
     $effect(() => {
-        if (hasCodeBlock && !highlighterReady) {
-            initMarkdown()
-                .then(() => {
-                    highlighterReady = true;
-                })
-                .catch((err) => {
-                    console.error(LOG, 'syntax highlighter load failed', err);
-                    errorStore.setAppError(
-                        `Couldn't load syntax highlighter: ${formatErr(err)}`
-                    );
-                });
+        if (hasCodeBlock && !isHighlighterReady()) {
+            initMarkdown().catch((err) => {
+                reportAppError(
+                    'syntax highlighter load failed',
+                    "Couldn't load syntax highlighter",
+                    err
+                );
+            });
         }
-    });
-
-    let html = $derived.by(() => {
-        highlighterReady; // track as dependency so derived re-runs when highlighter loads
-        return renderMarkdown(content);
-    });
-    let container: HTMLDivElement;
-
-    $effect(() => {
-        html; // re-run when html changes
-        if (!container) return;
-
-        function handleClick(e: MouseEvent) {
-            const btn = (e.target as Element).closest(
-                '.code-copy'
-            ) as HTMLButtonElement | null;
-            if (!btn) return;
-            const pre = btn.closest('.code-block')?.querySelector('pre');
-            if (!pre) return;
-            navigator.clipboard
-                .writeText(pre.textContent ?? '')
-                .then(() => {
-                    btn.textContent = 'Copied!';
-                    setTimeout(() => {
-                        btn.textContent = 'Copy';
-                    }, 2000);
-                })
-                .catch((err) => {
-                    console.error(LOG, 'clipboard write failed', err);
-                    errorStore.setAppError(
-                        `Couldn't copy to clipboard: ${formatErr(err)}`
-                    );
-                });
-        }
-
-        container.addEventListener('click', handleClick);
-        return () => container.removeEventListener('click', handleClick);
     });
 </script>
 
-<div class="prose prose-sm max-w-none" bind:this={container}>
-    <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-    {@html html}
-</div>
+<div
+    class="prose prose-sm max-w-none"
+    use:streamingMarkdown={{ content, highlighterReady: isHighlighterReady() }}
+></div>
 
 <style>
     /* Code block wrapper — holds the language label + Shiki <pre> */

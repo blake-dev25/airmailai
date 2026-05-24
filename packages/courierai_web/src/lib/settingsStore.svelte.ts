@@ -1,7 +1,7 @@
 import { SETTINGS_KEYS, type UserSettings } from '@courier/shared';
 import { untrack } from 'svelte';
 import { FONT_SIZES, type ModelTier, PROVIDERS } from './constants';
-import { errorStore, formatErr } from './errorStore.svelte';
+import { reportAppError } from './errorStore.svelte';
 import {
     loadSettings as loadFromExt,
     saveSettings as saveToExtRaw,
@@ -11,8 +11,7 @@ const LOG = '[courier:web]';
 
 function saveToExt(snapshot: Partial<UserSettings>): void {
     saveToExtRaw(snapshot).catch((err) => {
-        console.error(LOG, 'settings save failed', err);
-        errorStore.setAppError(`Couldn't save settings: ${formatErr(err)}`);
+        reportAppError('settings save failed', "Couldn't save settings", err);
     });
 }
 
@@ -40,7 +39,6 @@ class SettingsStore {
     autoscroll = $state(false);
     enableWebSearch = $state(false);
     tagOpenRouterRequests = $state(false);
-    syncApiKeys = $state(false);
     legalAcceptedVersion = $state('');
 
     // Active chat config — these mirror the current chat's settings and act
@@ -88,7 +86,6 @@ class SettingsStore {
                     adaptiveThinking: this.adaptiveThinking,
                     webSearch: this.webSearch,
                     tagOpenRouterRequests: this.tagOpenRouterRequests,
-                    syncApiKeys: this.syncApiKeys,
                 };
                 if (!this.shouldSave()) return;
                 console.log(LOG, 'settings save', snapshot);
@@ -129,8 +126,11 @@ class SettingsStore {
         try {
             settings = await loadFromExt();
         } catch (err) {
-            console.error(LOG, 'settings load failed', err);
-            errorStore.setAppError(`Couldn't load settings: ${formatErr(err)}`);
+            reportAppError(
+                'settings load failed',
+                "Couldn't load settings",
+                err
+            );
             // Leave settingsLoaded=false so persist effects don't overwrite
             // real saved settings with defaults. UI works on defaults; user
             // sees the banner.
@@ -191,9 +191,6 @@ class SettingsStore {
             tagOpenRouterRequests: (v) => {
                 this.tagOpenRouterRequests = v;
             },
-            syncApiKeys: (v) => {
-                this.syncApiKeys = v;
-            },
             legalAcceptedVersion: (v) => {
                 this.legalAcceptedVersion = v;
             },
@@ -224,6 +221,32 @@ class SettingsStore {
         this.adaptiveThinking = meta.adaptiveThinking ?? true;
         this.webSearch = meta.webSearch ?? false;
         this.systemPrompt = meta.systemPrompt;
+    }
+
+    // Snapshot current settings as a per-chat config object. Mirror of
+    // `applyChatConfig` — adding a field to one means adding to the other.
+    // The snapshot↔apply round-trip is what restores config when switching
+    // between chats.
+    snapshotChatConfig(): {
+        systemPrompt: string;
+        providerId: string;
+        modelId: string;
+        temperature: number;
+        maxTokens: number;
+        thinkingLevel: string;
+        adaptiveThinking: boolean;
+        webSearch: boolean;
+    } {
+        return {
+            systemPrompt: this.systemPrompt,
+            providerId: this.providerId,
+            modelId: this.modelId,
+            temperature: this.temperature,
+            maxTokens: this.maxTokens,
+            thinkingLevel: this.thinkingLevel,
+            adaptiveThinking: this.adaptiveThinking,
+            webSearch: this.webSearch,
+        };
     }
 
     persistLegalVersion(version: string): void {

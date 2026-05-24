@@ -476,8 +476,8 @@
                             class={[
                                 'ios-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
                                 locked && 'cursor-not-allowed opacity-60',
+                                settingsStore.adaptiveThinking && 'on',
                             ]}
-                            class:on={settingsStore.adaptiveThinking}
                             role="switch"
                             aria-checked={settingsStore.adaptiveThinking}
                             aria-label="Adaptive Thinking"
@@ -553,8 +553,8 @@
                             type="button"
                             class={[
                                 'ios-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
+                                settingsStore.webSearch && 'on',
                             ]}
-                            class:on={settingsStore.webSearch}
                             role="switch"
                             aria-checked={settingsStore.webSearch}
                             aria-label="Web Search"

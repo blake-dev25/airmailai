@@ -24,7 +24,10 @@ const verbose = !!process.env.BUILD_VERBOSE;
 export default defineConfig({
     vite: () => ({
         logLevel: verbose ? 'info' : 'error',
-        ...(verbose ? {} : { build: { rollupOptions: { onwarn: () => {} } } }),
+        build: {
+            sourcemap: true,
+            ...(verbose ? {} : { rollupOptions: { onwarn: () => {} } }),
+        },
     }),
     zip: {
         artifactTemplate: 'zip/courierai_ext.zip',

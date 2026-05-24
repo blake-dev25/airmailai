@@ -28,6 +28,9 @@ function handleBroadcastEvent(event: BroadcastEvent): void {
         case 'turn-aborted':
             chatStore.applyRemoteTurnAborted(event.chatId);
             return;
+        case 'turn-truncate':
+            chatStore.applyRemoteTurnTruncate(event.chatId, event.charLen);
+            return;
     }
 }
 

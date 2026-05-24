@@ -14,6 +14,7 @@ export default defineConfig(
             '**/.output/**',
             '**/.wxt/**',
             '**/.deploy-tmp/**',
+            'scripts/**',
             '**/*.zip',
             '**/VERSION',
             '**/VERSION_NAME',

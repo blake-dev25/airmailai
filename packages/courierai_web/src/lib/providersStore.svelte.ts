@@ -3,7 +3,7 @@ import {
     PROVIDERS,
     type ProviderOption,
 } from './constants';
-import { errorStore, formatErr } from './errorStore.svelte';
+import { reportAppError } from './errorStore.svelte';
 import { loadOpenRouterModels } from './extension';
 import { settingsStore } from './settingsStore.svelte';
 
@@ -41,9 +41,10 @@ class ProvidersStore {
     onApiKeySaved(providerId: string): void {
         if (providerId === 'openrouter' && !this.hasOpenRouterModels()) {
             this.hydrateOpenRouter().catch((err) => {
-                console.error(LOG, 'openrouter hydrate failed', err);
-                errorStore.setAppError(
-                    `Couldn't load OpenRouter models: ${formatErr(err)}`
+                reportAppError(
+                    'openrouter hydrate failed',
+                    "Couldn't load OpenRouter models",
+                    err
                 );
             });
         }

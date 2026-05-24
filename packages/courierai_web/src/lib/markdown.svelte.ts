@@ -7,9 +7,10 @@ const THEME = 'github-dark';
 
 let highlighter: HighlighterCore | null = null;
 let initPromise: Promise<void> | null = null;
+let ready = $state(false);
 
 export function isHighlighterReady(): boolean {
-    return highlighter !== null;
+    return ready;
 }
 
 // Loaded lazily — Vite splits markdown-highlighter into its own chunk so
@@ -24,6 +25,7 @@ export function initMarkdown(): Promise<void> {
     if (!initPromise) {
         initPromise = import('./markdown-highlighter.js').then(async (m) => {
             highlighter = await m.createMarkdownHighlighter();
+            ready = true;
         });
     }
     return initPromise;

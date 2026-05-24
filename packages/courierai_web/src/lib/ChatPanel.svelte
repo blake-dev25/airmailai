@@ -1,6 +1,7 @@
 <script lang="ts">
     import type { Attachment } from '@courier/shared';
     import { tick, untrack } from 'svelte';
+    import { SvelteSet } from 'svelte/reactivity';
     import { appLifecycle } from './appLifecycle.svelte';
     import { chatStore } from './chatStore.svelte';
     import { errorStore } from './errorStore.svelte';
@@ -24,8 +25,8 @@
     let systemExpanded = $state(false);
     // Per-message UI state keyed by Message.id so it survives mid-chat deletes
     // (an index-keyed Set/index would shift onto the wrong message).
-    let expandedThinking = $state(new Set<string>());
-    let expandedSources = $state(new Set<string>());
+    const expandedThinking = new SvelteSet<string>();
+    const expandedSources = new SvelteSet<string>();
     let inputText = $state('');
     let messagesEl = $state<HTMLElement | null>(null);
     let messagesContentEl = $state<HTMLElement | null>(null);
@@ -43,6 +44,15 @@
     let editingMessageId = $state<string | null>(null);
     let editingText = $state('');
     let editingDims = $state<{ h: number } | null>(null);
+    // When the message being edited disappears (e.g. deleted from another tab),
+    // this derived goes null and the edit UI stops rendering automatically.
+    let editingMessage = $derived(
+        editingMessageId === null
+            ? null
+            : (chatStore.activeMessages.find(
+                  (m) => m.id === editingMessageId
+              ) ?? null)
+    );
 
     let uploadGeneration = 0;
     let filePolicy = $derived(
@@ -92,11 +102,28 @@
         );
     });
 
-    $effect(() => {
-        const last =
-            chatStore.activeMessages[chatStore.activeMessages.length - 1];
-        const raw = last ? messageText(last) : '';
-        smooth.setRaw(raw);
+    // Split-path read: during streaming, the reducer maintains a fast O(1)
+    // text accumulator on chat.streamingText (see uiMessageReducer.ts). At
+    // stream end, streamingText flips to null and we fall back to
+    // messageText(last) on the saved/loaded message. The two return
+    // identical strings at the handoff instant — no animation glitch.
+    // Don't collapse this back to a single messageText() call: that path is
+    // O(N) per chunk and walks all parts, which is O(N²) over a long turn.
+    //
+    // Uses $effect.pre (not $effect) so smooth.setRaw lands BEFORE the
+    // template's {@const displayContent} re-evaluates. Without that, each
+    // chunk renders once with the new rawText but stale smooth.target (the
+    // smooth.target === rawText check fails → falls to rawText branch →
+    // user sees the full chunk dump instead of the smooth drain).
+    $effect.pre(() => {
+        const streaming = chatStore.activeStreamingText;
+        if (streaming !== null) {
+            smooth.setRaw(streaming);
+        } else {
+            const last =
+                chatStore.activeMessages[chatStore.activeMessages.length - 1];
+            smooth.setRaw(last ? messageText(last) : '');
+        }
         return () => smooth.cancel();
     });
 
@@ -126,16 +153,6 @@
         return () => {
             cancelled = true;
         };
-    });
-
-    $effect(() => {
-        if (
-            editingMessageId !== null &&
-            !chatStore.activeMessages.some((m) => m.id === editingMessageId)
-        ) {
-            editingMessageId = null;
-            editingText = '';
-        }
     });
 
     $effect(() => {
@@ -217,12 +234,13 @@
         if (textareaEl) textareaEl.style.height = '';
     }
 
-    // Graceful stop — the ext aborts its underlying stream and saves the
-    // partial UIMessage that AI SDK's onFinish assembled up to that point.
-    // The "what user sees == what gets saved" truncation that the old
-    // protocol did is gone; the ext is authoritative.
+    // Stop. Snapshot the smooth drain's current display length, freeze the
+    // drain there, and tell chatStore to trim the message + notify the ext
+    // with the same length. "What you see is what gets saved."
     function stop() {
-        chatStore.stop();
+        const visibleChars = smooth.display.length;
+        smooth.snapToDisplay();
+        chatStore.stop(visibleChars);
     }
 
     function handleRetry(index: number) {
@@ -571,8 +589,7 @@
                         {@const displayContent =
                             i === chatStore.activeMessages.length - 1 &&
                             message.role === 'assistant' &&
-                            (chatStore.isActiveStreaming ||
-                                smooth.display !== rawText)
+                            smooth.target === rawText
                                 ? smooth.display
                                 : rawText}
                         <MessageItem
@@ -581,7 +598,7 @@
                             {displayContent}
                             isStreaming={chatStore.isActiveStreaming}
                             {isLastStreaming}
-                            editing={editingMessageId === message.id}
+                            editing={editingMessage?.id === message.id}
                             bind:editingText
                             {editingDims}
                             hovered={hoveredMessageId === message.id}
@@ -594,18 +611,14 @@
                             onsaveedit={saveEdit}
                             oncanceledit={cancelEdit}
                             onthinkingtoggle={() => {
-                                const next = new Set(expandedThinking);
-                                if (next.has(message.id))
-                                    next.delete(message.id);
-                                else next.add(message.id);
-                                expandedThinking = next;
+                                if (expandedThinking.has(message.id))
+                                    expandedThinking.delete(message.id);
+                                else expandedThinking.add(message.id);
                             }}
                             onsourcestoggle={() => {
-                                const next = new Set(expandedSources);
-                                if (next.has(message.id))
-                                    next.delete(message.id);
-                                else next.add(message.id);
-                                expandedSources = next;
+                                if (expandedSources.has(message.id))
+                                    expandedSources.delete(message.id);
+                                else expandedSources.add(message.id);
                             }}
                             onretry={() => handleRetry(i)}
                             ondelete={() => chatStore.deleteMessage(i)}

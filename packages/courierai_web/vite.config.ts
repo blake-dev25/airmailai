@@ -46,6 +46,7 @@ export default defineConfig({
     },
     plugins: [tailwindcss(), svelte()],
     build: {
+        sourcemap: true,
         rollupOptions: {
             ...(verbose ? {} : { onwarn: () => {} }),
             input: {

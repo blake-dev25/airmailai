@@ -8,9 +8,9 @@ import type {
     StoredMessage,
     StreamErrorSource,
 } from '@courier/shared';
-import { readUIMessageStream } from 'ai';
+import { SvelteSet } from 'svelte/reactivity';
 import { buildDemoChats } from './demo';
-import { errorStore, formatErr } from './errorStore.svelte';
+import { reportAppError } from './errorStore.svelte';
 import {
     deleteChat,
     deleteMessage,
@@ -27,7 +27,13 @@ import {
 import { providersStore } from './providersStore.svelte';
 import { settingsStore } from './settingsStore.svelte';
 import {
+    applyChunk,
+    createUIMessageReducer,
+    type UIMessageReducerState,
+} from './uiMessageReducer';
+import {
     messageText,
+    truncateMessageTextParts,
     type Chat,
     type Message,
     type SearchResult,
@@ -132,8 +138,9 @@ function chatToMeta(chat: Chat): ChatMeta {
 }
 
 interface RemoteStreamPipeline {
-    controller: ReadableStreamDefaultController<CourierUIMessageChunk>;
+    reducer: UIMessageReducerState;
     placeholderId: string;
+    chat: Chat;
 }
 
 class ChatStore {
@@ -141,11 +148,11 @@ class ChatStore {
     // Metas for chats not yet loaded into `chats` (older pages). Sorted newest-first.
     unloadedMetas = $state<ChatMeta[]>([]);
     activeChatId = $state<string | null>(null);
-    streamingChatIds = $state<string[]>([]);
+    streamingChatIds = new SvelteSet<string>();
     // Chats currently streaming in *other* tabs. Populated from broadcast
     // turn-start events; subsequent chunks/done/error/aborted only apply if
     // the chatId is in this set.
-    remoteStreamingChatIds = $state<string[]>([]);
+    remoteStreamingChatIds = new SvelteSet<string>();
     chatErrors = $state<Record<string, string>>({});
     searchResults = $state<SearchResult[] | null>(null);
     searchQuery = $state('');
@@ -166,24 +173,33 @@ class ChatStore {
 
     hasMoreChats = $derived(this.unloadedMetas.length > 0);
     isActiveLocalStreaming = $derived(
-        this.streamingChatIds.includes(this.activeChatId ?? '')
+        this.streamingChatIds.has(this.activeChatId ?? '')
     );
     isActiveRemoteStreaming = $derived(
-        this.remoteStreamingChatIds.includes(this.activeChatId ?? '')
+        this.remoteStreamingChatIds.has(this.activeChatId ?? '')
     );
     isActiveStreaming = $derived(
         this.isActiveLocalStreaming || this.isActiveRemoteStreaming
     );
-    // Sidebar gets the union — any chat being streamed by any tab gets the spinner.
-    allStreamingChatIds = $derived([
-        ...this.streamingChatIds,
-        ...this.remoteStreamingChatIds,
-    ]);
+    // Sidebar gets the union — any chat being streamed by any tab gets the
+    // spinner. Plain Set keeps the per-row .has() check O(1) without the
+    // reactive bookkeeping of SvelteSet (derived is read-only).
+    allStreamingChatIds = $derived(
+        new Set([...this.streamingChatIds, ...this.remoteStreamingChatIds])
+    );
     activeStreamError = $derived(
         this.chatErrors[this.activeChatId ?? ''] ?? null
     );
     activeMessages = $derived(
         this.chats.find((c) => c.id === this.activeChatId)?.messages ?? []
+    );
+    // Set by streamForChat/applyRemoteTurnStart to the reducer's
+    // streamingText accumulator. ChatPanel reads this in preference to
+    // messageText(last) so the per-chunk path is O(delta) instead of
+    // re-joining all parts. Falls to null when no stream is in flight.
+    activeStreamingText = $derived(
+        this.chats.find((c) => c.id === this.activeChatId)?.streamingText ??
+            null
     );
     // Tokens live in the assistant message metadata that produced them.
     // Surface the most recent assistant turn's usage for the indicators.
@@ -210,9 +226,10 @@ class ChatStore {
         try {
             metas = await loadChatMetas();
         } catch (err) {
-            console.error(LOG, 'loadInitialPage: metas failed', err);
-            errorStore.setAppError(
-                `Couldn't load chat list: ${formatErr(err)}`
+            reportAppError(
+                'loadInitialPage: metas failed',
+                "Couldn't load chat list",
+                err
             );
             return;
         }
@@ -227,9 +244,10 @@ class ChatStore {
             try {
                 fullChats = await loadChatsByIds(firstPage.map((m) => m.id));
             } catch (err) {
-                console.error(LOG, 'loadInitialPage: chats failed', err);
-                errorStore.setAppError(
-                    `Couldn't load chat history: ${formatErr(err)}`
+                reportAppError(
+                    'loadInitialPage: chats failed',
+                    "Couldn't load chat history",
+                    err
                 );
                 return;
             }
@@ -256,10 +274,7 @@ class ChatStore {
         try {
             fullChats = await loadChatsByIds(nextPage.map((m) => m.id));
         } catch (err) {
-            console.error(LOG, 'loadMore failed', err);
-            errorStore.setAppError(
-                `Couldn't load more chats: ${formatErr(err)}`
-            );
+            reportAppError('loadMore failed', "Couldn't load more chats", err);
             this.isLoadingMore = false;
             return;
         }
@@ -274,8 +289,8 @@ class ChatStore {
                 };
             })
             .filter((c): c is Chat => c !== null);
-        this.chats = [...this.chats, ...newChats];
-        this.unloadedMetas = this.unloadedMetas.slice(LOAD_MORE_PAGE_SIZE);
+        this.chats.push(...newChats);
+        this.unloadedMetas.splice(0, LOAD_MORE_PAGE_SIZE);
         console.log(
             LOG,
             'loaded more chats',
@@ -377,23 +392,13 @@ class ChatStore {
         const id = crypto.randomUUID();
         const now = Date.now();
         console.log(LOG, 'new chat', id);
-        this.chats = [
-            {
-                id,
-                title: 'New Chat',
-                messages: [],
-                createdAt: now,
-                systemPrompt: settingsStore.systemPrompt,
-                providerId: settingsStore.providerId,
-                modelId: settingsStore.modelId,
-                temperature: settingsStore.temperature,
-                maxTokens: settingsStore.maxTokens,
-                thinkingLevel: settingsStore.thinkingLevel,
-                adaptiveThinking: settingsStore.adaptiveThinking,
-                webSearch: settingsStore.webSearch,
-            },
-            ...this.chats,
-        ];
+        this.chats.unshift({
+            id,
+            title: 'New Chat',
+            messages: [],
+            createdAt: now,
+            ...settingsStore.snapshotChatConfig(),
+        });
         this.activeChatId = id;
     }
 
@@ -418,22 +423,23 @@ class ChatStore {
         try {
             full = await loadChat(id);
         } catch (err) {
-            console.error(LOG, 'activate: loadChat failed', id, err);
-            errorStore.setAppError(`Couldn't load chat: ${formatErr(err)}`);
+            reportAppError(
+                `activate: loadChat failed (id=${id})`,
+                "Couldn't load chat",
+                err
+            );
             this.chatLoading = false;
             return;
         }
         this.chatLoading = false;
 
         if (full && this.activeChatId === id) {
-            this.chats = [
-                ...this.chats,
-                {
-                    ...meta,
-                    messages: this.storedToMessages(full.messages),
-                },
-            ];
-            this.unloadedMetas = this.unloadedMetas.filter((m) => m.id !== id);
+            this.chats.push({
+                ...meta,
+                messages: this.storedToMessages(full.messages),
+            });
+            const metaIdx = this.unloadedMetas.findIndex((m) => m.id === id);
+            if (metaIdx >= 0) this.unloadedMetas.splice(metaIdx, 1);
         }
     }
 
@@ -444,39 +450,38 @@ class ChatStore {
             this.unloadedMetas.find((m) => m.id === id)?.title;
         this.streamHandles.get(id)?.abort();
         this.streamHandles.delete(id);
-        this.chats = this.chats.filter((c) => c.id !== id);
-        this.unloadedMetas = this.unloadedMetas.filter((t) => t.id !== id);
+        const chatIdx = this.chats.findIndex((c) => c.id === id);
+        if (chatIdx >= 0) this.chats.splice(chatIdx, 1);
+        const metaIdx = this.unloadedMetas.findIndex((t) => t.id === id);
+        if (metaIdx >= 0) this.unloadedMetas.splice(metaIdx, 1);
         if (this.activeChatId === id) {
             this.activeChatId = null;
             settingsStore.systemPrompt = '';
         }
-        this.streamingChatIds = this.streamingChatIds.filter(
-            (sid) => sid !== id
-        );
+        this.streamingChatIds.delete(id);
         this.clearChatError(id);
         if (!this.demoMode)
             deleteChat(id).catch((err) => {
-                console.error(LOG, 'delete chat failed', id, err);
-                errorStore.setAppError(
-                    `Couldn't delete${removedTitle ? ` "${removedTitle}"` : ' chat'}: ${formatErr(err)}`
+                reportAppError(
+                    `delete chat failed (id=${id})`,
+                    `Couldn't delete${removedTitle ? ` "${removedTitle}"` : ' chat'}`,
+                    err
                 );
             });
     }
 
     rename(id: string, newTitle: string): void {
         console.log(LOG, 'rename chat', id, newTitle);
-        this.chats = this.chats.map((c) =>
-            c.id === id ? { ...c, title: newTitle } : c
-        );
-        this.unloadedMetas = this.unloadedMetas.map((m) =>
-            m.id === id ? { ...m, title: newTitle } : m
-        );
-        const updated = this.chats.find((c) => c.id === id);
-        if (updated && !this.demoMode)
-            saveMeta(chatToMeta(updated)).catch((err) => {
-                console.error(LOG, 'rename save failed', id, err);
-                errorStore.setAppError(
-                    `Couldn't rename chat: ${formatErr(err)}`
+        const chat = this.chats.find((c) => c.id === id);
+        if (chat) chat.title = newTitle;
+        const meta = this.unloadedMetas.find((m) => m.id === id);
+        if (meta) meta.title = newTitle;
+        if (chat && !this.demoMode)
+            saveMeta(chatToMeta(chat)).catch((err) => {
+                reportAppError(
+                    `rename save failed (id=${id})`,
+                    "Couldn't rename chat",
+                    err
                 );
             });
     }
@@ -491,9 +496,10 @@ class ChatStore {
                 const full = await loadChat(id);
                 if (full) messages = this.storedToMessages(full.messages);
             } catch (err) {
-                console.error(LOG, 'export: loadChat failed', id, err);
-                errorStore.setAppError(
-                    `Couldn't load chat for export: ${formatErr(err)}`
+                reportAppError(
+                    `export: loadChat failed (id=${id})`,
+                    "Couldn't load chat for export",
+                    err
                 );
                 return;
             }
@@ -538,39 +544,35 @@ class ChatStore {
     editMessage(index: number, content: string): void {
         if (!this.activeChatId) return;
         const chatId = this.activeChatId;
-        let editedMsg: Message | undefined;
-        this.chats = this.chats.map((c) => {
-            if (c.id !== chatId) return c;
-            const msgs = [...c.messages];
-            const target = msgs[index];
-            if (!target) return c;
-            // Replace text parts with a single new text part; keep
-            // non-text parts (attachments etc.) intact.
-            const nonText = target.parts.filter((p) => p.type !== 'text');
-            const newParts: CourierUIMessage['parts'] = [
-                ...(content
-                    ? [
-                          {
-                              type: 'text' as const,
-                              text: content,
-                              state: 'done' as const,
-                          },
-                      ]
-                    : []),
-                ...nonText,
-            ];
-            msgs[index] = { ...target, parts: newParts };
-            editedMsg = msgs[index];
-            return { ...c, messages: msgs };
-        });
-        if (editedMsg && !this.demoMode) {
-            const chat = this.chats.find((c) => c.id === chatId);
+        const chat = this.chats.find((c) => c.id === chatId);
+        if (!chat) return;
+        const target = chat.messages[index];
+        if (!target) return;
+        // Replace text parts with a single new text part; keep non-text parts
+        // (attachments etc.) intact.
+        const nonText = target.parts.filter((p) => p.type !== 'text');
+        const newParts: CourierUIMessage['parts'] = [
+            ...(content
+                ? [
+                      {
+                          type: 'text' as const,
+                          text: content,
+                          state: 'done' as const,
+                      },
+                  ]
+                : []),
+            ...nonText,
+        ];
+        chat.messages[index] = { ...target, parts: newParts };
+        const editedMsg = chat.messages[index];
+        if (!this.demoMode) {
             putMessage(
-                messageToHydrated(chatId, editedMsg, chat?.pendingBlobs)
+                messageToHydrated(chatId, editedMsg, chat.pendingBlobs)
             ).catch((err) => {
-                console.error(LOG, 'edit save failed', chatId, err);
-                errorStore.setAppError(
-                    `Couldn't save edited message: ${formatErr(err)}`
+                reportAppError(
+                    `edit save failed (chatId=${chatId})`,
+                    "Couldn't save edited message",
+                    err
                 );
             });
         }
@@ -581,15 +583,13 @@ class ChatStore {
         const chatId = this.activeChatId;
         const chat = this.chats.find((c) => c.id === chatId);
         const removedId = chat?.messages[index]?.id;
-        this.chats = this.chats.map((c) => {
-            if (c.id !== chatId) return c;
-            return { ...c, messages: c.messages.filter((_, i) => i !== index) };
-        });
+        if (chat) chat.messages.splice(index, 1);
         if (removedId && !this.demoMode)
             deleteMessage(chatId, removedId).catch((err) => {
-                console.error(LOG, 'delete-msg save failed', chatId, err);
-                errorStore.setAppError(
-                    `Couldn't delete message: ${formatErr(err)}`
+                reportAppError(
+                    `delete-msg save failed (chatId=${chatId})`,
+                    "Couldn't delete message",
+                    err
                 );
             });
     }
@@ -597,10 +597,7 @@ class ChatStore {
     // --- Streaming ---
 
     sendMessage(content: string, attachments?: Attachment[]): void {
-        if (
-            this.activeChatId &&
-            this.streamingChatIds.includes(this.activeChatId)
-        )
+        if (this.activeChatId && this.streamingChatIds.has(this.activeChatId))
             return;
         console.log(LOG, 'send message', {
             provider: settingsStore.providerId,
@@ -618,44 +615,22 @@ class ChatStore {
             createdNewChat = true;
             const now = Date.now();
             const title = content.slice(0, 40);
-            this.chats = [
-                {
-                    id: chatId,
-                    title,
-                    messages: [],
-                    createdAt: now,
-                    systemPrompt: settingsStore.systemPrompt,
-                    providerId: settingsStore.providerId,
-                    modelId: settingsStore.modelId,
-                    temperature: settingsStore.temperature,
-                    maxTokens: settingsStore.maxTokens,
-                    thinkingLevel: settingsStore.thinkingLevel,
-                    adaptiveThinking: settingsStore.adaptiveThinking,
-                    webSearch: settingsStore.webSearch,
-                },
-                ...this.chats,
-            ];
+            this.chats.unshift({
+                id: chatId,
+                title,
+                messages: [],
+                createdAt: now,
+                ...settingsStore.snapshotChatConfig(),
+            });
             this.activeChatId = chatId;
         } else {
             // Update config and rename if this is the first message
-            const isFirst =
-                (this.chats.find((c) => c.id === chatId)?.messages.length ??
-                    0) === 0;
-            this.chats = this.chats.map((c) => {
-                if (c.id !== chatId) return c;
-                return {
-                    ...c,
-                    systemPrompt: settingsStore.systemPrompt,
-                    providerId: settingsStore.providerId,
-                    modelId: settingsStore.modelId,
-                    temperature: settingsStore.temperature,
-                    maxTokens: settingsStore.maxTokens,
-                    thinkingLevel: settingsStore.thinkingLevel,
-                    adaptiveThinking: settingsStore.adaptiveThinking,
-                    webSearch: settingsStore.webSearch,
-                    ...(isFirst ? { title: content.slice(0, 40) } : {}),
-                };
-            });
+            const existing = this.chats.find((c) => c.id === chatId);
+            const isFirst = (existing?.messages.length ?? 0) === 0;
+            if (existing) {
+                Object.assign(existing, settingsStore.snapshotChatConfig());
+                if (isFirst) existing.title = content.slice(0, 40);
+            }
         }
 
         const userId = crypto.randomUUID();
@@ -669,20 +644,15 @@ class ChatStore {
             Date.now()
         );
 
-        this.chats = this.chats.map((c) => {
-            if (c.id !== chatId) return c;
-            const nextPending = attachments?.length
-                ? new Map(c.pendingBlobs ?? [])
-                : c.pendingBlobs;
-            if (attachments?.length && nextPending) {
+        const sendChat = this.chats.find((c) => c.id === chatId);
+        if (sendChat) {
+            sendChat.messages.push(userMsg, assistantPlaceholder);
+            if (attachments?.length) {
+                const nextPending = new Map(sendChat.pendingBlobs ?? []);
                 for (const att of attachments) nextPending.set(att.hash, att);
+                sendChat.pendingBlobs = nextPending;
             }
-            return {
-                ...c,
-                messages: [...c.messages, userMsg, assistantPlaceholder],
-                ...(nextPending ? { pendingBlobs: nextPending } : {}),
-            };
-        });
+        }
 
         // Persist meta first if brand new chat, then the user message. Both
         // are fire-and-forget so we don't block stream startup; the ext's
@@ -695,25 +665,28 @@ class ChatStore {
                     putMessage(
                         messageToHydrated(chatId!, userMsg, chat.pendingBlobs)
                     ).catch((err) => {
-                        console.error(LOG, 'persist user msg failed', err);
-                        errorStore.setAppError(
-                            `Couldn't save your message: ${formatErr(err)}`
+                        reportAppError(
+                            'persist user msg failed',
+                            "Couldn't save your message",
+                            err
                         );
                     });
                 if (createdNewChat) {
                     saveMeta(chatToMeta(chat))
                         .then(persistUser)
                         .catch((err) => {
-                            console.error(LOG, 'persist new chat failed', err);
-                            errorStore.setAppError(
-                                `Couldn't save chat: ${formatErr(err)}`
+                            reportAppError(
+                                'persist new chat failed',
+                                "Couldn't save chat",
+                                err
                             );
                         });
                 } else {
                     saveMeta(chatToMeta(chat)).catch((err) => {
-                        console.error(LOG, 'persist meta failed', err);
-                        errorStore.setAppError(
-                            `Couldn't save chat config: ${formatErr(err)}`
+                        reportAppError(
+                            'persist meta failed',
+                            "Couldn't save chat config",
+                            err
                         );
                     });
                     void persistUser();
@@ -721,7 +694,7 @@ class ChatStore {
             }
         }
 
-        this.streamingChatIds = [...this.streamingChatIds, chatId];
+        this.streamingChatIds.add(chatId);
         this.clearChatError(chatId);
         this.streamForChat(chatId, assistantId);
     }
@@ -735,9 +708,7 @@ class ChatStore {
         // Abort any in-progress stream for this chat
         this.streamHandles.get(chatId)?.abort();
         this.streamHandles.delete(chatId);
-        this.streamingChatIds = this.streamingChatIds.filter(
-            (id) => id !== chatId
-        );
+        this.streamingChatIds.delete(chatId);
 
         // If assistant message, treat as retrying the user message above it
         const msg = chat.messages[index];
@@ -752,62 +723,57 @@ class ChatStore {
             Date.now()
         );
 
-        this.chats = this.chats.map((c) =>
-            c.id === chatId
-                ? {
-                      ...c,
-                      systemPrompt: settingsStore.systemPrompt,
-                      providerId: settingsStore.providerId,
-                      modelId: settingsStore.modelId,
-                      temperature: settingsStore.temperature,
-                      maxTokens: settingsStore.maxTokens,
-                      thinkingLevel: settingsStore.thinkingLevel,
-                      adaptiveThinking: settingsStore.adaptiveThinking,
-                      webSearch: settingsStore.webSearch,
-                      messages: [
-                          ...c.messages.slice(0, keepUpTo + 1),
-                          assistantPlaceholder,
-                      ],
-                  }
-                : c
+        Object.assign(chat, settingsStore.snapshotChatConfig());
+        chat.messages.splice(
+            keepUpTo + 1,
+            chat.messages.length - (keepUpTo + 1),
+            assistantPlaceholder
         );
 
         // Truncate IDB to match: drop every persisted message after the one
         // we're retrying. Config changes also get persisted so the next
         // turn uses the freshly-selected provider/model on reload.
         if (!this.demoMode) {
-            const updated = this.chats.find((c) => c.id === chatId);
-            if (updated) {
-                saveMeta(chatToMeta(updated)).catch((err) => {
-                    console.error(LOG, 'retry: meta save failed', err);
-                    errorStore.setAppError(
-                        `Couldn't save chat config: ${formatErr(err)}`
-                    );
-                });
-            }
+            saveMeta(chatToMeta(chat)).catch((err) => {
+                reportAppError(
+                    'retry: meta save failed',
+                    "Couldn't save chat config",
+                    err
+                );
+            });
             deleteMessagesAfter(chatId, lastKeptMsg.id).catch((err) => {
-                console.error(LOG, 'retry: truncate failed', err);
-                errorStore.setAppError(
-                    `Couldn't truncate chat history: ${formatErr(err)}`
+                reportAppError(
+                    'retry: truncate failed',
+                    "Couldn't truncate chat history",
+                    err
                 );
             });
         }
 
         this.clearChatError(chatId);
-        this.streamingChatIds = [...this.streamingChatIds, chatId];
+        this.streamingChatIds.add(chatId);
         this.streamForChat(chatId, assistantId);
     }
 
-    // Graceful stop. The ext aborts its underlying stream and AI SDK's
-    // onFinish hands us the partial UIMessage assembled by the abort point
-    // — that's what gets saved. We don't truncate to "what user sees"
-    // anymore; the ext is authoritative.
-    stop(): void {
+    // Graceful stop. `visibleChars` is the smoothText display length at click
+    // time — what the user could actually read. We tell the ext to truncate
+    // its assembled message to that length before saving, and mirror the
+    // same trim locally so the UI doesn't keep draining content the user
+    // wanted to stop seeing. handle.stop runs first so the `stopped` flag
+    // gates any chunks already queued on the port before we mutate parts.
+    stop(visibleChars: number): void {
         if (!this.activeChatId) return;
         const chatId = this.activeChatId;
         const handle = this.streamHandles.get(chatId);
         if (!handle) return;
-        handle.stop();
+        handle.stop(visibleChars);
+        const chat = this.chats.find((c) => c.id === chatId);
+        if (!chat) return;
+        const last = chat.messages[chat.messages.length - 1];
+        if (last && last.role === 'assistant') {
+            truncateMessageTextParts(last, visibleChars);
+            chat.streamingText = messageText(last);
+        }
     }
 
     // Streams an assistant response into the trailing placeholder of `chatId`.
@@ -842,22 +808,20 @@ class ChatStore {
             .find((p) => p.id === snap.providerId)
             ?.models.find((m) => m.id === snap.modelId)?.params;
 
-        // In-place mutation on the $state proxy — Svelte 5 tracks the
-        // single-index write and only re-renders the affected message,
-        // skipping the full chats-tree clone that the previous `chats.map`
-        // version paid on every chunk.
-        const replaceAssistant = (next: CourierUIMessage) => {
-            const chat = this.chats.find((c) => c.id === chatId);
-            if (!chat) return;
-            const idx = chat.messages.findIndex((m) => m.id === assistantId);
-            if (idx >= 0) chat.messages[idx] = next;
-        };
+        // Capture the assistant placeholder's $state proxy ref from the
+        // array. Mutating the proxy (via the reducer) drives Svelte's
+        // fine-grained reactivity per text part — no per-chunk whole-
+        // message swap or messageText re-join.
+        const cachedChat: Chat = snap;
+        const assistantRef =
+            cachedChat.messages[cachedChat.messages.length - 1];
+        const reducer = createUIMessageReducer(assistantRef);
+        cachedChat.streamingText = '';
 
         const finishStream = () => {
             this.streamHandles.delete(chatId);
-            this.streamingChatIds = this.streamingChatIds.filter(
-                (id) => id !== chatId
-            );
+            this.streamingChatIds.delete(chatId);
+            cachedChat.streamingText = null;
         };
 
         const handle = sendToExtension(
@@ -885,14 +849,13 @@ class ChatStore {
                 assistantMessageId: assistantId,
             },
             {
-                onMessage: (next) => {
-                    replaceAssistant(next);
+                onChunk: (chunk) => {
+                    applyChunk(reducer, chunk);
+                    cachedChat.streamingText = reducer.streamingText;
                 },
                 onDone: () => {
                     finishStream();
-                    this.chats = this.chats.map((c) =>
-                        c.id === chatId ? { ...c, pendingBlobs: undefined } : c
-                    );
+                    cachedChat.pendingBlobs = undefined;
                 },
                 onError: (msg, source) => {
                     finishStream();
@@ -902,18 +865,12 @@ class ChatStore {
                     };
                     // Discard the placeholder if no parts arrived; keep
                     // partial content otherwise.
-                    this.chats = this.chats.map((c) => {
-                        if (c.id !== chatId) return c;
-                        const last = c.messages[c.messages.length - 1];
-                        return last?.parts.length
-                            ? c
-                            : {
-                                  ...c,
-                                  messages: c.messages.filter(
-                                      (m) => m.id !== assistantId
-                                  ),
-                              };
-                    });
+                    if (!assistantRef.parts.length) {
+                        const idx = cachedChat.messages.findIndex(
+                            (m) => m.id === assistantId
+                        );
+                        if (idx >= 0) cachedChat.messages.splice(idx, 1);
+                    }
                 },
             }
         );
@@ -939,215 +896,158 @@ class ChatStore {
             Date.now()
         );
         const hydratedHistory = this.storedToMessages(history);
-        const existing = this.chats.find((c) => c.id === chatId);
-        if (existing) {
-            this.chats = this.chats.map((c) =>
-                c.id === chatId
-                    ? { ...c, messages: [...hydratedHistory, placeholder] }
-                    : c
-            );
+        let chat = this.chats.find((c) => c.id === chatId);
+        if (chat) {
+            chat.messages = [...hydratedHistory, placeholder];
         } else {
-            const fromUnloaded = this.unloadedMetas.find(
-                (m) => m.id === chatId
-            );
-            const newChat: Chat = {
+            this.chats.unshift({
                 ...meta,
                 messages: [...hydratedHistory, placeholder],
-            };
-            this.chats = [newChat, ...this.chats];
-            if (fromUnloaded) {
-                this.unloadedMetas = this.unloadedMetas.filter(
-                    (m) => m.id !== chatId
-                );
-            }
+            });
+            // Re-fetch via find so `chat` is the $state proxy, not the raw
+            // object literal we just unshifted. Mutating the raw bypasses
+            // Svelte's proxy and silently drops reactivity notifications.
+            chat = this.chats.find((c) => c.id === chatId)!;
+            const metaIdx = this.unloadedMetas.findIndex(
+                (m) => m.id === chatId
+            );
+            if (metaIdx >= 0) this.unloadedMetas.splice(metaIdx, 1);
         }
-        if (!this.remoteStreamingChatIds.includes(chatId)) {
-            this.remoteStreamingChatIds = [
-                ...this.remoteStreamingChatIds,
-                chatId,
-            ];
-        }
+        this.remoteStreamingChatIds.add(chatId);
         this.clearChatError(chatId);
 
-        // Spin up a fresh pipeline for this remote stream. Each enqueued
-        // chunk rebuilds the placeholder via readUIMessageStream and we
-        // splice the result into our chat state.
+        // Spin up a fresh pipeline for this remote stream. Each chunk goes
+        // straight into the reducer, which mutates the placeholder's parts
+        // in place — same path as local streamForChat.
         this.closeRemotePipeline(chatId);
-        let controller: ReadableStreamDefaultController<CourierUIMessageChunk>;
-        const stream = new ReadableStream<CourierUIMessageChunk>({
-            start(c) {
-                controller = c;
-            },
-        });
-        const pipeline: RemoteStreamPipeline = {
-            controller: controller!,
+        const assistantRef = chat.messages[chat.messages.length - 1];
+        const reducer = createUIMessageReducer(assistantRef);
+        chat.streamingText = '';
+        this.remotePipelines.set(chatId, {
+            reducer,
             placeholderId: assistantMessageId,
-        };
-        this.remotePipelines.set(chatId, pipeline);
-        (async () => {
-            try {
-                for await (const msg of readUIMessageStream<CourierUIMessage>({
-                    message: placeholder,
-                    stream,
-                    onError: (e) => {
-                        console.error(
-                            LOG,
-                            'remote readUIMessageStream onError',
-                            e
-                        );
-                    },
-                })) {
-                    if (!this.remotePipelines.has(chatId)) return;
-                    this.chats = this.chats.map((c) => {
-                        if (c.id !== chatId) return c;
-                        const msgs = c.messages.map((m) =>
-                            m.id === assistantMessageId ? msg : m
-                        );
-                        return { ...c, messages: msgs };
-                    });
-                }
-            } catch (e) {
-                console.error(LOG, 'remote UI stream loop threw', e);
-            }
-        })();
+            chat,
+        });
     }
 
     applyRemoteTurnChunk(chatId: string, chunk: CourierUIMessageChunk): void {
-        if (!this.remoteStreamingChatIds.includes(chatId)) return;
+        if (!this.remoteStreamingChatIds.has(chatId)) return;
         const pipeline = this.remotePipelines.get(chatId);
         if (!pipeline) return;
         try {
-            pipeline.controller.enqueue(chunk);
+            applyChunk(pipeline.reducer, chunk);
+            pipeline.chat.streamingText = pipeline.reducer.streamingText;
         } catch (e) {
-            console.warn(LOG, 'remote chunk enqueue failed', e);
+            console.warn(LOG, 'remote chunk apply failed', e);
         }
+    }
+
+    // Mirror-tab counterpart to source-tab stop. Source broadcasts the
+    // visible char count at click; we trim our local copy of the assistant
+    // placeholder to match, so every tab shows the same final text. Smooth's
+    // $effect.pre picks up the streamingText change and snaps target down;
+    // if its display had drained past `charLen` (mirror tabs drain
+    // independently), the next tick collapses display to target.
+    applyRemoteTurnTruncate(chatId: string, charLen: number): void {
+        if (!this.remoteStreamingChatIds.has(chatId)) return;
+        const pipeline = this.remotePipelines.get(chatId);
+        if (!pipeline) return;
+        const chat = pipeline.chat;
+        const last = chat.messages[chat.messages.length - 1];
+        if (!last || last.role !== 'assistant') return;
+        truncateMessageTextParts(last, charLen);
+        const truncated = messageText(last);
+        pipeline.reducer.streamingText = truncated;
+        chat.streamingText = truncated;
     }
 
     private closeRemotePipeline(chatId: string): void {
         const pipeline = this.remotePipelines.get(chatId);
         if (!pipeline) return;
-        try {
-            pipeline.controller.close();
-        } catch {
-            // already closed
-        }
+        pipeline.chat.streamingText = null;
         this.remotePipelines.delete(chatId);
     }
 
-    async applyRemoteTurnDone(chatId: string): Promise<void> {
-        if (!this.remoteStreamingChatIds.includes(chatId)) return;
-        this.remoteStreamingChatIds = this.remoteStreamingChatIds.filter(
-            (id) => id !== chatId
-        );
-        this.closeRemotePipeline(chatId);
-        // Refresh from IDB for canonical state — the extension just saved.
+    // Re-hydrate one chat's messages from IDB. `userMessage: null` suppresses
+    // the app-wide banner on failure (used by error-path refreshes where a
+    // per-chat error is already surfaced). `onMissing: 'drop'` removes the
+    // chat from state when IDB has no row (a remote-aborted first turn that
+    // never reached the save step).
+    private async refreshChatFromIDB(
+        chatId: string,
+        opts: {
+            context: string;
+            userMessage: string | null;
+            onMissing?: 'keep' | 'drop';
+        }
+    ): Promise<void> {
         let stored: StoredChat | null;
         try {
             stored = await loadChat(chatId);
         } catch (err) {
-            console.error(LOG, 'applyRemoteTurnDone: loadChat failed', err);
-            errorStore.setAppError(
-                `Couldn't refresh chat from storage: ${formatErr(err)}`
-            );
+            if (opts.userMessage) {
+                reportAppError(opts.context, opts.userMessage, err);
+            } else {
+                console.error(LOG, opts.context, err);
+            }
             return;
         }
         if (stored) {
-            this.chats = this.chats.map((c) =>
-                c.id === chatId
-                    ? {
-                          ...c,
-                          messages: this.storedToMessages(stored!.messages),
-                      }
-                    : c
-            );
-        }
-    }
-
-    async applyRemoteTurnAborted(chatId: string): Promise<void> {
-        if (!this.remoteStreamingChatIds.includes(chatId)) return;
-        this.remoteStreamingChatIds = this.remoteStreamingChatIds.filter(
-            (id) => id !== chatId
-        );
-        this.closeRemotePipeline(chatId);
-        // Source tab bailed without saving. IDB has the pre-turn state (or
-        // nothing if this was the chat's very first turn).
-        let stored: StoredChat | null;
-        try {
-            stored = await loadChat(chatId);
-        } catch (err) {
-            console.error(LOG, 'applyRemoteTurnAborted: loadChat failed', err);
-            errorStore.setAppError(
-                `Couldn't refresh chat from storage: ${formatErr(err)}`
-            );
-            return;
-        }
-        if (stored) {
-            this.chats = this.chats.map((c) =>
-                c.id === chatId
-                    ? {
-                          ...c,
-                          messages: this.storedToMessages(stored!.messages),
-                      }
-                    : c
-            );
-        } else {
-            this.chats = this.chats.filter((c) => c.id !== chatId);
+            const chat = this.chats.find((c) => c.id === chatId);
+            if (chat) chat.messages = this.storedToMessages(stored.messages);
+        } else if (opts.onMissing === 'drop') {
+            const idx = this.chats.findIndex((c) => c.id === chatId);
+            if (idx >= 0) this.chats.splice(idx, 1);
             if (this.activeChatId === chatId) this.activeChatId = null;
         }
     }
 
+    async applyRemoteTurnDone(chatId: string): Promise<void> {
+        if (!this.remoteStreamingChatIds.has(chatId)) return;
+        this.remoteStreamingChatIds.delete(chatId);
+        this.closeRemotePipeline(chatId);
+        // Refresh from IDB for canonical state — the extension just saved.
+        await this.refreshChatFromIDB(chatId, {
+            context: 'applyRemoteTurnDone: loadChat failed',
+            userMessage: "Couldn't refresh chat from storage",
+        });
+    }
+
+    async applyRemoteTurnAborted(chatId: string): Promise<void> {
+        if (!this.remoteStreamingChatIds.has(chatId)) return;
+        this.remoteStreamingChatIds.delete(chatId);
+        this.closeRemotePipeline(chatId);
+        // Source tab bailed without saving. IDB has the pre-turn state (or
+        // nothing if this was the chat's very first turn).
+        await this.refreshChatFromIDB(chatId, {
+            context: 'applyRemoteTurnAborted: loadChat failed',
+            userMessage: "Couldn't refresh chat from storage",
+            onMissing: 'drop',
+        });
+    }
+
     async applyRemoteTurnError(chatId: string, message: string): Promise<void> {
-        if (!this.remoteStreamingChatIds.includes(chatId)) return;
-        this.remoteStreamingChatIds = this.remoteStreamingChatIds.filter(
-            (id) => id !== chatId
-        );
+        if (!this.remoteStreamingChatIds.has(chatId)) return;
+        this.remoteStreamingChatIds.delete(chatId);
         this.closeRemotePipeline(chatId);
         this.chatErrors = {
             ...this.chatErrors,
             [chatId]: formatStreamError(message, 'api'),
         };
-        let stored: StoredChat | null;
-        try {
-            stored = await loadChat(chatId);
-        } catch (err) {
-            console.error(LOG, 'applyRemoteTurnError: loadChat failed', err);
-            // Per-chat error already set; skip the app-wide one for this
-            // secondary refresh failure.
-            return;
-        }
-        if (stored) {
-            this.chats = this.chats.map((c) =>
-                c.id === chatId
-                    ? {
-                          ...c,
-                          messages: this.storedToMessages(stored!.messages),
-                      }
-                    : c
-            );
-        }
+        // Per-chat error already set; suppress the app-wide banner if this
+        // secondary refresh also fails.
+        await this.refreshChatFromIDB(chatId, {
+            context: 'applyRemoteTurnError: loadChat failed',
+            userMessage: null,
+        });
     }
 
     async refreshActiveFromIDB(): Promise<void> {
         if (!this.activeChatId) return;
-        let stored: StoredChat | null;
-        try {
-            stored = await loadChat(this.activeChatId);
-        } catch (err) {
-            console.error(LOG, 'refreshActiveFromIDB failed', err);
-            errorStore.setAppError(
-                `Couldn't refresh active chat: ${formatErr(err)}`
-            );
-            return;
-        }
-        if (!stored) return;
-        this.chats = this.chats.map((c) =>
-            c.id === this.activeChatId
-                ? {
-                      ...c,
-                      messages: this.storedToMessages(stored!.messages),
-                  }
-                : c
-        );
+        await this.refreshChatFromIDB(this.activeChatId, {
+            context: 'refreshActiveFromIDB failed',
+            userMessage: "Couldn't refresh active chat",
+        });
     }
 }
 

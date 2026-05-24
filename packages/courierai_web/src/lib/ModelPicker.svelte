@@ -113,16 +113,11 @@
         if (containerEl && !containerEl.contains(e.target as Node)) close();
     }
 
-    $effect(() => {
-        if (!open) return;
-        document.addEventListener('mousedown', onDocumentMousedown);
-        return () =>
-            document.removeEventListener('mousedown', onDocumentMousedown);
-    });
-
     const triggerClass =
         'w-full flex items-center justify-between gap-2 pl-2.5 pr-8 py-[9px] bg-canvas border border-border rounded-lg text-fg font-sans text-sm cursor-pointer text-left transition-[border-color] duration-150 hover:border-accent-3-fg focus:outline-none focus:border-accent-3-fg disabled:opacity-50 disabled:cursor-not-allowed';
 </script>
+
+<svelte:document onmousedown={onDocumentMousedown} />
 
 <div bind:this={containerEl} class="relative">
     <button

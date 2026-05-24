@@ -23,3 +23,16 @@ export function formatErr(err: unknown): string {
     if (err instanceof Error) return err.message;
     return String(err);
 }
+
+// One-stop reporter for non-stream failures: tagged console log + user-
+// facing banner. `context` is the operator-facing breadcrumb (component +
+// what failed); `userMessage` is the human-readable "Couldn't X" lead-in
+// that gets ": <err>" appended.
+export function reportAppError(
+    context: string,
+    userMessage: string,
+    err: unknown
+): void {
+    console.error(LOG, context, err);
+    errorStore.setAppError(`${userMessage}: ${formatErr(err)}`);
+}

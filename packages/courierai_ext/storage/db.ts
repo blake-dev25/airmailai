@@ -431,51 +431,40 @@ export async function dbLoadChat(chatId: string): Promise<StoredChat | null> {
     return { id: chatId, messages };
 }
 
-// Per-store byte estimates for the Settings → Storage panel. Chat history is
-// JSON-serialized length per row (not the on-disk structured-clone size, but
-// the standard practical estimate). Files use Blob.size — metadata, doesn't
-// read bytes off disk. One readonly tx so all three counts see a consistent
-// snapshot.
+// Per-store byte estimates for the Settings → Storage panel. Files use
+// Blob.size (metadata, no disk read). Chat history is derived from
+// `navigator.storage.estimate().usage` minus filesBytes — the estimate
+// covers the whole origin's persistent storage, which for the extension SW
+// is essentially just our IDB. Approximate (Chrome rounds for privacy on
+// some platforms); the UI prefixes it with "~".
 export async function dbGetStorageUsage(): Promise<IdbUsage> {
     const db = await getDb();
-    const tx = db.transaction(
-        [STORE_MESSAGES, STORE_META, STORE_FILES],
-        'readonly'
-    );
-    let chatHistoryBytes = 0;
     let filesBytes = 0;
-
-    const sumCursor = (
-        store: IDBObjectStore,
-        onRow: (row: unknown) => void
-    ): Promise<void> =>
-        new Promise((resolve, reject) => {
-            const req = store.openCursor();
-            req.onsuccess = () => {
-                const cursor = req.result;
-                if (!cursor) {
-                    resolve();
-                    return;
-                }
-                onRow(cursor.value);
-                cursor.continue();
-            };
-            req.onerror = () => reject(req.error);
-        });
-
-    await Promise.all([
-        sumCursor(tx.objectStore(STORE_MESSAGES), (row) => {
-            chatHistoryBytes += JSON.stringify(row).length;
-        }),
-        sumCursor(tx.objectStore(STORE_META), (row) => {
-            chatHistoryBytes += JSON.stringify(row).length;
-        }),
-        sumCursor(tx.objectStore(STORE_FILES), (row) => {
-            filesBytes += (row as FileRecord).blob.size;
-        }),
-    ]);
+    const tx = db.transaction(STORE_FILES, 'readonly');
+    const filesStore = tx.objectStore(STORE_FILES);
+    await new Promise<void>((resolve, reject) => {
+        const req = filesStore.openCursor();
+        req.onsuccess = () => {
+            const cursor = req.result;
+            if (!cursor) {
+                resolve();
+                return;
+            }
+            filesBytes += (cursor.value as FileRecord).blob.size;
+            cursor.continue();
+        };
+        req.onerror = () => reject(req.error);
+    });
     await txDone(tx);
-    console.log(LOG, 'db: storage usage', { chatHistoryBytes, filesBytes });
+
+    const estimate = await navigator.storage.estimate();
+    const total = estimate.usage ?? 0;
+    const chatHistoryBytes = Math.max(0, total - filesBytes);
+    console.log(LOG, 'db: storage usage', {
+        chatHistoryBytes,
+        filesBytes,
+        total,
+    });
     return { chatHistoryBytes, filesBytes };
 }
 

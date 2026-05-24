@@ -1,9 +1,7 @@
-import { readUIMessageStream } from 'ai';
 import type {
     BroadcastEvent,
     BroadcastRequest,
     ChatMeta,
-    CourierUIMessage,
     CourierUIMessageChunk,
     ExtensionStreamEvent,
     HydratedStoredMessage,
@@ -18,12 +16,14 @@ import type {
 } from '@courier/shared';
 
 export interface StreamHandlers {
-    // Fires every time the streamed UIMessage grows. The argument is the
-    // full reassembled message (placeholder id, role 'assistant', parts).
-    onMessage: (message: CourierUIMessage) => void;
+    // Fires for each chunk arriving from the ext. Caller is responsible for
+    // feeding the chunk into its UIMessageReducer — we keep the reducer
+    // out of this transport layer so it can be reused symmetrically by the
+    // cross-tab broadcast pipeline.
+    onChunk: (chunk: CourierUIMessageChunk) => void;
     // Terminal success — the ext has saved the row. No usage payload here
     // because tokens land via message-metadata chunks, surfaced through
-    // onMessage.
+    // onChunk.
     onDone: () => void;
     onError: (message: string, source: StreamErrorSource) => void;
 }
@@ -31,9 +31,11 @@ export interface StreamHandlers {
 export interface StreamHandle {
     // Hard cancel: disconnect immediately, no save.
     abort: () => void;
-    // Graceful stop: ext aborts the underlying stream and saves the partial
-    // UIMessage assembled by AI SDK's onFinish.
-    stop: () => void;
+    // Graceful stop: ext aborts the underlying stream, truncates the
+    // assembled assistant message's text parts to `truncateTo` chars (in
+    // render order), and saves that. `truncateTo` is the visible character
+    // count at click time so the saved row matches what the user saw.
+    stop: (truncateTo: number) => void;
 }
 
 // Stable per-tab identifier. Generated once per page load; broadcasted in
@@ -117,15 +119,9 @@ async function sendStorageMessage(
 
 export async function saveApiKey(
     provider: string,
-    apiKey: string,
-    syncApiKeys: boolean
+    apiKey: string
 ): Promise<void> {
-    await sendStorageMessage({
-        type: 'save_key',
-        provider,
-        apiKey,
-        syncApiKeys,
-    });
+    await sendStorageMessage({ type: 'save_key', provider, apiKey });
 }
 
 export async function clearApiKey(provider: string): Promise<void> {
@@ -234,10 +230,12 @@ export async function clearAllStorage(): Promise<void> {
     await sendStorageMessage({ type: 'clear_all' });
 }
 
-// Wraps a port-based turn stream. Chunks from the ext are fed into AI SDK's
-// `readUIMessageStream`, which rebuilds the full UIMessage as parts arrive
-// — we hand the rebuilt message to the caller via `onMessage` and let it
-// replace its placeholder in-place. No bespoke chunk accumulator needed.
+// Wraps a port-based turn stream. Chunks from the ext are forwarded one-by-
+// one to the caller via `onChunk`; the caller feeds them into its own
+// UIMessageReducer (see uiMessageReducer.ts) which mutates the assistant
+// placeholder's parts in place. Keeping the reducer out of the transport
+// layer lets the cross-tab broadcast pipeline reuse the same reducer
+// symmetrically.
 export function sendToExtension(
     request: Omit<TurnStartRequest, 'type'>,
     handlers: StreamHandlers
@@ -264,54 +262,14 @@ export function sendToExtension(
     let stopped = false;
     const port = chrome.runtime.connect(extensionId);
 
-    // Bridge port → ReadableStream → readUIMessageStream → onMessage. We
-    // close the stream on 'done' / 'error' so readUIMessageStream exits its
-    // for-await loop cleanly.
-    let chunkController: ReadableStreamDefaultController<CourierUIMessageChunk> | null =
-        null;
-    const chunkStream = new ReadableStream<CourierUIMessageChunk>({
-        start(controller) {
-            chunkController = controller;
-        },
-    });
-
-    // Seed with an empty placeholder so readUIMessageStream has a base to
-    // accumulate into. The id matches the assistant placeholder the web
-    // pre-rendered; metadata.createdAt is "now" until the ext sends its
-    // own message-metadata.
-    const placeholder: CourierUIMessage = {
-        id: request.assistantMessageId,
-        role: 'assistant',
-        parts: [],
-        metadata: { createdAt: Date.now() },
-    };
-
-    (async () => {
-        try {
-            for await (const msg of readUIMessageStream<CourierUIMessage>({
-                message: placeholder,
-                stream: chunkStream,
-                onError: (e) => {
-                    console.error(LOG, 'readUIMessageStream onError', e);
-                },
-            })) {
-                handlers.onMessage(msg);
-            }
-        } catch (e) {
-            console.error(LOG, 'UI stream loop threw', e);
-        }
-    })();
-
     port.onMessage.addListener((event: ExtensionStreamEvent) => {
         switch (event.type) {
             case 'chunk':
                 if (stopped) break;
-                chunkController?.enqueue(event.chunk);
+                handlers.onChunk(event.chunk);
                 break;
             case 'done': {
                 done = true;
-                chunkController?.close();
-                chunkController = null;
                 handlers.onDone();
                 port.disconnect();
                 break;
@@ -324,8 +282,6 @@ export function sendToExtension(
                     event.source,
                     event.message
                 );
-                chunkController?.close();
-                chunkController = null;
                 handlers.onError(event.message, event.source);
                 port.disconnect();
                 break;
@@ -335,8 +291,6 @@ export function sendToExtension(
     port.onDisconnect.addListener(() => {
         if (!done && !aborted) {
             done = true;
-            chunkController?.close();
-            chunkController = null;
             const msg =
                 chrome.runtime.lastError?.message ??
                 'Extension disconnected unexpectedly.';
@@ -351,15 +305,13 @@ export function sendToExtension(
         abort: () => {
             if (!done) {
                 aborted = true;
-                chunkController?.close();
-                chunkController = null;
                 port.disconnect();
             }
         },
-        stop: () => {
+        stop: (truncateTo: number) => {
             if (done || stopped) return;
             stopped = true;
-            port.postMessage({ type: 'stop' });
+            port.postMessage({ type: 'stop', truncateTo });
         },
     };
 }
@@ -411,6 +363,19 @@ export function subscribeToBroadcast(handlers: {
             return;
         }
         console.log(LOG, 'broadcast: connected');
+
+        // Tag this port's sourceTabId in the ext so it can skip us when
+        // fanning out turn-* events for turns we initiated. Sent before any
+        // other traffic so single-tab broadcasts become true no-ops.
+        try {
+            const msg: BroadcastRequest = {
+                type: 'register',
+                sourceTabId: tabId,
+            };
+            port.postMessage(msg);
+        } catch (err) {
+            console.warn(LOG, 'broadcast register failed', err);
+        }
 
         if (everConnected) handlers.onReconnect?.();
         everConnected = true;

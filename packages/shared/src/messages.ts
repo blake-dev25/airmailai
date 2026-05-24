@@ -73,9 +73,9 @@ export interface HydratedStoredMessage {
 // Sent over a port (chrome.runtime.connect) for streaming chat. The 'start'
 // message kicks off a turn; the extension owns the turn lifecycle from here
 // (lock, stream, append-assistant-message-on-completion). The web can send
-// 'stop' mid-stream to cleanly halt and save whatever the SDK assembled by
-// the abort point (no truncatedContent — `onFinish` gives us the authoritative
-// partial UIMessage).
+// 'stop' mid-stream with `truncateTo` = the visible character count at the
+// moment of click; the ext truncates the assembled assistant message to that
+// many text chars before saving so the saved row matches what the user saw.
 //
 // `history` is the pre-turn message state used ONLY for cross-tab broadcast
 // (so mirror tabs can render the chat instantly). The extension does NOT
@@ -106,6 +106,11 @@ export interface TurnStartRequest {
 
 export interface TurnStopRequest {
     type: 'stop';
+    // Visible text character count at the moment the user clicked stop. The
+    // ext truncates the assembled assistant message's text parts to this many
+    // chars (in render order) before saving, so what gets persisted matches
+    // what the user saw. Parts past the cut are dropped.
+    truncateTo: number;
 }
 
 // No-op heartbeat sent over the existing stream port while a provider is
@@ -152,16 +157,32 @@ export type BroadcastEvent =
       }
     | { type: 'turn-done'; chatId: string }
     | { type: 'turn-error'; chatId: string; message: string }
-    | { type: 'turn-aborted'; chatId: string };
+    | { type: 'turn-aborted'; chatId: string }
+    // Sent immediately after a stop, before turn-done. Mirror tabs snap their
+    // assistant placeholder's text parts to `charLen` so every tab shows the
+    // same final text — without this, mirror tabs would display all the
+    // chunks that arrived before stop and then visibly shrink on the IDB
+    // refresh that turn-done triggers.
+    | { type: 'turn-truncate'; chatId: string; charLen: number };
 
-// Sent from each connected tab over the broadcast port. Only used as a
-// global heartbeat: as long as any tab has the website open, the keepalive
-// resets the SW's 30s idle timer so it stays warm for cross-tab fan-out
-// and for the next turn without a cold-start round trip.
+// Sent from each connected tab over the broadcast port.
+//   - 'register' tags the port with the web's sourceTabId so the extension
+//     can skip the source tab when fanning out turn-* events. Single-tab
+//     case turns every broadcast into a noop. Sent once, immediately after
+//     the port opens.
+//   - 'keepalive' is a global heartbeat: as long as any tab has the website
+//     open, it resets the SW's 30s idle timer so the worker stays warm for
+//     cross-tab fan-out and the next turn.
+export interface BroadcastRegisterRequest {
+    type: 'register';
+    sourceTabId: string;
+}
 export interface BroadcastKeepaliveRequest {
     type: 'keepalive';
 }
-export type BroadcastRequest = BroadcastKeepaliveRequest;
+export type BroadcastRequest =
+    | BroadcastRegisterRequest
+    | BroadcastKeepaliveRequest;
 
 export interface UserSettings {
     theme: string;
@@ -180,7 +201,6 @@ export interface UserSettings {
     adaptiveThinking: boolean;
     webSearch: boolean;
     tagOpenRouterRequests: boolean;
-    syncApiKeys: boolean;
     // Content hash of the last accepted ToS/Privacy pair. Empty/missing = never agreed.
     legalAcceptedVersion: string;
 }
@@ -204,7 +224,6 @@ const SETTINGS_KEY_MAP: { [K in keyof UserSettings]: 0 } = {
     adaptiveThinking: 0,
     webSearch: 0,
     tagOpenRouterRequests: 0,
-    syncApiKeys: 0,
     legalAcceptedVersion: 0,
 };
 export const SETTINGS_KEYS = Object.keys(
@@ -254,12 +273,7 @@ export interface OpenRouterModel {
 // replaces the old blob-style save_chat — writes to disjoint rows don't race,
 // so renames/edits/stream-finalize can interleave safely without locks.
 export type StorageRequest =
-    | {
-          type: 'save_key';
-          provider: string;
-          apiKey: string;
-          syncApiKeys: boolean;
-      }
+    | { type: 'save_key'; provider: string; apiKey: string }
     | { type: 'clear_key'; provider: string }
     | { type: 'has_keys'; providers: string[] }
     | { type: 'save_settings'; settings: Partial<UserSettings> }
@@ -278,9 +292,7 @@ export type StorageRequest =
     | { type: 'clear_chats' }
     | { type: 'clear_all' };
 
-// Per-area byte counts shown in Settings → Storage. API keys are
-// double-counted into both Local and Sync when `syncApiKeys` is on — by
-// design, since they actually occupy space in both stores.
+// Per-area byte counts shown in Settings → Storage.
 export interface StorageUsage {
     localSettingsBytes: number;
     openRouterCacheBytes: number;

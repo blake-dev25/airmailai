@@ -3,7 +3,7 @@ import { detectBrowser } from './browser';
 import { startBroadcastBridge } from './broadcastBridge.svelte';
 import { chatStore } from './chatStore.svelte';
 import { filterProvidersByTier, type ModelTier } from './constants';
-import { errorStore, formatErr } from './errorStore.svelte';
+import { reportAppError } from './errorStore.svelte';
 import { waitForExtension } from './extension';
 import { providersStore } from './providersStore.svelte';
 import { settingsStore } from './settingsStore.svelte';
@@ -102,9 +102,10 @@ class AppLifecycle {
             // cache-only, so it never makes an unauthenticated OpenRouter
             // request.
             providersStore.hydrateOpenRouter().catch((err) => {
-                console.error(LOG, 'openrouter hydrate failed', err);
-                errorStore.setAppError(
-                    `Couldn't load OpenRouter models: ${formatErr(err)}`
+                reportAppError(
+                    'openrouter hydrate failed',
+                    "Couldn't load OpenRouter models",
+                    err
                 );
             });
 

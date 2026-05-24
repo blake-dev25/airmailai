@@ -73,11 +73,6 @@
         renameValue = '';
     }
 
-    function focusAndSelect(node: HTMLInputElement) {
-        node.focus();
-        node.select();
-    }
-
     // Airmail diagonal stripe decoration — reversed direction (\), with beige gaps
     const stripeH = 20;
     const stripeW = 40; // width of each colored stripe
@@ -305,7 +300,10 @@
                                 {#if renamingChatId === chat.id}
                                     <input
                                         class="flex-1 min-w-0 px-2.5 py-1.5 bg-canvas border border-accent-fg rounded-md outline-none font-sans text-sm text-fg"
-                                        use:focusAndSelect
+                                        {@attach (node: HTMLInputElement) => {
+                                            node.focus();
+                                            node.select();
+                                        }}
                                         bind:value={renameValue}
                                         onblur={commitRename}
                                         onclick={(e) => e.stopPropagation()}
@@ -338,7 +336,7 @@
                                         >
                                     </button>
                                 {/if}
-                                {#if chatStore.allStreamingChatIds.includes(chat.id) && chat.id !== chatStore.activeChatId}
+                                {#if chatStore.allStreamingChatIds.has(chat.id) && chat.id !== chatStore.activeChatId}
                                     <span
                                         class="shrink-0 flex items-center justify-center w-5 h-5 mr-0.5 text-xs font-bold text-fg-muted"
                                         aria-label="Streaming"

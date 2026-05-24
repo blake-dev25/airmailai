@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Last updated:** May 10, 2026
+**Last updated:** May 20, 2026
 
 ## The short version
 
@@ -81,7 +81,7 @@ not sent to any server operated by us:
 
 | Data | Storage location |
 |---|---|
-| API keys | `chrome.storage.local` for use by the extension; optional backup copy in `chrome.storage.sync` if you enable API-key sync |
+| API keys | `chrome.storage.local` for use by the extension |
 | Chat history, attachments, system prompts, and token counts | IndexedDB (local to each browser profile) |
 | Theme, model, and UI preferences | `chrome.storage.sync` |
 | Theme preference (paint-time cache, so the correct background renders before the extension finishes loading) | Website `localStorage` (key: `courierai-theme`) — kept in sync with, and overwritten by, the canonical value from `chrome.storage.sync` |

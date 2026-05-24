@@ -1,7 +1,7 @@
 <script lang="ts">
     import type { StorageUsage } from '@courier/shared';
     import { PROVIDERS, THEMES } from './constants';
-    import { errorStore, formatErr } from './errorStore.svelte';
+    import { reportAppError } from './errorStore.svelte';
     import {
         checkApiKeys,
         clearAllChats,
@@ -14,8 +14,6 @@
     import Icon from './Icon.svelte';
     import { providersStore } from './providersStore.svelte';
     import { settingsStore } from './settingsStore.svelte';
-
-    const LOG = '[courier:web]';
 
     let { onclose }: { onclose: () => void } = $props();
 
@@ -33,19 +31,20 @@
             await waitForExtension();
             storageUsage = await getStorageUsage();
         } catch (err) {
-            console.error(LOG, 'getStorageUsage failed', err);
-            errorStore.setAppError(
-                `Couldn't read storage usage: ${formatErr(err)}`
+            reportAppError(
+                'getStorageUsage failed',
+                "Couldn't read storage usage",
+                err
             );
         } finally {
             storageLoading = false;
         }
     }
 
-    $effect(() => {
-        if (activeTab === 'storage' && storageUsage === null && !storageLoading)
-            refreshStorageUsage();
-    });
+    function openStorageTab() {
+        activeTab = 'storage';
+        if (storageUsage === null && !storageLoading) refreshStorageUsage();
+    }
 
     function formatBytes(bytes: number): string {
         if (bytes < 1024) return `${bytes} B`;
@@ -62,9 +61,10 @@
             await clearAllChats();
             await refreshStorageUsage();
         } catch (err) {
-            console.error(LOG, 'clearAllChats failed', err);
-            errorStore.setAppError(
-                `Couldn't delete chat history: ${formatErr(err)}`
+            reportAppError(
+                'clearAllChats failed',
+                "Couldn't delete chat history",
+                err
             );
         } finally {
             storageBusy = false;
@@ -83,9 +83,10 @@
             await clearAllStorage();
             await refreshStorageUsage();
         } catch (err) {
-            console.error(LOG, 'clearAllStorage failed', err);
-            errorStore.setAppError(
-                `Couldn't delete storage: ${formatErr(err)}`
+            reportAppError(
+                'clearAllStorage failed',
+                "Couldn't delete storage",
+                err
             );
         } finally {
             storageBusy = false;
@@ -102,7 +103,13 @@
             : 0
     );
 
-    let storageRows = $derived([
+    // Chat History (and therefore the Total) is derived from
+    // navigator.storage.estimate() in the extension — origin-level estimate,
+    // approximate. The other rows are exact byte counts from chrome.storage
+    // and Blob.size.
+    let storageRows = $derived<
+        { label: string; bytes: number; approximate?: boolean }[]
+    >([
         {
             label: 'Local Settings',
             bytes: storageUsage?.localSettingsBytes ?? 0,
@@ -118,6 +125,7 @@
         {
             label: 'Chat History',
             bytes: storageUsage?.chatHistoryBytes ?? 0,
+            approximate: true,
         },
         {
             label: 'Files',
@@ -153,9 +161,10 @@
         try {
             savedKeys = await checkApiKeys(PROVIDERS.map((p) => p.id));
         } catch (err) {
-            console.error(LOG, 'checkApiKeys failed', err);
-            errorStore.setAppError(
-                `Couldn't read saved API keys: ${formatErr(err)}`
+            reportAppError(
+                'checkApiKeys failed',
+                "Couldn't read saved API keys",
+                err
             );
         }
     }
@@ -168,11 +177,12 @@
         const key = keyInputs[providerId].trim();
         if (!key) return;
         try {
-            await saveApiKey(providerId, key, settingsStore.syncApiKeys);
+            await saveApiKey(providerId, key);
         } catch (err) {
-            console.error(LOG, 'saveApiKey failed', providerId, err);
-            errorStore.setAppError(
-                `Couldn't save API key for ${providerId}: ${formatErr(err)}`
+            reportAppError(
+                `saveApiKey failed (providerId=${providerId})`,
+                `Couldn't save API key for ${providerId}`,
+                err
             );
             return;
         }
@@ -185,9 +195,10 @@
         try {
             await clearApiKey(providerId);
         } catch (err) {
-            console.error(LOG, 'clearApiKey failed', providerId, err);
-            errorStore.setAppError(
-                `Couldn't clear API key for ${providerId}: ${formatErr(err)}`
+            reportAppError(
+                `clearApiKey failed (providerId=${providerId})`,
+                `Couldn't clear API key for ${providerId}`,
+                err
             );
             return;
         }
@@ -246,7 +257,7 @@
         <button
             type="button"
             class={[tabBase, activeTab === 'storage' && tabActive]}
-            onclick={() => (activeTab = 'storage')}
+            onclick={openStorageTab}
         >
             Storage
         </button>
@@ -449,8 +460,7 @@
                 <button
                     id="autoscroll"
                     type="button"
-                    class={switchClass}
-                    class:on={settingsStore.autoscroll}
+                    class={[switchClass, settingsStore.autoscroll && 'on']}
                     role="switch"
                     aria-checked={settingsStore.autoscroll}
                     aria-label="Autoscroll"
@@ -468,8 +478,7 @@
                 <button
                     id="show-previous"
                     type="button"
-                    class={switchClass}
-                    class:on={showPrevious}
+                    class={[switchClass, showPrevious && 'on']}
                     role="switch"
                     aria-checked={showPrevious}
                     aria-label="Show Previous Generation Models"
@@ -498,7 +507,9 @@
                         <span
                             class="text-sm tabular-nums text-fg-muted font-mono"
                         >
-                            {storageUsage ? formatBytes(row.bytes) : '—'}
+                            {storageUsage
+                                ? `${row.approximate ? '~' : ''}${formatBytes(row.bytes)}`
+                                : '—'}
                         </span>
                     </div>
                 {/each}
@@ -507,7 +518,7 @@
                     <span
                         class="text-sm tabular-nums text-fg font-mono font-medium"
                     >
-                        {storageUsage ? formatBytes(storageTotal) : '—'}
+                        {storageUsage ? `~${formatBytes(storageTotal)}` : '—'}
                     </span>
                 </div>
             </div>
@@ -539,34 +550,13 @@
             aria-hidden={activeTab !== 'advanced'}
         >
             <div class={[rowBase, themeRow]}>
-                <label for="sync-api-keys" class={labelClass}
-                    >Sync API Keys Through Browser Account</label
-                >
-                <button
-                    id="sync-api-keys"
-                    type="button"
-                    class={switchClass}
-                    class:on={settingsStore.syncApiKeys}
-                    role="switch"
-                    aria-checked={settingsStore.syncApiKeys}
-                    aria-label="Sync API Keys Through Browser Account"
-                    onclick={() => {
-                        settingsStore.syncApiKeys = !settingsStore.syncApiKeys;
-                        setTimeout(refreshSavedKeys, 500);
-                    }}
-                >
-                    <span class="ios-switch-thumb"></span>
-                </button>
-            </div>
-            <div class={[rowBase, themeRow]}>
                 <label for="enable-web-search" class={labelClass}
                     >Enable Web Search</label
                 >
                 <button
                     id="enable-web-search"
                     type="button"
-                    class={switchClass}
-                    class:on={settingsStore.enableWebSearch}
+                    class={[switchClass, settingsStore.enableWebSearch && 'on']}
                     role="switch"
                     aria-checked={settingsStore.enableWebSearch}
                     aria-label="Enable Web Search"
@@ -619,8 +609,7 @@
                 <button
                     id="show-legacy"
                     type="button"
-                    class={switchClass}
-                    class:on={showLegacy}
+                    class={[switchClass, showLegacy && 'on']}
                     role="switch"
                     aria-checked={showLegacy}
                     aria-label="Show Legacy Models"
@@ -644,8 +633,10 @@
                 <button
                     id="tag-openrouter"
                     type="button"
-                    class={switchClass}
-                    class:on={settingsStore.tagOpenRouterRequests}
+                    class={[
+                        switchClass,
+                        settingsStore.tagOpenRouterRequests && 'on',
+                    ]}
                     role="switch"
                     aria-checked={settingsStore.tagOpenRouterRequests}
                     aria-label="Tag OpenRouter requests with CourierAI for app tracking"

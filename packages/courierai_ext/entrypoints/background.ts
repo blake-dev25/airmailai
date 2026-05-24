@@ -41,19 +41,22 @@ import {
 
 const LOG = '[courier:ext]';
 const API_KEY_PREFIX = 'apiKey_';
-const SYNC_API_KEYS_KEY: keyof UserSettings = 'syncApiKeys';
-let keyStorageInit: Promise<void> | null = null;
 
 // Per-chat lock. While a chatId is in this map, another tab attempting to
 // stream the same chat is rejected so writes can't race.
 const inflightTurns = new Map<string, AbortController>();
 
-// Long-lived broadcast ports — one per connected tab. The extension fans out
-// turn lifecycle events to every port so tabs can mirror cross-tab streams.
-const broadcastPorts = new Set<chrome.runtime.Port>();
+// Long-lived broadcast ports — one per connected tab. Mapped to the web's
+// sourceTabId (set via the 'register' message immediately after connect) so
+// `broadcast()` can skip the source tab when fanning turn-* events. In the
+// single-tab case there's exactly one port and it matches the turn's source,
+// turning every broadcast into a no-op (zero structured clones on the
+// streaming hot path).
+const broadcastPorts = new Map<chrome.runtime.Port, string | undefined>();
 
-function broadcast(event: BroadcastEvent) {
-    for (const port of broadcastPorts) {
+function broadcast(event: BroadcastEvent, skipTabId?: string) {
+    for (const [port, tabId] of broadcastPorts) {
+        if (skipTabId && tabId === skipTabId) continue;
         try {
             port.postMessage(event);
         } catch {
@@ -69,91 +72,9 @@ function apiKeyName(provider: string): string {
     return `${API_KEY_PREFIX}${provider}`;
 }
 
-async function getApiKeyEntries(
-    area: chrome.storage.StorageArea
-): Promise<Record<string, string>> {
-    const all = await area.get(null);
-    return Object.fromEntries(
-        Object.entries(all).filter(
-            (entry): entry is [string, string] =>
-                entry[0].startsWith(API_KEY_PREFIX) &&
-                typeof entry[1] === 'string' &&
-                entry[1].length > 0
-        )
-    );
-}
-
-async function getSyncApiKeys(): Promise<boolean> {
-    const result = await chrome.storage.sync.get(SYNC_API_KEYS_KEY);
-    if (typeof result[SYNC_API_KEYS_KEY] === 'boolean') {
-        return result[SYNC_API_KEYS_KEY];
-    }
-    await chrome.storage.sync.set({ [SYNC_API_KEYS_KEY]: false });
-    return false;
-}
-
-async function reconcileApiKeys(syncApiKeys: boolean): Promise<void> {
-    const [localKeys, syncedKeys] = await Promise.all([
-        getApiKeyEntries(chrome.storage.local),
-        getApiKeyEntries(chrome.storage.sync),
-    ]);
-    const mergedKeys = { ...localKeys, ...syncedKeys };
-    const syncedNames = Object.keys(syncedKeys);
-    const mergedNames = Object.keys(mergedKeys);
-
-    // Synced keys hydrate local storage and win conflicts, but API calls never
-    // read from sync directly.
-    if (syncedNames.length > 0) {
-        await chrome.storage.local.set(mergedKeys);
-    }
-
-    if (syncApiKeys) {
-        if (mergedNames.length > 0) await chrome.storage.sync.set(mergedKeys);
-    } else if (syncedNames.length > 0) {
-        await chrome.storage.sync.remove(syncedNames);
-    }
-}
-
-async function applyApiKeySyncPreference(syncApiKeys: boolean): Promise<void> {
-    await chrome.storage.sync.set({ [SYNC_API_KEYS_KEY]: syncApiKeys });
-    if (syncApiKeys) {
-        const localKeys = await getApiKeyEntries(chrome.storage.local);
-        if (Object.keys(localKeys).length > 0) {
-            await chrome.storage.sync.set(localKeys);
-        }
-        return;
-    }
-
-    const syncedKeys = await getApiKeyEntries(chrome.storage.sync);
-    const syncedNames = Object.keys(syncedKeys);
-    if (syncedNames.length > 0) await chrome.storage.sync.remove(syncedNames);
-}
-
-function initializeKeyStorage(): Promise<void> {
-    keyStorageInit ??= getSyncApiKeys().then(reconcileApiKeys);
-    return keyStorageInit;
-}
-
 async function readApiKey(provider: string): Promise<string | undefined> {
-    await initializeKeyStorage();
     const result = await chrome.storage.local.get(apiKeyName(provider));
     return result[apiKeyName(provider)] as string | undefined;
-}
-
-// Serializes chrome.storage writes that touch the api-key keyspace (save_key,
-// clear_key, save_settings — the latter can flip the sync-preference, which
-// mutates the same keys). Per-message IDB writes don't need this — IDB
-// serializes transactions on its own — but chrome.storage has no such
-// guarantee and `applyApiKeySyncPreference` is read-modify-write on
-// chrome.storage.sync.
-let keyOpsChain: Promise<void> = Promise.resolve();
-function enqueueKeyOp<T>(work: () => Promise<T>): Promise<T> {
-    const run = keyOpsChain.then(work, work);
-    keyOpsChain = run.then(
-        () => {},
-        () => {}
-    );
-    return run;
 }
 
 async function handleStorage(
@@ -162,38 +83,20 @@ async function handleStorage(
     console.log(LOG, '← storage request', message.type);
     switch (message.type) {
         case 'save_key': {
-            return enqueueKeyOp(async () => {
-                console.log(
-                    LOG,
-                    'storage: saving API key for',
-                    message.provider
-                );
-                await initializeKeyStorage();
-                const key = apiKeyName(message.provider);
-                await chrome.storage.local.set({ [key]: message.apiKey });
-                await applyApiKeySyncPreference(message.syncApiKeys);
-                console.log(LOG, '→ storage response: saved');
-                return { type: 'saved' };
-            });
+            console.log(LOG, 'storage: saving API key for', message.provider);
+            const key = apiKeyName(message.provider);
+            await chrome.storage.local.set({ [key]: message.apiKey });
+            console.log(LOG, '→ storage response: saved');
+            return { type: 'saved' };
         }
         case 'clear_key': {
-            return enqueueKeyOp(async () => {
-                console.log(
-                    LOG,
-                    'storage: clearing API key for',
-                    message.provider
-                );
-                const key = apiKeyName(message.provider);
-                await Promise.all([
-                    chrome.storage.local.remove(key),
-                    chrome.storage.sync.remove(key),
-                ]);
-                console.log(LOG, '→ storage response: saved');
-                return { type: 'saved' };
-            });
+            console.log(LOG, 'storage: clearing API key for', message.provider);
+            const key = apiKeyName(message.provider);
+            await chrome.storage.local.remove(key);
+            console.log(LOG, '→ storage response: saved');
+            return { type: 'saved' };
         }
         case 'has_keys': {
-            await initializeKeyStorage();
             const storageKeys = message.providers.map(apiKeyName);
             const result = await chrome.storage.local.get(storageKeys);
             const saved: Record<string, boolean> = {};
@@ -205,29 +108,18 @@ async function handleStorage(
             return { type: 'has_keys', saved };
         }
         case 'save_settings': {
-            return enqueueKeyOp(async () => {
-                await initializeKeyStorage();
-                const currentSyncApiKeys = await getSyncApiKeys();
-                const filtered = Object.fromEntries(
-                    SETTINGS_KEYS.filter((k) => k in message.settings).map(
-                        (k) => [k, message.settings[k]]
-                    )
-                );
-                const nextSyncApiKeys = filtered[SYNC_API_KEYS_KEY];
-                if (
-                    typeof nextSyncApiKeys === 'boolean' &&
-                    nextSyncApiKeys !== currentSyncApiKeys
-                ) {
-                    await applyApiKeySyncPreference(nextSyncApiKeys);
-                }
-                console.log(LOG, 'storage: saving settings', filtered);
-                await chrome.storage.sync.set(filtered);
-                console.log(LOG, '→ storage response: saved');
-                return { type: 'saved' };
-            });
+            const filtered = Object.fromEntries(
+                SETTINGS_KEYS.filter((k) => k in message.settings).map((k) => [
+                    k,
+                    message.settings[k],
+                ])
+            );
+            console.log(LOG, 'storage: saving settings', filtered);
+            await chrome.storage.sync.set(filtered);
+            console.log(LOG, '→ storage response: saved');
+            return { type: 'saved' };
         }
         case 'load_settings': {
-            await initializeKeyStorage();
             const result = await chrome.storage.sync.get(SETTINGS_KEYS);
             console.log(LOG, '→ storage response: settings', result);
             return {
@@ -309,8 +201,6 @@ async function handleStorage(
             return { type: 'openrouter_models', models };
         }
         case 'get_storage_usage': {
-            // API keys can sit in both local and sync (when syncApiKeys is on);
-            // we deliberately count both — the bytes really are stored twice.
             const [
                 idbUsage,
                 localTotalBytes,
@@ -445,6 +335,32 @@ type AttachmentDataPart = {
     data: unknown;
 };
 
+// Trim text parts (in render order) to `maxChars` total, dropping parts past
+// the cut. Mirror of `truncateMessageTextParts` on the web side; kept local
+// to the ext so the two packages don't share runtime code.
+function truncateAssistantParts(msg: CourierUIMessage, maxChars: number): void {
+    let textConsumed = 0;
+    let i = 0;
+    while (i < msg.parts.length) {
+        const part = msg.parts[i];
+        if (part.type === 'text') {
+            const remaining = maxChars - textConsumed;
+            if (remaining <= 0) {
+                msg.parts.splice(i);
+                return;
+            }
+            if (part.text.length > remaining) {
+                part.text = part.text.slice(0, remaining);
+                part.state = 'done';
+                msg.parts.splice(i + 1);
+                return;
+            }
+            textConsumed += part.text.length;
+        }
+        i++;
+    }
+}
+
 function makeConvertDataPart(
     provider: string,
     blobBytes: Map<string, Uint8Array>
@@ -481,13 +397,6 @@ function makeConvertDataPart(
 
 export default defineBackground(() => {
     console.log(LOG, 'background ready');
-    // Key storage init runs once at SW boot. If it fails (corrupt sync data,
-    // quota error) we keep going — readApiKey/applyApiKeySyncPreference will
-    // retry through the same promise on demand and surface the error to the
-    // caller (which the web turns into a visible toast).
-    initializeKeyStorage().catch((err) =>
-        console.error(LOG, 'key storage init failed', err)
-    );
 
     // Internal messages from the popup. The popup shows a generic
     // "Something went wrong" — we forward the actual reason so it can do better.
@@ -558,8 +467,12 @@ export default defineBackground(() => {
         // so we stay warm whenever the website is open.
         if (port.name === 'broadcast') {
             console.log(LOG, 'broadcast port connected');
-            broadcastPorts.add(port);
+            broadcastPorts.set(port, undefined);
             port.onMessage.addListener((msg: BroadcastRequest) => {
+                if (msg.type === 'register') {
+                    broadcastPorts.set(port, msg.sourceTabId);
+                    return;
+                }
                 if (msg.type === 'keepalive') return;
             });
             port.onDisconnect.addListener(() => {
@@ -593,9 +506,14 @@ export default defineBackground(() => {
             | 'errored';
         let disposition: Disposition = 'pending';
         let lockedChatId: string | null = null;
+        let lockedSourceTabId: string | null = null;
         let assistantMessageId: string | null = null;
         let inStreamErrorText: string | null = null;
         let portOpen = true;
+        // Set by the 'stop' message: visible char count from the source tab.
+        // Applied to assembledAssistant before save so the persisted row
+        // matches what the user saw on screen at click time.
+        let truncateTo: number | null = null;
 
         const send = (event: ExtensionStreamEvent) => {
             if (portOpen) port.postMessage(event);
@@ -618,8 +536,28 @@ export default defineBackground(() => {
 
             if (msg.type === 'stop') {
                 if (disposition !== 'streaming') return;
-                console.log(LOG, 'stop received');
+                console.log(
+                    LOG,
+                    'stop received',
+                    'truncateTo:',
+                    msg.truncateTo
+                );
                 disposition = 'stopped';
+                truncateTo = msg.truncateTo;
+                // Mirror tabs need to snap their assistant placeholder before
+                // turn-done triggers their IDB refresh, or they'd flash the
+                // full received chunks then shrink. Source tab's broadcast
+                // port is tagged with its sourceTabId so it's skipped here.
+                if (lockedChatId) {
+                    broadcast(
+                        {
+                            type: 'turn-truncate',
+                            chatId: lockedChatId,
+                            charLen: msg.truncateTo,
+                        },
+                        lockedSourceTabId ?? undefined
+                    );
+                }
                 controller.abort();
                 return;
             }
@@ -639,19 +577,24 @@ export default defineBackground(() => {
             }
             inflightTurns.set(msg.chatId, controller);
             lockedChatId = msg.chatId;
+            lockedSourceTabId = msg.sourceTabId;
             assistantMessageId = msg.assistantMessageId;
             disposition = 'streaming';
 
             // Announce the turn to every other tab so they can mirror state.
-            // The originating tab filters this out by sourceTabId.
-            broadcast({
-                type: 'turn-start',
-                chatId: msg.chatId,
-                sourceTabId: msg.sourceTabId,
-                meta: msg.meta,
-                history: msg.history,
-                assistantMessageId: msg.assistantMessageId,
-            });
+            // Source tab is skipped server-side (its broadcast port is tagged
+            // with the same sourceTabId).
+            broadcast(
+                {
+                    type: 'turn-start',
+                    chatId: msg.chatId,
+                    sourceTabId: msg.sourceTabId,
+                    meta: msg.meta,
+                    history: msg.history,
+                    assistantMessageId: msg.assistantMessageId,
+                },
+                msg.sourceTabId
+            );
 
             let assembledAssistant: CourierUIMessage | undefined;
             try {
@@ -793,11 +736,14 @@ export default defineBackground(() => {
                     }
                     if (disposition === 'streaming') {
                         send({ type: 'chunk', chunk });
-                        broadcast({
-                            type: 'turn-chunk',
-                            chatId: msg.chatId,
-                            chunk,
-                        });
+                        broadcast(
+                            {
+                                type: 'turn-chunk',
+                                chatId: msg.chatId,
+                                chunk,
+                            },
+                            msg.sourceTabId
+                        );
                     }
                 }
 
@@ -832,7 +778,9 @@ export default defineBackground(() => {
                 // reasoning parts left in state: 'streaming', incomplete
                 // tool parts present). On replay, ignoreIncompleteToolCalls
                 // strips half-formed tool calls so the model sees a clean
-                // history.
+                // history. On graceful stop, truncateTo is non-null and we
+                // trim text parts to the source tab's visible char count so
+                // the persisted row matches what the user saw on screen.
                 if (
                     disp !== 'aborted' &&
                     lockedChatId &&
@@ -840,6 +788,9 @@ export default defineBackground(() => {
                     assembledAssistant &&
                     assembledAssistant.parts.length > 0
                 ) {
+                    if (truncateTo !== null) {
+                        truncateAssistantParts(assembledAssistant, truncateTo);
+                    }
                     const uiMessage: CourierUIMessage = {
                         ...assembledAssistant,
                         id: assistantMessageId,
@@ -878,24 +829,34 @@ export default defineBackground(() => {
 
                 // Fan out the terminal lifecycle event. 'aborted' means the
                 // source tab bailed without saving — other tabs should roll
-                // back to IDB's pre-turn state.
+                // back to IDB's pre-turn state. Source tab is skipped — it
+                // already knows the disposition via the turn port.
                 if (lockedChatId) {
                     if (disp === 'errored' && inStreamErrorText) {
-                        broadcast({
-                            type: 'turn-error',
-                            chatId: lockedChatId,
-                            message: inStreamErrorText,
-                        });
+                        broadcast(
+                            {
+                                type: 'turn-error',
+                                chatId: lockedChatId,
+                                message: inStreamErrorText,
+                            },
+                            msg.sourceTabId
+                        );
                     } else if (disp === 'aborted') {
-                        broadcast({
-                            type: 'turn-aborted',
-                            chatId: lockedChatId,
-                        });
+                        broadcast(
+                            {
+                                type: 'turn-aborted',
+                                chatId: lockedChatId,
+                            },
+                            msg.sourceTabId
+                        );
                     } else {
-                        broadcast({
-                            type: 'turn-done',
-                            chatId: lockedChatId,
-                        });
+                        broadcast(
+                            {
+                                type: 'turn-done',
+                                chatId: lockedChatId,
+                            },
+                            msg.sourceTabId
+                        );
                     }
                 }
 
