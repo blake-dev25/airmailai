@@ -57,7 +57,7 @@
                   )
                 : g.models;
             if (matches.length === 0) continue;
-            // Hide group headers when there's a single group — the trigger
+            // Hide group headers when there's a single group - the trigger
             // already implies the source. Keep them for multi-group views.
             if (groups.length > 1) out.push({ kind: 'header', label: g.label });
             for (const m of matches) {

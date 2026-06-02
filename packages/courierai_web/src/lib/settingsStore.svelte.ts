@@ -1,4 +1,4 @@
-import { SETTINGS_KEYS, type UserSettings } from '@courier/shared';
+import { SETTINGS_KEYS, type UserSettings } from '@courierai/shared';
 import { untrack } from 'svelte';
 import { FONT_SIZES, type ModelTier, PROVIDERS } from './constants';
 import { reportAppError } from './errorStore.svelte';
@@ -7,7 +7,7 @@ import {
     saveSettings as saveToExtRaw,
 } from './extension';
 
-const LOG = '[courier:web]';
+const LOG = '[courierai:web]';
 
 function saveToExt(snapshot: Partial<UserSettings>): void {
     saveToExtRaw(snapshot).catch((err) => {
@@ -17,9 +17,9 @@ function saveToExt(snapshot: Partial<UserSettings>): void {
 
 function getDefaultFontSizeIndex(): number {
     const w = window.screen.width;
-    if (w <= 1366) return 1; // 16px — small laptop
-    if (w <= 1920) return 2; // 18px — standard
-    return 2; // 18px — large/4K
+    if (w <= 1366) return 1; // 16px - small laptop
+    if (w <= 1920) return 2; // 18px - standard
+    return 2; // 18px - large/4K
 }
 
 const defaultModel = PROVIDERS[0].models[1]; // Sonnet as default
@@ -36,12 +36,18 @@ class SettingsStore {
 
     // Behavior
     modelTier = $state<ModelTier>('latest');
-    autoscroll = $state(false);
+    autoscrollMode = $state<'pin-user-message' | 'pin-bottom' | 'off'>(
+        'pin-user-message'
+    );
+    // Master per-tool toggles (Advanced settings). Each gates whether the
+    // matching per-chat toggle is rendered in ModelConfig.
     enableWebSearch = $state(false);
+    enableWebFetch = $state(false);
+    enableCodeExecution = $state(false);
     tagOpenRouterRequests = $state(false);
     legalAcceptedVersion = $state('');
 
-    // Active chat config — these mirror the current chat's settings and act
+    // Active chat config - these mirror the current chat's settings and act
     // as defaults for new chats. They're persisted (mostly) as user settings
     // so a fresh session opens with the same picks.
     providerId = $state(PROVIDERS[0].id);
@@ -55,6 +61,8 @@ class SettingsStore {
         defaultModel.params.thinking?.adaptive !== undefined
     );
     webSearch = $state(false);
+    webFetch = $state(false);
+    codeExecution = $state(false);
     systemPrompt = $state('');
 
     settingsLoaded = $state(false);
@@ -79,12 +87,16 @@ class SettingsStore {
                     smoothTextMode: this.smoothTextMode,
                     submitKeystroke: this.submitKeystroke,
                     modelTier: this.modelTier,
-                    autoscroll: this.autoscroll,
+                    autoscrollMode: this.autoscrollMode,
                     enableWebSearch: this.enableWebSearch,
+                    enableWebFetch: this.enableWebFetch,
+                    enableCodeExecution: this.enableCodeExecution,
                     providerId: this.providerId,
                     modelId: this.modelId,
                     adaptiveThinking: this.adaptiveThinking,
                     webSearch: this.webSearch,
+                    webFetch: this.webFetch,
+                    codeExecution: this.codeExecution,
                     tagOpenRouterRequests: this.tagOpenRouterRequests,
                 };
                 if (!this.shouldSave()) return;
@@ -138,7 +150,7 @@ class SettingsStore {
         }
         console.log(LOG, 'settings loaded', settings);
 
-        // Mapped type forces every UserSettings field to have a setter — adding
+        // Mapped type forces every UserSettings field to have a setter - adding
         // a field to UserSettings without listing it here is a TS error.
         const setSetting: {
             [K in keyof UserSettings]: (v: UserSettings[K]) => void;
@@ -161,11 +173,17 @@ class SettingsStore {
             modelTier: (v) => {
                 this.modelTier = v;
             },
-            autoscroll: (v) => {
-                this.autoscroll = v;
+            autoscrollMode: (v) => {
+                this.autoscrollMode = v;
             },
             enableWebSearch: (v) => {
                 this.enableWebSearch = v;
+            },
+            enableWebFetch: (v) => {
+                this.enableWebFetch = v;
+            },
+            enableCodeExecution: (v) => {
+                this.enableCodeExecution = v;
             },
             providerId: (v) => {
                 this.providerId = v;
@@ -187,6 +205,12 @@ class SettingsStore {
             },
             webSearch: (v) => {
                 this.webSearch = v;
+            },
+            webFetch: (v) => {
+                this.webFetch = v;
+            },
+            codeExecution: (v) => {
+                this.codeExecution = v;
             },
             tagOpenRouterRequests: (v) => {
                 this.tagOpenRouterRequests = v;
@@ -211,6 +235,8 @@ class SettingsStore {
         thinkingLevel: string;
         adaptiveThinking?: boolean;
         webSearch?: boolean;
+        webFetch?: boolean;
+        codeExecution?: boolean;
         systemPrompt: string;
     }): void {
         this.providerId = meta.providerId;
@@ -220,11 +246,13 @@ class SettingsStore {
         this.thinkingLevel = meta.thinkingLevel;
         this.adaptiveThinking = meta.adaptiveThinking ?? true;
         this.webSearch = meta.webSearch ?? false;
+        this.webFetch = meta.webFetch ?? false;
+        this.codeExecution = meta.codeExecution ?? false;
         this.systemPrompt = meta.systemPrompt;
     }
 
     // Snapshot current settings as a per-chat config object. Mirror of
-    // `applyChatConfig` — adding a field to one means adding to the other.
+    // `applyChatConfig` - adding a field to one means adding to the other.
     // The snapshot↔apply round-trip is what restores config when switching
     // between chats.
     snapshotChatConfig(): {
@@ -236,6 +264,8 @@ class SettingsStore {
         thinkingLevel: string;
         adaptiveThinking: boolean;
         webSearch: boolean;
+        webFetch: boolean;
+        codeExecution: boolean;
     } {
         return {
             systemPrompt: this.systemPrompt,
@@ -246,6 +276,8 @@ class SettingsStore {
             thinkingLevel: this.thinkingLevel,
             adaptiveThinking: this.adaptiveThinking,
             webSearch: this.webSearch,
+            webFetch: this.webFetch,
+            codeExecution: this.codeExecution,
         };
     }
 

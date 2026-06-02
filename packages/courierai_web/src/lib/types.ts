@@ -1,12 +1,11 @@
-import type { Attachment, CourierUIMessage } from '@courier/shared';
+import type { Attachment, CourierAIMessage } from '@courierai/shared';
 
-// Re-exported here for ergonomic imports across the lib.
-export type Message = CourierUIMessage;
+export type Message = CourierAIMessage;
 
 export interface Chat {
     id: string;
     title: string;
-    messages: CourierUIMessage[];
+    messages: CourierAIMessage[];
     createdAt: number;
     systemPrompt: string;
     providerId: string;
@@ -16,6 +15,8 @@ export interface Chat {
     thinkingLevel: string;
     adaptiveThinking: boolean;
     webSearch: boolean;
+    webFetch: boolean;
+    codeExecution: boolean;
     // Fresh upload bytes that haven't yet been persisted by the ext, keyed by
     // hash. Populated on send and consumed by put_message to ship bytes into
     // the ext's files store inline with the user-message put. Cleared on
@@ -38,10 +39,10 @@ export interface SearchResult {
     matchIndex: number | null;
 }
 
-// Concatenated text across every TextUIPart in render order. Used by
+// Concatenated text across every text part in render order. Used by
 // search/snippet/copy and as the smoothText input for the streaming
 // assistant turn.
-export function messageText(msg: CourierUIMessage): string {
+export function messageText(msg: CourierAIMessage): string {
     return msg.parts
         .filter(
             (p): p is Extract<typeof p, { type: 'text' }> => p.type === 'text'
@@ -50,9 +51,9 @@ export function messageText(msg: CourierUIMessage): string {
         .join('');
 }
 
-// Concatenated reasoning text across every ReasoningUIPart. Drives the
+// Concatenated reasoning text across every reasoning part. Drives the
 // expandable "Thinking" section.
-export function messageThinking(msg: CourierUIMessage): string {
+export function messageThinking(msg: CourierAIMessage): string {
     return msg.parts
         .filter(
             (p): p is Extract<typeof p, { type: 'reasoning' }> =>
@@ -62,6 +63,37 @@ export function messageThinking(msg: CourierUIMessage): string {
         .join('');
 }
 
+// Code-execution tool calls (command + captured stdout/stderr) in render
+// order. Drives the expandable "Code" section. Web-tool wrappers are dropped
+// upstream in the provider, so these are genuine code runs.
+export interface CodeExecutionView {
+    id: string;
+    code?: string;
+    stdout?: string;
+    stderr?: string;
+    state: 'running' | 'done' | 'error';
+    errorText?: string;
+}
+
+export function messageCodeExecutions(
+    msg: CourierAIMessage
+): CodeExecutionView[] {
+    const out: CodeExecutionView[] = [];
+    for (const part of msg.parts) {
+        if (part.type === 'tool' && part.name === 'code_execution') {
+            out.push({
+                id: part.toolCallId,
+                code: part.input?.code,
+                stdout: part.output?.stdout,
+                stderr: part.output?.stderr,
+                state: part.state,
+                errorText: part.errorText,
+            });
+        }
+    }
+    return out;
+}
+
 // Truncate a message's text content (across all text parts, in render order)
 // to at most `maxChars`. Mutates parts in place so Svelte's $state proxy
 // notifies. Used by the stop flow: source tab + mirror tabs snap to the
@@ -69,7 +101,7 @@ export function messageThinking(msg: CourierUIMessage): string {
 // Parts past the cut are dropped; the boundary text part is sliced and
 // marked state:'done'. Non-text parts before the cut are kept.
 export function truncateMessageTextParts(
-    msg: CourierUIMessage,
+    msg: CourierAIMessage,
     maxChars: number
 ): void {
     let textConsumed = 0;
@@ -97,7 +129,7 @@ export function truncateMessageTextParts(
 // Flattens every `data-attachment` part to its ref shape for chip rendering.
 // Order matches the part order in the message.
 export function messageAttachments(
-    msg: CourierUIMessage
+    msg: CourierAIMessage
 ): Array<{ hash: string; name: string; mediaType: string; sizeBytes: number }> {
     const out: Array<{
         hash: string;
@@ -107,16 +139,7 @@ export function messageAttachments(
     }> = [];
     for (const part of msg.parts) {
         if (part.type === 'data-attachment') {
-            // The SDK's part union widens `data` to unknown; narrow via
-            // the CourierDataParts shape.
-            out.push(
-                part.data as {
-                    hash: string;
-                    name: string;
-                    mediaType: string;
-                    sizeBytes: number;
-                }
-            );
+            out.push(part.data);
         }
     }
     return out;

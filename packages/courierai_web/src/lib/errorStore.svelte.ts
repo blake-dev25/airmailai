@@ -1,4 +1,4 @@
-const LOG = '[courier:web]';
+const LOG = '[courierai:web]';
 
 // App-wide error surface. Non-stream failures (storage CRUD, settings save,
 // OpenRouter hydrate, key save/clear, etc.) flow through this and render as

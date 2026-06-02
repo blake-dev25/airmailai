@@ -5,14 +5,14 @@
  * Tailwind utility (bg-*, text-*, border-*, etc.). Other themes override the
  * values via [data-theme="..."] selectors below.
  *
- * Token surface (28 colors per theme, all explicit — no cross-role fallbacks):
+ * Token surface (28 colors per theme, all explicit - no cross-role fallbacks):
  *   chrome:   bg, surface-raised, surface-sunken, border, text, text-muted
  *   bubbles:  bubble-{user,assistant} + on-bubble-{user,assistant}
- *   accents:  for each of accent / accent-2 / accent-3 →
+ *   accents:  for each of accent / accent-2 / accent-3 ->
  *             {role}-fg, {role}-fg-hover, {role}-bg, {role}-bg-hover,
  *             on-{role}-bg, on-{role}-bg-hover
  *
- * Default theme is Airmail Warm — #F0E1C3 (beige), #26214D (navy), #C14227 (red). */
+ * Default theme is Airmail Warm - #F0E1C3 (beige), #26214D (navy), #C14227 (red). */
 @theme {
     --font-sans: system-ui, sans-serif;
     --font-mono: ui-monospace, monospace;
@@ -20,7 +20,7 @@
     /* Override Tailwind's default --spacing (0.25rem) so spacing utilities are
      * px-based and DON'T scale with the runtime root font-size set by the
      * text-size setting. Text utilities are still rem-based, so text scales
-     * but spacing stays fixed — matches the codebase's pre-migration behavior. */
+     * but spacing stays fixed - matches the codebase's pre-migration behavior. */
     --spacing: 4px;
 
     --color-canvas: #f0e1c3;
@@ -56,7 +56,7 @@
     --color-on-accent-3-bg: #f0e1c3;
     --color-on-accent-3-bg-hover: #f0e1c3;
 
-    /* Animations — @keyframes inside @theme generates animate-* utilities */
+    /* Animations - @keyframes inside @theme generates animate-* utilities */
     --animate-search-flash: searchFlash 1.5s ease-out;
     --animate-actions-appear: actionsAppear 0.1s ease both;
     --animate-fade-up: fadeUp 0.15s ease;
@@ -101,7 +101,6 @@
     animation: var(--animate-search-flash);
 }
 
-/* Airmail Light — #DFE0DA (sage), #282C5C (navy), #BD3C2F (red) */
 [data-theme='airmail-light'] {
     --color-canvas: #dfe0da;
     --color-surface-raised: #d2d3cd;
@@ -137,7 +136,6 @@
     --color-on-accent-3-bg-hover: #dfe0da;
 }
 
-/* Absolutely — #1F1F1E charcoal, #D97757 warm accent */
 [data-theme='absolutely'] {
     --color-canvas: #1f1f1e;
     --color-surface-raised: #252524;
@@ -173,7 +171,6 @@
     --color-on-accent-3-bg-hover: #f8f8f6;
 }
 
-/* Tapestry — #000000 black, #FFFFFF white */
 [data-theme='tapestry'] {
     --color-canvas: #000000;
     --color-surface-raised: #2f2f2f;
@@ -209,22 +206,22 @@
     --color-on-accent-3-bg-hover: #ffffff;
 }
 
-/* Solarized Light — Base3 canvas, Base01 fg (emphasized variant for stronger
+/* Solarized Light - Base3 canvas, Base01 fg (emphasized variant for stronger
  * readability); bubbles use Solarized base bg tones (Base2/Base3) per spec,
  * accents are Red / Blue / Red with Base03 dark text for AA contrast on
  * mid-luminance accent surfaces. Accent hover variants are the only
- * non-palette values — Solarized has no Red/Blue tints. */
+ * non-palette values - Solarized has no Red/Blue tints. */
 [data-theme='solarized-light'] {
     --color-canvas: #fdf6e3; /* Base3 */
     --color-surface-raised: #eee8d5; /* Base2 */
-    --color-surface-sunken: #eee8d5; /* Base2 — palette has no third light bg tone */
+    --color-surface-sunken: #eee8d5; /* Base2 - palette has no third light bg tone */
     --color-border: #93a1a1; /* Base1 */
     --color-fg: #586e75; /* Base01 */
     --color-fg-muted: #93a1a1; /* Base1 */
 
     --color-bubble-user: #eee8d5; /* Base2 */
     --color-on-bubble-user: #586e75; /* Base01 */
-    --color-bubble-assistant: #fdf6e3; /* Base3 — bubbleless */
+    --color-bubble-assistant: #fdf6e3; /* Base3 - bubbleless */
     --color-on-bubble-assistant: #586e75; /* Base01 */
 
     /* Red */
@@ -252,21 +249,21 @@
     --color-on-accent-3-bg-hover: #002b36;
 }
 
-/* Solarized Dark — Base03 canvas, Base1 fg (emphasized variant for stronger
+/* Solarized Dark - Base03 canvas, Base1 fg (emphasized variant for stronger
  * readability); bubbles use Solarized base bg tones (Base02/Base03), accents
  * are Red / Blue / Red with Base03 dark text. Accent hover variants are the
  * only non-palette values. */
 [data-theme='solarized-dark'] {
     --color-canvas: #002b36; /* Base03 */
     --color-surface-raised: #073642; /* Base02 */
-    --color-surface-sunken: #073642; /* Base02 — palette has no third dark bg tone */
+    --color-surface-sunken: #073642; /* Base02 - palette has no third dark bg tone */
     --color-border: #586e75; /* Base01 */
     --color-fg: #93a1a1; /* Base1 */
     --color-fg-muted: #586e75; /* Base01 */
 
     --color-bubble-user: #073642; /* Base02 */
     --color-on-bubble-user: #93a1a1; /* Base1 */
-    --color-bubble-assistant: #002b36; /* Base03 — bubbleless */
+    --color-bubble-assistant: #002b36; /* Base03 - bubbleless */
     --color-on-bubble-assistant: #93a1a1; /* Base1 */
 
     /* Red */
@@ -294,7 +291,6 @@
     --color-on-accent-3-bg-hover: #002b36;
 }
 
-/* Phosphor — #141D22 (deep dark teal), #DD513C (red-orange), #34A2DF (sky blue), #3DF2AD (mint) */
 [data-theme='phosphor'] {
     --color-canvas: #141d22;
     --color-surface-raised: #1c2a32;
@@ -330,7 +326,6 @@
     --color-on-accent-3-bg-hover: #141d22;
 }
 
-/* Dial-up — #008080 (teal desktop), #C0C0C0 (silver chrome), #FF3100 / #009CFF / #FFCE00 accents */
 [data-theme='dial-up'] {
     --color-canvas: #008080;
     --color-surface-raised: #c0c0c0;
@@ -366,7 +361,6 @@
     --color-on-accent-3-bg-hover: #000000;
 }
 
-/* Digital Rain — #000000 (black), #00FF41 (neon green), #00B82E (darker green) */
 [data-theme='digital-rain'] {
     --color-canvas: #000000;
     --color-surface-raised: #0d1a0d;

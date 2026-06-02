@@ -3,7 +3,7 @@
     import MarkdownMessage from './MarkdownMessage.svelte';
     import {
         messageAttachments,
-        messageText,
+        messageCodeExecutions,
         messageThinking,
         type Message,
     } from './types';
@@ -11,6 +11,7 @@
     let {
         message,
         index,
+        messageContent,
         displayContent,
         isStreaming,
         isLastStreaming,
@@ -20,6 +21,7 @@
         hovered,
         thinkingExpanded,
         sourcesExpanded,
+        codeExpanded,
         onhoverenter,
         onhoverleave,
         onstartedit,
@@ -27,11 +29,13 @@
         oncanceledit,
         onthinkingtoggle,
         onsourcestoggle,
+        oncodetoggle,
         onretry,
         ondelete,
     }: {
         message: Message;
         index: number;
+        messageContent: string;
         displayContent: string;
         isStreaming: boolean;
         isLastStreaming: boolean;
@@ -41,6 +45,7 @@
         hovered: boolean;
         thinkingExpanded: boolean;
         sourcesExpanded: boolean;
+        codeExpanded: boolean;
         onhoverenter: () => void;
         onhoverleave: () => void;
         onstartedit: (content: string, bubbleEl: HTMLElement | null) => void;
@@ -48,6 +53,7 @@
         oncanceledit: () => void;
         onthinkingtoggle: () => void;
         onsourcestoggle: () => void;
+        oncodetoggle: () => void;
         onretry: () => void;
         ondelete: () => void;
     } = $props();
@@ -57,10 +63,10 @@
     const isUser = $derived(message.role === 'user');
     const attachments = $derived(messageAttachments(message));
     const thinking = $derived(messageThinking(message));
-    const messageContent = $derived(messageText(message));
+    const codeExecutions = $derived(messageCodeExecutions(message));
 
     // Flatten every source-url part into a deduped citation list. Several
-    // web_search calls in a single turn can repeat the same URL — render
+    // web_search calls in a single turn can repeat the same URL - render
     // each once.
     const flatSources = $derived.by(() => {
         const seen = new Set<string>();
@@ -74,9 +80,10 @@
         return out;
     });
 
-    // Anthropic citations land as `source-document` parts with citedText
-    // and page numbers in providerMetadata.anthropic. Render a chip per
-    // part (no dedup — each cite is its own location).
+    // Document citations (Anthropic PDF) land as `source-document` parts with
+    // top-level citedText + a page/char location. Render a chip per part (no
+    // dedup - each cite is its own location). Only page locations get a "p.X"
+    // suffix; char locations render the title alone.
     const docCitations = $derived.by(() => {
         const out: Array<{
             title: string;
@@ -86,24 +93,12 @@
         }> = [];
         for (const part of message.parts) {
             if (part.type !== 'source-document') continue;
-            const meta = (part.providerMetadata?.anthropic ?? {}) as Record<
-                string,
-                unknown
-            >;
+            const isPage = part.location?.kind === 'page';
             out.push({
-                title: part.title,
-                citedText:
-                    typeof meta.citedText === 'string'
-                        ? meta.citedText
-                        : undefined,
-                startPage:
-                    typeof meta.startPageNumber === 'number'
-                        ? meta.startPageNumber
-                        : undefined,
-                endPage:
-                    typeof meta.endPageNumber === 'number'
-                        ? meta.endPageNumber
-                        : undefined,
+                title: part.title ?? '',
+                citedText: part.citedText,
+                startPage: isPage ? part.location?.start : undefined,
+                endPage: isPage ? part.location?.end : undefined,
             });
         }
         return out;
@@ -126,11 +121,18 @@
 
     const editBtnBase =
         'px-3.5 py-1.25 rounded-lg border-0 font-sans text-sm font-medium cursor-pointer transition-[background-color,color,opacity] duration-150';
+
+    const expandoBtnClass =
+        'flex items-center gap-1.5 w-full bg-transparent border-0 text-on-bubble-assistant font-sans text-xs font-medium opacity-60 cursor-pointer text-left transition-opacity duration-150 hover:opacity-100';
+    const codePreClass =
+        'm-0 px-2.5 py-2 bg-canvas border border-border rounded-md font-mono text-xs leading-normal overflow-x-auto whitespace-pre-wrap wrap-break-word';
+    const codeLabelClass = 'text-[11px] font-medium opacity-50';
 </script>
 
 <div
     class={['flex', isUser ? 'justify-end' : 'justify-start']}
     data-msg-index={index}
+    data-msg-role={message.role}
     role="group"
     onmouseenter={onhoverenter}
     onmouseleave={onhoverleave}
@@ -244,11 +246,67 @@
                             </div>
                         </div>
                     {/if}
+                    {#if codeExecutions.length}
+                        <div class="mt-2 pt-2 border-t border-current/15">
+                            <button
+                                type="button"
+                                class={expandoBtnClass}
+                                onclick={oncodetoggle}
+                            >
+                                <span>Code</span>
+                                <Icon
+                                    name="chevron-right"
+                                    class="transition-transform duration-200 {codeExpanded
+                                        ? 'rotate-90'
+                                        : ''}"
+                                />
+                            </button>
+                            {#if codeExpanded}
+                                <div class="mt-1.5 flex flex-col gap-2.5">
+                                    {#each codeExecutions as ce (ce.id)}
+                                        <div class="flex flex-col gap-1">
+                                            {#if ce.code}
+                                                <pre class={codePreClass}><code
+                                                        >{ce.code}</code
+                                                    ></pre>
+                                            {/if}
+                                            {#if ce.stdout}
+                                                <div class={codeLabelClass}>
+                                                    Output
+                                                </div>
+                                                <pre class={codePreClass}><code
+                                                        >{ce.stdout}</code
+                                                    ></pre>
+                                            {/if}
+                                            {#if ce.stderr}
+                                                <div
+                                                    class="text-[11px] font-medium text-accent-fg"
+                                                >
+                                                    Error
+                                                </div>
+                                                <pre
+                                                    class="m-0 px-2.5 py-2 bg-canvas border border-accent-fg/40 rounded-md font-mono text-xs leading-normal text-accent-fg overflow-x-auto whitespace-pre-wrap wrap-break-word"><code
+                                                        >{ce.stderr}</code
+                                                    ></pre>
+                                            {/if}
+                                            {#if ce.errorText}
+                                                <div
+                                                    class="text-[11px] text-accent-fg opacity-90"
+                                                >
+                                                    {ce.errorText}
+                                                </div>
+                                            {/if}
+                                        </div>
+                                    {/each}
+                                </div>
+                            {/if}
+                        </div>
+                    {/if}
                     {#if flatSources.length}
                         <div class="mt-2 pt-2 border-t border-current/15">
                             <button
                                 type="button"
-                                class="flex items-center gap-1.5 w-full bg-transparent border-0 text-on-bubble-assistant font-sans text-xs font-medium opacity-60 cursor-pointer text-left transition-opacity duration-150 hover:opacity-100"
+                                class={expandoBtnClass}
                                 onclick={onsourcestoggle}
                             >
                                 <span>Sources</span>

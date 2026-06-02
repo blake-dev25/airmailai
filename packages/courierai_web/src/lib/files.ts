@@ -1,4 +1,4 @@
-import type { Attachment } from '@courier/shared';
+import type { Attachment } from '@courierai/shared';
 
 const MB = 1024 * 1024;
 

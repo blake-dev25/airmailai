@@ -1,13 +1,13 @@
-import type { BroadcastEvent } from '@courier/shared';
+import type { BroadcastEvent } from '@courierai/shared';
 import { chatStore } from './chatStore.svelte';
 import { subscribeToBroadcast, tabId } from './extension';
 
 function handleBroadcastEvent(event: BroadcastEvent): void {
     switch (event.type) {
         case 'turn-start':
-            // The source tab's local streamingChatIds already contains chatId
-            // by the time turn-start arrives. Filter on sourceTabId so the
-            // originating tab ignores its own echo.
+            // The extension already skips the source tab when fanning
+            // turn-* events. This is a belt-and-suspenders guard against
+            // ever applying a remote-turn over our own in-flight local one.
             if (event.sourceTabId === tabId) return;
             chatStore.applyRemoteTurnStart(
                 event.chatId,
@@ -35,9 +35,6 @@ function handleBroadcastEvent(event: BroadcastEvent): void {
 }
 
 async function handleBroadcastReconnect(): Promise<void> {
-    // Broadcast port reconnected (e.g. service worker came back from
-    // eviction). We may have missed events — at minimum, refresh the active
-    // chat from IDB so the user sees canonical state.
     await chatStore.refreshActiveFromIDB();
 }
 

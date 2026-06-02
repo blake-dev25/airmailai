@@ -1,26 +1,3 @@
-# dependencies
-node_modules/
-
-# build/generated outputs
-dist/
-dist-ssr/
-.output/
-.wxt/
-*.zip
-VERSION
-VERSION_NAME
-build-counter.json
-bun.lock
-
-# logs
-logs/
-*.log*
-
-# local/env/deploy scratch
-.env
-.env.*
-.deploy-tmp/
-
-# notes/docs/etc
+# Prettier reads .gitignore by default, so only list paths git tracks but
+# Prettier shouldn't touch.
 *.md
-*.txt

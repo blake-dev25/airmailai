@@ -1,23 +1,20 @@
 import type {
     BroadcastEvent,
     BroadcastRequest,
-    CourierMessageMetadata,
-    CourierUIMessage,
-    CourierUIMessageChunk,
+    CourierAIChunk,
+    CourierAIMessage,
     ExtensionStreamEvent,
     HydratedStoredMessage,
     StorageRequest,
     StorageResponse,
     TurnRequest,
     UserSettings,
-} from '@courier/shared';
-import { SETTINGS_KEYS } from '@courier/shared';
+} from '@courierai/shared';
 import {
-    convertToModelMessages,
-    type FilePart,
-    type ModelMessage,
-    type TextPart,
-} from 'ai';
+    SETTINGS_KEYS,
+    applyCourierAIChunk,
+    createMessageAssembler,
+} from '@courierai/shared';
 import { DEBUG_API_LOGGING } from '../debug';
 import {
     CACHE_KEY as OPENROUTER_CACHE_KEY,
@@ -29,7 +26,6 @@ import {
     dbDeleteChat,
     dbDeleteMessage,
     dbDeleteMessagesAfter,
-    dbGetFileBlob,
     dbGetStorageUsage,
     dbLoadChat,
     dbLoadChatMetas,
@@ -39,14 +35,14 @@ import {
     dbSaveMeta,
 } from '../storage/db';
 
-const LOG = '[courier:ext]';
+const LOG = '[courierai:ext]';
 const API_KEY_PREFIX = 'apiKey_';
 
 // Per-chat lock. While a chatId is in this map, another tab attempting to
 // stream the same chat is rejected so writes can't race.
 const inflightTurns = new Map<string, AbortController>();
 
-// Long-lived broadcast ports — one per connected tab. Mapped to the web's
+// Long-lived broadcast ports - one per connected tab. Mapped to the web's
 // sourceTabId (set via the 'register' message immediately after connect) so
 // `broadcast()` can skip the source tab when fanning turn-* events. In the
 // single-tab case there's exactly one port and it matches the turn's source,
@@ -80,20 +76,20 @@ async function readApiKey(provider: string): Promise<string | undefined> {
 async function handleStorage(
     message: StorageRequest
 ): Promise<StorageResponse> {
-    console.log(LOG, '← storage request', message.type);
+    console.log(LOG, '<- storage request', message.type);
     switch (message.type) {
         case 'save_key': {
             console.log(LOG, 'storage: saving API key for', message.provider);
             const key = apiKeyName(message.provider);
             await chrome.storage.local.set({ [key]: message.apiKey });
-            console.log(LOG, '→ storage response: saved');
+            console.log(LOG, '-> storage response: saved');
             return { type: 'saved' };
         }
         case 'clear_key': {
             console.log(LOG, 'storage: clearing API key for', message.provider);
             const key = apiKeyName(message.provider);
             await chrome.storage.local.remove(key);
-            console.log(LOG, '→ storage response: saved');
+            console.log(LOG, '-> storage response: saved');
             return { type: 'saved' };
         }
         case 'has_keys': {
@@ -104,7 +100,7 @@ async function handleStorage(
                 const val = result[apiKeyName(p)];
                 saved[p] = typeof val === 'string' && val.length > 0;
             }
-            console.log(LOG, '→ storage response: has_keys', saved);
+            console.log(LOG, '-> storage response: has_keys', saved);
             return { type: 'has_keys', saved };
         }
         case 'save_settings': {
@@ -116,12 +112,12 @@ async function handleStorage(
             );
             console.log(LOG, 'storage: saving settings', filtered);
             await chrome.storage.sync.set(filtered);
-            console.log(LOG, '→ storage response: saved');
+            console.log(LOG, '-> storage response: saved');
             return { type: 'saved' };
         }
         case 'load_settings': {
             const result = await chrome.storage.sync.get(SETTINGS_KEYS);
-            console.log(LOG, '→ storage response: settings', result);
+            console.log(LOG, '-> storage response: settings', result);
             return {
                 type: 'settings',
                 settings: result as Partial<UserSettings>,
@@ -129,34 +125,34 @@ async function handleStorage(
         }
         case 'save_meta': {
             await dbSaveMeta(message.meta);
-            console.log(LOG, '→ storage response: saved');
+            console.log(LOG, '-> storage response: saved');
             return { type: 'saved' };
         }
         case 'put_message': {
             await dbPutMessage(message.message);
-            console.log(LOG, '→ storage response: saved');
+            console.log(LOG, '-> storage response: saved');
             return { type: 'saved' };
         }
         case 'delete_message': {
             await dbDeleteMessage(message.chatId, message.messageId);
-            console.log(LOG, '→ storage response: saved');
+            console.log(LOG, '-> storage response: saved');
             return { type: 'saved' };
         }
         case 'delete_messages_after': {
             await dbDeleteMessagesAfter(message.chatId, message.lastKeptId);
-            console.log(LOG, '→ storage response: saved');
+            console.log(LOG, '-> storage response: saved');
             return { type: 'saved' };
         }
         case 'delete_chat': {
             await dbDeleteChat(message.chatId);
-            console.log(LOG, '→ storage response: saved');
+            console.log(LOG, '-> storage response: saved');
             return { type: 'saved' };
         }
         case 'load_chat_metas': {
             const metas = await dbLoadChatMetas();
             console.log(
                 LOG,
-                '→ storage response: chat_metas',
+                '-> storage response: chat_metas',
                 `${metas.length} metas`
             );
             return { type: 'chat_metas', metas };
@@ -165,7 +161,7 @@ async function handleStorage(
             const chats = await dbLoadChats();
             console.log(
                 LOG,
-                '→ storage response: chats',
+                '-> storage response: chats',
                 `${chats.length} chats`
             );
             return { type: 'chats', chats };
@@ -174,7 +170,7 @@ async function handleStorage(
             const chats = await dbLoadChatsByIds(message.ids);
             console.log(
                 LOG,
-                '→ storage response: chats',
+                '-> storage response: chats',
                 `${chats.length} chats`
             );
             return { type: 'chats', chats };
@@ -183,7 +179,7 @@ async function handleStorage(
             const chat = await dbLoadChat(message.chatId);
             console.log(
                 LOG,
-                '→ storage response: chat',
+                '-> storage response: chat',
                 message.chatId,
                 chat ? 'found' : 'not found'
             );
@@ -194,7 +190,7 @@ async function handleStorage(
             const models = await getOpenRouterModels(apiKey);
             console.log(
                 LOG,
-                '→ storage response: openrouter_models',
+                '-> storage response: openrouter_models',
                 models ? `${models.length} models` : 'unavailable',
                 apiKey ? 'with key' : 'cache only'
             );
@@ -213,7 +209,7 @@ async function handleStorage(
                 chrome.storage.sync.getBytesInUse(null),
             ]);
             const localSettingsBytes = localTotalBytes - openRouterCacheBytes;
-            console.log(LOG, '→ storage response: storage_usage', {
+            console.log(LOG, '-> storage response: storage_usage', {
                 localSettingsBytes,
                 openRouterCacheBytes,
                 syncSettingsBytes,
@@ -229,7 +225,7 @@ async function handleStorage(
         }
         case 'clear_chats': {
             await dbClearChats();
-            console.log(LOG, '→ storage response: saved');
+            console.log(LOG, '-> storage response: saved');
             return { type: 'saved' };
         }
         case 'clear_all': {
@@ -238,107 +234,16 @@ async function handleStorage(
                 chrome.storage.local.clear(),
                 chrome.storage.sync.clear(),
             ]);
-            console.log(LOG, '→ storage response: saved');
+            console.log(LOG, '-> storage response: saved');
             return { type: 'saved' };
         }
     }
 }
 
-// Walk every data-attachment part across the history and pull its bytes from
-// the files store. The convertDataPart hook on convertToModelMessages is
-// synchronous, so we resolve everything up-front into a hash → bytes map.
-// Throws if any referenced hash is missing — that means the web sent a
-// message whose attachment wasn't persisted yet, which would yield a broken
-// API call. Loud is better than silent.
-async function fetchAttachmentBytes(
-    history: CourierUIMessage[]
-): Promise<Map<string, Uint8Array>> {
-    const wanted = new Map<string, string>(); // hash → name (for error msg)
-    for (const msg of history) {
-        for (const part of msg.parts) {
-            if (part.type === 'data-attachment') {
-                const data = part.data as { hash: string; name: string };
-                wanted.set(data.hash, data.name);
-            }
-        }
-    }
-    const out = new Map<string, Uint8Array>();
-    await Promise.all(
-        Array.from(wanted.entries()).map(async ([hash, name]) => {
-            const blob = await dbGetFileBlob(hash);
-            if (!blob) {
-                throw new Error(
-                    `Missing attachment for hash ${hash} (${name})`
-                );
-            }
-            const buf = await blob.arrayBuffer();
-            out.set(hash, new Uint8Array(buf));
-        })
-    );
-    return out;
-}
-
-// WORKAROUND — provider-gated. Two providers surface their web_search URLs
-// only as source-url parts (no tool-result content), which convertToModel-
-// Messages drops on replay because there's no input-side slot for them:
-//   - Google's googleSearch tool returns URLs in `Candidate.groundingMetadata`
-//     (output-only).
-//   - OpenRouter's webSearch tool routes through the underlying model but
-//     emits sources independently of any tool-result content.
-// Anthropic/OpenAI native web_search carries URLs inside tool-result content
-// + encrypted state, so they round-trip without this transform.
-//
-// Fix: splice a markdown `Sources:` block into the about-to-send copy's last
-// text part. The stored UIMessage stays clean (rendered with citation chips);
-// only the converted copy gets the fold. Verified for Google end-to-end by
-// scripts/test-ai-sdk.ts.
-function applySourcesFold(history: CourierUIMessage[]): CourierUIMessage[] {
-    return history.map((msg) => {
-        if (msg.role !== 'assistant') return msg;
-        const sourceUrls = msg.parts.filter(
-            (p): p is Extract<typeof p, { type: 'source-url' }> =>
-                p.type === 'source-url'
-        );
-        if (sourceUrls.length === 0) return msg;
-        const lines = sourceUrls.map((s, i) =>
-            s.title ? `${i + 1}. [${s.title}](${s.url})` : `${i + 1}. ${s.url}`
-        );
-        const block = `Sources:\n${lines.join('\n')}`;
-        const parts = [...msg.parts];
-        let appended = false;
-        for (let i = parts.length - 1; i >= 0; i--) {
-            const p = parts[i];
-            if (p.type === 'text') {
-                parts[i] = {
-                    ...p,
-                    text: p.text ? `${p.text}\n\n${block}` : block,
-                };
-                appended = true;
-                break;
-            }
-        }
-        if (!appended) {
-            parts.push({ type: 'text', text: block, state: 'done' });
-        }
-        return { ...msg, parts };
-    });
-}
-
-// Build a convertDataPart hook bound to a pre-fetched bytes map. Returns a
-// FilePart with the raw bytes (FilePart.data accepts Uint8Array directly).
-// For anthropic with PDF or text/plain attachments, enables Citations — the
-// model emits source-document parts with citedText + page numbers in
-// providerMetadata.anthropic. Non-citable types pass through unchanged.
-type AttachmentDataPart = {
-    type: `data-${string}`;
-    id?: string;
-    data: unknown;
-};
-
 // Trim text parts (in render order) to `maxChars` total, dropping parts past
 // the cut. Mirror of `truncateMessageTextParts` on the web side; kept local
 // to the ext so the two packages don't share runtime code.
-function truncateAssistantParts(msg: CourierUIMessage, maxChars: number): void {
+function truncateAssistantParts(msg: CourierAIMessage, maxChars: number): void {
     let textConsumed = 0;
     let i = 0;
     while (i < msg.parts.length) {
@@ -361,45 +266,11 @@ function truncateAssistantParts(msg: CourierUIMessage, maxChars: number): void {
     }
 }
 
-function makeConvertDataPart(
-    provider: string,
-    blobBytes: Map<string, Uint8Array>
-) {
-    return (part: AttachmentDataPart): FilePart | TextPart | undefined => {
-        if (part.type !== 'data-attachment') return undefined;
-        const data = part.data as {
-            hash: string;
-            name: string;
-            mediaType: string;
-            sizeBytes: number;
-        };
-        const bytes = blobBytes.get(data.hash);
-        if (!bytes) return undefined;
-        const canCite =
-            provider === 'anthropic' &&
-            (data.mediaType === 'application/pdf' ||
-                data.mediaType === 'text/plain');
-        return {
-            type: 'file',
-            mediaType: data.mediaType,
-            filename: data.name,
-            data: bytes,
-            ...(canCite
-                ? {
-                      providerOptions: {
-                          anthropic: { citations: { enabled: true } },
-                      },
-                  }
-                : {}),
-        };
-    };
-}
-
 export default defineBackground(() => {
     console.log(LOG, 'background ready');
 
     // Internal messages from the popup. The popup shows a generic
-    // "Something went wrong" — we forward the actual reason so it can do better.
+    // "Something went wrong" - we forward the actual reason so it can do better.
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         if (message.type === 'admin_clear_chats') {
             dbClearChats()
@@ -463,7 +334,7 @@ export default defineBackground(() => {
     chrome.runtime.onConnectExternal.addListener((port) => {
         // 'broadcast' ports are long-lived fan-out channels for cross-tab
         // turn mirroring. The only inbound traffic is a periodic keepalive
-        // from each tab — its sole job is to reset the SW's 30s idle timer
+        // from each tab - its sole job is to reset the SW's 30s idle timer
         // so we stay warm whenever the website is open.
         if (port.name === 'broadcast') {
             console.log(LOG, 'broadcast port connected');
@@ -494,9 +365,9 @@ export default defineBackground(() => {
         const controller = new AbortController();
 
         // Disposition tracks how the turn ends. 'aborted' means web
-        // disconnected without a graceful stop (e.g. retry/delete) — we skip
+        // disconnected without a graceful stop (e.g. retry/delete) - we skip
         // the save in that case. 'stopped' means web sent an explicit stop;
-        // we save whatever the SDK assembled by the abort point.
+        // we save whatever was assembled by the abort point.
         type Disposition =
             | 'pending'
             | 'streaming'
@@ -511,7 +382,7 @@ export default defineBackground(() => {
         let inStreamErrorText: string | null = null;
         let portOpen = true;
         // Set by the 'stop' message: visible char count from the source tab.
-        // Applied to assembledAssistant before save so the persisted row
+        // Applied to the assembled message before save so the persisted row
         // matches what the user saw on screen at click time.
         let truncateTo: number | null = null;
 
@@ -532,8 +403,6 @@ export default defineBackground(() => {
         });
 
         port.onMessage.addListener(async (msg: TurnRequest) => {
-            if (msg.type === 'keepalive') return;
-
             if (msg.type === 'stop') {
                 if (disposition !== 'streaming') return;
                 console.log(
@@ -596,7 +465,15 @@ export default defineBackground(() => {
                 msg.sourceTabId
             );
 
-            let assembledAssistant: CourierUIMessage | undefined;
+            // Fold the provider chunk stream into the assistant message as it
+            // arrives, so the terminal save has the complete CourierAIMessage.
+            const assembler = createMessageAssembler({
+                id: msg.assistantMessageId,
+                role: 'assistant',
+                parts: [],
+                metadata: { createdAt: Date.now() },
+            });
+
             try {
                 const apiKey = await readApiKey(msg.provider);
                 if (!apiKey) {
@@ -610,75 +487,28 @@ export default defineBackground(() => {
                     return;
                 }
 
-                // Pre-fetch every attachment hash referenced by history.
-                // Loud failure here keeps a missing blob from yielding a
-                // malformed API call.
-                let blobBytes: Map<string, Uint8Array>;
-                try {
-                    blobBytes = await fetchAttachmentBytes(msg.messages);
-                } catch (e) {
-                    console.error(LOG, 'attachment fetch failed', e);
-                    send({
-                        type: 'error',
-                        source: 'extension',
-                        message: e instanceof Error ? e.message : String(e),
-                    });
-                    disposition = 'errored';
-                    return;
-                }
-
-                const historyForConvert =
-                    msg.provider === 'google' || msg.provider === 'openrouter'
-                        ? applySourcesFold(msg.messages)
-                        : msg.messages;
-
-                let modelMessages: ModelMessage[];
-                try {
-                    modelMessages =
-                        await convertToModelMessages<CourierUIMessage>(
-                            historyForConvert,
-                            {
-                                ignoreIncompleteToolCalls: true,
-                                convertDataPart: makeConvertDataPart(
-                                    msg.provider,
-                                    blobBytes
-                                ),
-                            }
-                        );
-                } catch (e) {
-                    console.error(LOG, 'convertToModelMessages failed', e);
-                    send({
-                        type: 'error',
-                        source: 'extension',
-                        message: e instanceof Error ? e.message : String(e),
-                    });
-                    disposition = 'errored';
-                    return;
-                }
-
                 console.log(LOG, 'streaming', msg.chatId, {
                     provider: msg.provider,
                     model: msg.model,
-                    messages: modelMessages.length,
+                    messages: msg.messages.length,
                 });
 
                 if (DEBUG_API_LOGGING) {
-                    console.log(LOG, '[debug] site → ext request', {
+                    console.log(LOG, '[debug] site -> ext request', {
                         provider: msg.provider,
                         model: msg.model,
                         params: msg.params,
                         system: msg.system,
-                        messages: modelMessages,
+                        messages: msg.messages,
                     });
                 }
 
-                let result;
+                let chunkStream: AsyncIterable<CourierAIChunk>;
                 try {
-                    result = streamProvider({
-                        provider: msg.provider,
+                    chunkStream = streamProvider(msg.provider, {
                         apiKey,
                         model: msg.model,
-                        messages: modelMessages,
+                        messages: msg.messages,
                         system: msg.system,
                         params: msg.params ?? {},
                         signal: controller.signal,
@@ -695,71 +525,25 @@ export default defineBackground(() => {
                     return;
                 }
 
-                // sendSources: true is REQUIRED — defaults to false and
-                // silently drops source-url + source-document chunks (web
-                // search citations and PDF citations). Without it our
-                // citation rendering is invisible.
-                const uiStream = result.toUIMessageStream({
-                    sendSources: true,
-                    // streamText's `finish` part carries `totalUsage` already
-                    // aggregated across steps (web_search step + final text
-                    // step, etc.), so no manual summing required.
-                    messageMetadata: ({ part }) => {
-                        if (part.type === 'finish') {
-                            return {
-                                tokens: {
-                                    input: part.totalUsage.inputTokens ?? 0,
-                                    output: part.totalUsage.outputTokens ?? 0,
-                                },
-                            } as CourierMessageMetadata;
-                        }
-                    },
-                    onFinish: ({ responseMessage, isAborted }) => {
-                        console.log(LOG, 'onFinish', {
-                            isAborted,
-                            partCount: responseMessage.parts.length,
-                            partTypes: responseMessage.parts.map((p) => p.type),
-                        });
-                        assembledAssistant =
-                            responseMessage as CourierUIMessage;
-                    },
-                });
-
-                for await (const chunk of uiStream as AsyncIterable<CourierUIMessageChunk>) {
-                    if (chunk.type === 'error') {
-                        console.error(
-                            LOG,
-                            'inline error chunk',
-                            chunk.errorText
-                        );
-                        inStreamErrorText = chunk.errorText;
-                    }
+                for await (const chunk of chunkStream) {
+                    applyCourierAIChunk(assembler, chunk);
                     if (disposition === 'streaming') {
                         send({ type: 'chunk', chunk });
                         broadcast(
-                            {
-                                type: 'turn-chunk',
-                                chatId: msg.chatId,
-                                chunk,
-                            },
+                            { type: 'turn-chunk', chatId: msg.chatId, chunk },
                             msg.sourceTabId
                         );
                     }
                 }
 
-                // Post-stream awaits may reject with AbortError or
-                // AI_NoOutputGeneratedError. We don't need the values here
-                // (usage rides through message-metadata chunks); just
-                // swallow rejections so they don't crash the finally.
-                await Promise.all([
-                    Promise.resolve(result.usage).catch(() => undefined),
-                    Promise.resolve(result.finishReason).catch(() => undefined),
-                ]);
-
                 if (disposition === 'streaming') {
-                    disposition = inStreamErrorText ? 'errored' : 'completed';
+                    disposition = 'completed';
                 }
             } catch (e: unknown) {
+                // Provider generators throw on API/stream error (after the
+                // for-await begins). Aborts return silently, so a throw here is
+                // a real error unless a port listener already flipped the
+                // disposition to 'stopped'/'aborted'.
                 console.error(LOG, 'stream threw', e);
                 if (disposition === 'streaming') {
                     inStreamErrorText =
@@ -769,42 +553,42 @@ export default defineBackground(() => {
             } finally {
                 // Re-widen: TS narrows `disposition` based on assignments in
                 // try/catch, but the port listeners can mutate it to
-                // 'aborted' or 'stopped' mid-await — narrowing misses those
+                // 'aborted' or 'stopped' mid-await - narrowing misses those
                 // paths.
                 let disp = disposition as Disposition;
 
-                // Save the assembled UIMessage as-is. AI SDK's onFinish
-                // gives us the canonical partial state on abort (text/
-                // reasoning parts left in state: 'streaming', incomplete
-                // tool parts present). On replay, ignoreIncompleteToolCalls
-                // strips half-formed tool calls so the model sees a clean
-                // history. On graceful stop, truncateTo is non-null and we
-                // trim text parts to the source tab's visible char count so
-                // the persisted row matches what the user saw on screen.
+                // Persist the assembled assistant message. Skipped on 'aborted'
+                // (web bailed without a graceful stop) and when nothing
+                // assembled. On graceful stop, truncateTo trims text parts to
+                // the source tab's visible char count so the persisted row
+                // matches what the user saw.
+                const assembled = assembler.message;
                 if (
                     disp !== 'aborted' &&
                     lockedChatId &&
                     assistantMessageId &&
-                    assembledAssistant &&
-                    assembledAssistant.parts.length > 0
+                    assembled.parts.length > 0
                 ) {
                     if (truncateTo !== null) {
-                        truncateAssistantParts(assembledAssistant, truncateTo);
+                        truncateAssistantParts(assembled, truncateTo);
                     }
-                    const uiMessage: CourierUIMessage = {
-                        ...assembledAssistant,
+                    const finalMessage: CourierAIMessage = {
+                        ...assembled,
                         id: assistantMessageId,
                         role: 'assistant',
                         metadata: {
                             createdAt: Date.now(),
-                            ...(assembledAssistant.metadata?.tokens
-                                ? { tokens: assembledAssistant.metadata.tokens }
+                            ...(assembled.metadata.tokens
+                                ? { tokens: assembled.metadata.tokens }
+                                : {}),
+                            ...(assembled.metadata.stopReason
+                                ? { stopReason: assembled.metadata.stopReason }
                                 : {}),
                         },
                     };
                     const stored: HydratedStoredMessage = {
                         chatId: lockedChatId,
-                        uiMessage,
+                        message: finalMessage,
                     };
                     try {
                         await dbPutMessage(stored);
@@ -828,8 +612,8 @@ export default defineBackground(() => {
                 }
 
                 // Fan out the terminal lifecycle event. 'aborted' means the
-                // source tab bailed without saving — other tabs should roll
-                // back to IDB's pre-turn state. Source tab is skipped — it
+                // source tab bailed without saving - other tabs should roll
+                // back to IDB's pre-turn state. Source tab is skipped - it
                 // already knows the disposition via the turn port.
                 if (lockedChatId) {
                     if (disp === 'errored' && inStreamErrorText) {
@@ -843,18 +627,12 @@ export default defineBackground(() => {
                         );
                     } else if (disp === 'aborted') {
                         broadcast(
-                            {
-                                type: 'turn-aborted',
-                                chatId: lockedChatId,
-                            },
+                            { type: 'turn-aborted', chatId: lockedChatId },
                             msg.sourceTabId
                         );
                     } else {
                         broadcast(
-                            {
-                                type: 'turn-done',
-                                chatId: lockedChatId,
-                            },
+                            { type: 'turn-done', chatId: lockedChatId },
                             msg.sourceTabId
                         );
                     }

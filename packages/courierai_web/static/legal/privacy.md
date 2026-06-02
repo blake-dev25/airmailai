@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Last updated:** May 20, 2026
+**Last updated:** May 28, 2026
 
 ## The short version
 
@@ -84,7 +84,7 @@ not sent to any server operated by us:
 | API keys | `chrome.storage.local` for use by the extension |
 | Chat history, attachments, system prompts, and token counts | IndexedDB (local to each browser profile) |
 | Theme, model, and UI preferences | `chrome.storage.sync` |
-| Theme preference (paint-time cache, so the correct background renders before the extension finishes loading) | Website `localStorage` (key: `courierai-theme`) — kept in sync with, and overwritten by, the canonical value from `chrome.storage.sync` |
+| Theme preference (paint-time cache, so the correct background renders before the extension finishes loading) | Website `localStorage` (key: `courierai-theme`) - kept in sync with, and overwritten by, the canonical value from `chrome.storage.sync` |
 
 You can delete any of this at any time by uninstalling the extension or
 clearing the extension's storage through your browser.
@@ -189,9 +189,9 @@ a key has been compromised, revoke it in the provider's dashboard.
 ## Changes
 
 If this policy changes, the updated version will be published at the
-same URL with a new "Last updated" date. Material changes will also be
-surfaced in the website itself the next time you open it, so you
-don't have to check this page to find out.
+same URL with a new "Last updated" date. When we change this policy, the
+Service will ask you to review and agree to the updated Terms of Service
+and this Privacy Policy before you continue using it.
 
 ## Contact
 

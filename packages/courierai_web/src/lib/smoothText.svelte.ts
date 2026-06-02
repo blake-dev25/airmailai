@@ -33,8 +33,8 @@ export function createSmoothText(opts: SmoothTextOpts) {
     let accum = 0;
 
     // Stop the RAF but PRESERVE lastTime/accum. The ChatPanel $effect calls
-    // this on every chunk's cleanup before re-running setRaw — if we reset
-    // timing here, each cancel→setRaw cycle would force the next tick into a
+    // this on every chunk's cleanup before re-running setRaw - if we reset
+    // timing here, each cancel->setRaw cycle would force the next tick into a
     // warm-up no-op and the drain would never make progress under fast chunk
     // bursts (e.g. remote broadcast). Use resetTiming() at the points where
     // a fresh start is actually intended.

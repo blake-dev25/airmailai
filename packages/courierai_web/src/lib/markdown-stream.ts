@@ -9,7 +9,7 @@ export interface StreamingMarkdownParams {
     highlighterReady: boolean;
 }
 
-// Svelte action — owns the entirety of `node`'s children. The component
+// Svelte action - owns the entirety of `node`'s children. The component
 // template must be `<div use:streamingMarkdown={...}></div>` with no inner
 // content; Svelte never tries to reconcile the subtree, so direct innerHTML
 // + appendChild here is safe.
@@ -17,15 +17,15 @@ export interface StreamingMarkdownParams {
 // Two-region layout: a "head" of completed markdown blocks that never
 // re-renders (so already-displayed content doesn't layout-shift as the
 // stream grows), and a "tail" that re-renders on every update for the
-// in-progress portion. Content moves from tail → head when a paragraph
+// in-progress portion. Content moves from tail -> head when a paragraph
 // boundary (\n\n outside any open ``` fence) is found. Per markdown spec,
 // tables also end at a blank line, so \n\n is safe with respect to tables
-// too — once a table closes it gets promoted whole.
+// too - once a table closes it gets promoted whole.
 //
 // Trade-off: head is rendered via slice-then-append, so reference-style
 // links / footnote definitions that span the head/tail boundary will not
 // resolve. LLM output rarely uses these, and on stream end the full content
-// can still be re-rendered if we want correctness — but for now we accept
+// can still be re-rendered if we want correctness - but for now we accept
 // the limitation for the layout-stability win.
 export function streamingMarkdown(
     node: HTMLDivElement,
@@ -44,14 +44,14 @@ export function streamingMarkdown(
     node.appendChild(tailEl);
 
     function sync() {
-        // Content swap (chat switch, message edit, retry) — start over.
+        // Content swap (chat switch, message edit, retry) - start over.
         if (!params.content.startsWith(stableSource)) {
             stableSource = '';
             headEl.innerHTML = '';
         }
 
         // Shiki just loaded and head has code blocks that rendered via the
-        // unhighlighted fallback — re-render head once to fold in syntax
+        // unhighlighted fallback - re-render head once to fold in syntax
         // colors. Idempotent if all blocks were already highlighted.
         if (
             params.highlighterReady &&
@@ -132,7 +132,7 @@ function findSafeSplit(content: string, after: number): number {
         const line = content.slice(lineStart, i);
 
         // Blank line (\n followed by \n). Skip the document's leading blank
-        // — lineStart === 0 means this is the first newline, not the second
+        // - lineStart === 0 means this is the first newline, not the second
         // of a pair.
         if (line === '' && !inFence && lineStart > 0) {
             const boundary = i + 1;

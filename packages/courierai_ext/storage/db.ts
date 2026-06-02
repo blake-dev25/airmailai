@@ -1,21 +1,20 @@
 import type {
     ChatMeta,
-    CourierUIMessage,
+    CourierAIMessage,
     HydratedStoredMessage,
     StoredChat,
     StoredMessage,
-} from '@courier/shared';
+} from '@courierai/shared';
 
 interface IdbUsage {
     chatHistoryBytes: number;
     filesBytes: number;
 }
 
-const DB_NAME = 'courier_ai';
-// Version bump: schema switched to UIMessage[]. Pre-migration data is
-// dropped on first open (beta, no external users).
-const DB_VERSION = 8;
-const LOG = '[courier:ext]';
+const DB_NAME = 'courierai';
+// Bumping resets local storage on first open. Beta, no external users.
+const DB_VERSION = 9;
+const LOG = '[courierai:ext]';
 
 const STORE_MESSAGES = 'chat_messages';
 const STORE_META = 'chat_meta';
@@ -38,20 +37,19 @@ function openDb(): Promise<IDBDatabase> {
         const req = indexedDB.open(DB_NAME, DB_VERSION);
         req.onupgradeneeded = () => {
             const db = req.result;
-            // Alpha: nuke and recreate on every version bump.
             for (const name of Array.from(db.objectStoreNames)) {
                 db.deleteObjectStore(name);
             }
-            // Nested keyPaths reach into uiMessage.id / uiMessage.metadata.
+            // Nested keyPaths reach into message.id / message.metadata.
             // IDB resolves dot-paths against the stored value.
             const messages = db.createObjectStore(STORE_MESSAGES, {
-                keyPath: ['chatId', 'uiMessage.id'],
+                keyPath: ['chatId', 'message.id'],
             });
-            // Compound index for ordered load. uiMessage.id is the tiebreaker
+            // Compound index for ordered load. message.id is the tiebreaker
             // for the (unlikely) case of two messages sharing a createdAt ms.
             messages.createIndex(
                 INDEX_CHAT_ORDER,
-                ['chatId', 'uiMessage.metadata.createdAt', 'uiMessage.id'],
+                ['chatId', 'message.metadata.createdAt', 'message.id'],
                 { unique: false }
             );
             db.createObjectStore(STORE_META, { keyPath: 'id' });
@@ -85,24 +83,21 @@ function txDone(tx: IDBTransaction): Promise<void> {
     });
 }
 
-// Walk a UIMessage's parts and pull out every attachment hash referenced.
+// Walk a message's parts and pull out every attachment hash referenced.
 // Multiple `data-attachment` parts pointing at the same hash count once
-// each — same dedup semantics as the old AttachmentRef[] shape.
-function messageAttachmentHashes(msg: CourierUIMessage | null): string[] {
+// each - same dedup semantics as the old AttachmentRef[] shape.
+function messageAttachmentHashes(msg: CourierAIMessage | null): string[] {
     if (!msg) return [];
     const hashes: string[] = [];
     for (const part of msg.parts) {
         if (part.type === 'data-attachment') {
-            // Narrow via the CourierDataParts shape; the SDK's part union
-            // widens `data` to unknown.
-            const data = part.data as { hash: string };
-            hashes.push(data.hash);
+            hashes.push(part.data.hash);
         }
     }
     return hashes;
 }
 
-function messageRefCounts(msg: CourierUIMessage | null): Map<string, number> {
+function messageRefCounts(msg: CourierAIMessage | null): Map<string, number> {
     const counts = new Map<string, number>();
     for (const hash of messageAttachmentHashes(msg)) {
         counts.set(hash, (counts.get(hash) ?? 0) + 1);
@@ -115,8 +110,8 @@ function messageRefCounts(msg: CourierUIMessage | null): Map<string, number> {
 // files store; missing-blob for a positive delta aborts the tx loudly.
 async function applyAttachmentDelta(
     filesStore: IDBObjectStore,
-    prior: CourierUIMessage | null,
-    next: CourierUIMessage | null,
+    prior: CourierAIMessage | null,
+    next: CourierAIMessage | null,
     freshBlobs?: Map<string, Blob>
 ): Promise<void> {
     const priorCounts = messageRefCounts(prior);
@@ -141,17 +136,17 @@ async function applyAttachmentDelta(
             }
             continue;
         }
-        // No prior file record — must be a new ref. Need the blob in freshBlobs.
+        // No prior file record - must be a new ref. Need the blob in freshBlobs.
         if (delta > 0) {
             const blob = freshBlobs?.get(hash);
             if (!blob) {
                 throw new Error(
-                    `Missing blob for attachment hash ${hash} — refusing to persist`
+                    `Missing blob for attachment hash ${hash} - refusing to persist`
                 );
             }
             filesStore.put({ hash, blob, refCount: delta });
         }
-        // delta < 0 with no prior record is nonsensical — skip silently.
+        // delta < 0 with no prior record is nonsensical - skip silently.
     }
 }
 
@@ -171,7 +166,7 @@ function freshBlobsFromHydrated(msg: HydratedStoredMessage): Map<string, Blob> {
 // Upsert one message. Diff'd attachment refs are reconciled in the same
 // transaction so the files store can't drift if the tx aborts.
 export async function dbPutMessage(msg: HydratedStoredMessage): Promise<void> {
-    console.log(LOG, 'db: put message', msg.chatId, msg.uiMessage.id);
+    console.log(LOG, 'db: put message', msg.chatId, msg.message.id);
     const freshBlobs = freshBlobsFromHydrated(msg);
     const db = await getDb();
     const tx = db.transaction(
@@ -183,7 +178,7 @@ export async function dbPutMessage(msg: HydratedStoredMessage): Promise<void> {
     const filesStore = tx.objectStore(STORE_FILES);
 
     // Refuse to orphan a message under a deleted chat. Same-tx read gives
-    // us a consistent snapshot — a concurrent delete_chat either landed
+    // us a consistent snapshot - a concurrent delete_chat either landed
     // before this tx (we see no meta and abort) or after (we wrote a row,
     // delete_chat will cascade and remove it).
     const meta = (await reqAsPromise(metaStore.get(msg.chatId))) as
@@ -194,23 +189,23 @@ export async function dbPutMessage(msg: HydratedStoredMessage): Promise<void> {
             LOG,
             'db: chat gone, skipping put',
             msg.chatId,
-            msg.uiMessage.id
+            msg.message.id
         );
         tx.abort();
         return;
     }
 
     const prior = (await reqAsPromise(
-        messagesStore.get([msg.chatId, msg.uiMessage.id])
+        messagesStore.get([msg.chatId, msg.message.id])
     )) as StoredMessage | undefined;
     const next: StoredMessage = {
         chatId: msg.chatId,
-        uiMessage: msg.uiMessage,
+        message: msg.message,
     };
     await applyAttachmentDelta(
         filesStore,
-        prior?.uiMessage ?? null,
-        next.uiMessage,
+        prior?.message ?? null,
+        next.message,
         freshBlobs
     );
     messagesStore.put(next);
@@ -234,7 +229,7 @@ export async function dbDeleteMessage(
         await txDone(tx);
         return;
     }
-    await applyAttachmentDelta(filesStore, prior.uiMessage, null);
+    await applyAttachmentDelta(filesStore, prior.message, null);
     messagesStore.delete([chatId, messageId]);
     await txDone(tx);
 }
@@ -260,13 +255,13 @@ export async function dbDeleteMessagesAfter(
         await txDone(tx);
         return;
     }
-    const boundaryCreatedAt = boundary.uiMessage.metadata?.createdAt ?? 0;
+    const boundaryCreatedAt = boundary.message.metadata?.createdAt ?? 0;
 
     const index = messagesStore.index(INDEX_CHAT_ORDER);
     const lowerExclusive = [
         chatId,
         boundaryCreatedAt,
-        boundary.uiMessage.id,
+        boundary.message.id,
     ] as const;
     // [chatId, createdAt, id] > boundary triple. IDBKeyRange.bound with
     // open lower bound gives us strictly-after.
@@ -287,9 +282,9 @@ export async function dbDeleteMessagesAfter(
             const row = cursor.value as StoredMessage;
             // Refcount cleanup happens inline; can't await inside the
             // cursor callback without losing position, so we kick off and
-            // continue — the transaction won't commit until everything
+            // continue - the transaction won't commit until everything
             // queued resolves.
-            void applyAttachmentDelta(filesStore, row.uiMessage, null).catch(
+            void applyAttachmentDelta(filesStore, row.message, null).catch(
                 reject
             );
             cursor.delete();
@@ -334,7 +329,7 @@ export async function dbDeleteChat(chatId: string): Promise<void> {
                 return;
             }
             const row = cursor.value as StoredMessage;
-            void applyAttachmentDelta(filesStore, row.uiMessage, null).catch(
+            void applyAttachmentDelta(filesStore, row.message, null).catch(
                 reject
             );
             cursor.delete();
@@ -431,9 +426,9 @@ export async function dbLoadChat(chatId: string): Promise<StoredChat | null> {
     return { id: chatId, messages };
 }
 
-// Per-store byte estimates for the Settings → Storage panel. Files use
+// Per-store byte estimates for the Settings -> Storage panel. Files use
 // Blob.size (metadata, no disk read). Chat history is derived from
-// `navigator.storage.estimate().usage` minus filesBytes — the estimate
+// `navigator.storage.estimate().usage` minus filesBytes - the estimate
 // covers the whole origin's persistent storage, which for the extension SW
 // is essentially just our IDB. Approximate (Chrome rounds for privacy on
 // some platforms); the UI prefixes it with "~".

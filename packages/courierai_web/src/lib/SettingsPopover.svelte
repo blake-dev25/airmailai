@@ -1,5 +1,5 @@
 <script lang="ts">
-    import type { StorageUsage } from '@courier/shared';
+    import type { StorageUsage } from '@courierai/shared';
     import { PROVIDERS, THEMES } from './constants';
     import { reportAppError } from './errorStore.svelte';
     import {
@@ -104,7 +104,7 @@
     );
 
     // Chat History (and therefore the Total) is derived from
-    // navigator.storage.estimate() in the extension — origin-level estimate,
+    // navigator.storage.estimate() in the extension - origin-level estimate,
     // approximate. The other rows are exact byte counts from chrome.storage
     // and Blob.size.
     let storageRows = $derived<
@@ -456,20 +456,20 @@
                 </select>
             </div>
             <div class={[rowBase, themeRow]}>
-                <label for="autoscroll" class={labelClass}>Autoscroll</label>
-                <button
-                    id="autoscroll"
-                    type="button"
-                    class={[switchClass, settingsStore.autoscroll && 'on']}
-                    role="switch"
-                    aria-checked={settingsStore.autoscroll}
-                    aria-label="Autoscroll"
-                    onclick={() => {
-                        settingsStore.autoscroll = !settingsStore.autoscroll;
-                    }}
+                <label for="autoscroll-mode" class={labelClass}
+                    >Autoscroll Mode</label
                 >
-                    <span class="ios-switch-thumb"></span>
-                </button>
+                <select
+                    id="autoscroll-mode"
+                    class={selectClass}
+                    bind:value={settingsStore.autoscrollMode}
+                >
+                    <option value="pin-user-message"
+                        >Scroll to user message</option
+                    >
+                    <option value="pin-bottom">Scroll to bottom</option>
+                    <option value="off">Off</option>
+                </select>
             </div>
             <div class={[rowBase, themeRow]}>
                 <label for="show-previous" class={labelClass}
@@ -509,7 +509,7 @@
                         >
                             {storageUsage
                                 ? `${row.approximate ? '~' : ''}${formatBytes(row.bytes)}`
-                                : '—'}
+                                : '-'}
                         </span>
                     </div>
                 {/each}
@@ -518,7 +518,7 @@
                     <span
                         class="text-sm tabular-nums text-fg font-mono font-medium"
                     >
-                        {storageUsage ? `~${formatBytes(storageTotal)}` : '—'}
+                        {storageUsage ? `~${formatBytes(storageTotal)}` : '-'}
                     </span>
                 </div>
             </div>
@@ -563,6 +563,47 @@
                     onclick={() => {
                         settingsStore.enableWebSearch =
                             !settingsStore.enableWebSearch;
+                    }}
+                >
+                    <span class="ios-switch-thumb"></span>
+                </button>
+            </div>
+            <div class={[rowBase, themeRow]}>
+                <label for="enable-web-fetch" class={labelClass}
+                    >Enable Web Fetch</label
+                >
+                <button
+                    id="enable-web-fetch"
+                    type="button"
+                    class={[switchClass, settingsStore.enableWebFetch && 'on']}
+                    role="switch"
+                    aria-checked={settingsStore.enableWebFetch}
+                    aria-label="Enable Web Fetch"
+                    onclick={() => {
+                        settingsStore.enableWebFetch =
+                            !settingsStore.enableWebFetch;
+                    }}
+                >
+                    <span class="ios-switch-thumb"></span>
+                </button>
+            </div>
+            <div class={[rowBase, themeRow]}>
+                <label for="enable-code-execution" class={labelClass}
+                    >Enable Code Execution</label
+                >
+                <button
+                    id="enable-code-execution"
+                    type="button"
+                    class={[
+                        switchClass,
+                        settingsStore.enableCodeExecution && 'on',
+                    ]}
+                    role="switch"
+                    aria-checked={settingsStore.enableCodeExecution}
+                    aria-label="Enable Code Execution"
+                    onclick={() => {
+                        settingsStore.enableCodeExecution =
+                            !settingsStore.enableCodeExecution;
                     }}
                 >
                     <span class="ios-switch-thumb"></span>
@@ -666,9 +707,6 @@
 </div>
 
 <style>
-    /* CSS islands — pseudo-element-heavy patterns that don't translate well to utilities */
-
-    /* Range slider thumb (used on Text Size + Chat Width sliders) */
     .range-styled::-webkit-slider-thumb {
         -webkit-appearance: none;
         appearance: none;
@@ -696,7 +734,6 @@
         cursor: pointer;
     }
 
-    /* iOS-style switch — matches the ModelConfig sidebar toggle pattern */
     .ios-switch {
         background-color: var(--color-surface-raised);
         border: 1px solid var(--color-border);
@@ -723,12 +760,10 @@
         transform: translateX(14px);
     }
 
-    /* Info-icon tooltip: hover-driven visibility on a child via parent state */
     .info-icon:hover .info-tooltip {
         display: block;
     }
 
-    /* Icon overrides for the API keys table */
     :global(.icon-check) {
         color: #4caf6e;
     }

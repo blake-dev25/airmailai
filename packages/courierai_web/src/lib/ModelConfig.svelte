@@ -32,7 +32,7 @@
 
     let providerOptions = $derived.by(() => {
         // Ensure the chat's stored provider stays visible even if it has no
-        // in-tier models — otherwise the select would show a blank value.
+        // in-tier models - otherwise the select would show a blank value.
         const out = [...filteredProviders];
         if (!out.find((p) => p.id === settingsStore.providerId)) {
             const stored = providersStore.providers.find(
@@ -54,7 +54,7 @@
             return [] as Array<{ label: string; models: ModelOption[] }>;
 
         if (provider.marketplace) {
-            // `~`-prefix is OpenRouter's premier-provider tag — a curated
+            // `~`-prefix is OpenRouter's premier-provider tag - a curated
             // subset (e.g. latest models) that lives as its own group, distinct
             // from the same vendor's non-premier catalog.
             const formatVendor = (v: string) =>
@@ -122,7 +122,7 @@
 
     $effect(() => {
         if (badgeEl && !badgeFocused) {
-            // contenteditable badge — Svelte yields ownership while editing.
+            // contenteditable badge - Svelte yields ownership while editing.
             // eslint-disable-next-line svelte/no-dom-manipulating
             badgeEl.textContent = settingsStore.temperature.toFixed(2);
         }
@@ -260,6 +260,8 @@
             settingsStore.adaptiveThinking =
                 first.params.thinking?.adaptive !== undefined;
             settingsStore.webSearch = false;
+            settingsStore.webFetch = false;
+            settingsStore.codeExecution = false;
         }
     }
 
@@ -274,10 +276,47 @@
             settingsStore.adaptiveThinking =
                 model.params.thinking?.adaptive !== undefined;
             settingsStore.webSearch = false;
+            settingsStore.webFetch = false;
+            settingsStore.codeExecution = false;
         }
     }
 
-    // Airmail stripe — same geometry as Sidebar, adapted for modelConfig width
+    // Per-tool toggle visibility - gated on master setting AND current model
+    // declaring support. Providers that fold search+fetch into one tool (OpenAI)
+    // get a single combined toggle that drives both flags in lockstep.
+    let modelTools = $derived(currentModel?.tools);
+    let webSearchSupported = $derived(!!modelTools?.webSearch);
+    let webFetchSupported = $derived(!!modelTools?.webFetch);
+    let codeExecSupported = $derived(!!modelTools?.codeExecution);
+    let searchFetchLinked = $derived(!!modelTools?.searchFetchLinked);
+    let showLinkedWeb = $derived(
+        searchFetchLinked &&
+            webSearchSupported &&
+            webFetchSupported &&
+            settingsStore.enableWebSearch &&
+            settingsStore.enableWebFetch
+    );
+    let showWebSearch = $derived(
+        !showLinkedWeb && webSearchSupported && settingsStore.enableWebSearch
+    );
+    let showWebFetch = $derived(
+        !showLinkedWeb && webFetchSupported && settingsStore.enableWebFetch
+    );
+    let showCodeExec = $derived(
+        codeExecSupported && settingsStore.enableCodeExecution
+    );
+    // Linked toggle is "on" only if BOTH backing flags are on, so flipping it
+    // moves them together.
+    let linkedWebOn = $derived(
+        settingsStore.webSearch && settingsStore.webFetch
+    );
+    function toggleLinkedWeb() {
+        const next = !linkedWebOn;
+        settingsStore.webSearch = next;
+        settingsStore.webFetch = next;
+    }
+
+    // Airmail stripe - same geometry as Sidebar, adapted for modelConfig width
     const mcStripeH = 20;
     const mcStripeW = 40;
     const mcGap = 40;
@@ -301,6 +340,7 @@
     $effect(() => {
         if (!currentModel) return;
         const params = currentModel.params;
+        const tools = currentModel.tools;
         untrack(() => {
             if (settingsStore.maxTokens > params.maxOutputTokens)
                 settingsStore.maxTokens = params.maxOutputTokens;
@@ -326,6 +366,15 @@
                 settingsStore.adaptiveThinking = true;
             else if (adaptiveSupport === undefined)
                 settingsStore.adaptiveThinking = false;
+            // Drop tool flags the new model can't support, so a chat saved
+            // with web_search on doesn't keep firing after switching to a
+            // model that lacks it.
+            if (settingsStore.webSearch && !tools?.webSearch)
+                settingsStore.webSearch = false;
+            if (settingsStore.webFetch && !tools?.webFetch)
+                settingsStore.webFetch = false;
+            if (settingsStore.codeExecution && !tools?.codeExecution)
+                settingsStore.codeExecution = false;
         });
     });
 
@@ -400,6 +449,7 @@
                             role="spinbutton"
                             tabindex="0"
                             contenteditable="true"
+                            aria-label="Temperature"
                             aria-valuenow={settingsStore.temperature}
                             aria-valuemin={0}
                             aria-valuemax={currentModel.params.temperatureMax}
@@ -507,6 +557,7 @@
                         role="spinbutton"
                         tabindex="0"
                         contenteditable="true"
+                        aria-label="Max output tokens"
                         aria-valuenow={settingsStore.maxTokens}
                         aria-valuemin={1}
                         aria-valuemax={currentModel.params.maxOutputTokens}
@@ -542,7 +593,45 @@
                 </div>
             </div>
 
-            {#if settingsStore.enableWebSearch}
+            {#if showLinkedWeb}
+                <div class={fieldClass}>
+                    <div class={labelRowClass}>
+                        <div class="flex items-center gap-1.25">
+                            <label for="web-linked" class={labelClass}
+                                >Web (search + fetch)</label
+                            >
+                            <span
+                                class="info-icon relative flex items-center text-fg-muted opacity-60 cursor-default hover:opacity-100"
+                                aria-label="Why search and fetch are linked"
+                            >
+                                <Icon name="info" />
+                                <span
+                                    class="info-tooltip hidden absolute bottom-[calc(100%+6px)] left-1/2 -translate-x-1/2 w-55 px-2.5 py-2 bg-surface-raised border border-border rounded-[7px] text-xs leading-normal text-fg font-normal shadow-[0_4px_16px_oklch(0%_0_0/15%)] pointer-events-none z-10"
+                                    >OpenAI combines web search and web fetch
+                                    into one tool, so enabling either enables
+                                    both.</span
+                                >
+                            </span>
+                        </div>
+                        <button
+                            id="web-linked"
+                            type="button"
+                            class={[
+                                'ios-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
+                                linkedWebOn && 'on',
+                            ]}
+                            role="switch"
+                            aria-checked={linkedWebOn}
+                            aria-label="Web search and fetch"
+                            onclick={toggleLinkedWeb}
+                        >
+                            <span class="ios-switch-thumb"></span>
+                        </button>
+                    </div>
+                </div>
+            {/if}
+
+            {#if showWebSearch}
                 <div class={fieldClass}>
                     <div class={labelRowClass}>
                         <label for="web-search" class={labelClass}
@@ -568,6 +657,60 @@
                     </div>
                 </div>
             {/if}
+
+            {#if showWebFetch}
+                <div class={fieldClass}>
+                    <div class={labelRowClass}>
+                        <label for="web-fetch" class={labelClass}
+                            >Web Fetch</label
+                        >
+                        <button
+                            id="web-fetch"
+                            type="button"
+                            class={[
+                                'ios-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
+                                settingsStore.webFetch && 'on',
+                            ]}
+                            role="switch"
+                            aria-checked={settingsStore.webFetch}
+                            aria-label="Web Fetch"
+                            onclick={() => {
+                                settingsStore.webFetch =
+                                    !settingsStore.webFetch;
+                            }}
+                        >
+                            <span class="ios-switch-thumb"></span>
+                        </button>
+                    </div>
+                </div>
+            {/if}
+
+            {#if showCodeExec}
+                <div class={fieldClass}>
+                    <div class={labelRowClass}>
+                        <label for="code-execution" class={labelClass}
+                            >Code Execution</label
+                        >
+                        <button
+                            id="code-execution"
+                            type="button"
+                            class={[
+                                'ios-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
+                                settingsStore.codeExecution && 'on',
+                            ]}
+                            role="switch"
+                            aria-checked={settingsStore.codeExecution}
+                            aria-label="Code Execution"
+                            onclick={() => {
+                                settingsStore.codeExecution =
+                                    !settingsStore.codeExecution;
+                            }}
+                        >
+                            <span class="ios-switch-thumb"></span>
+                        </button>
+                    </div>
+                </div>
+            {/if}
         {/if}
     </div>
 
@@ -582,7 +725,10 @@
         <div class="p-4 flex flex-col gap-3">
             <div class={detailRowClass}>
                 <span class={detailLabelClass}>Context Window</span>
-                <span class={detailValueClass}>
+                <span
+                    class={detailValueClass}
+                    data-testid="context-window-usage"
+                >
                     {#if !appLifecycle.initialized || !currentModel}
                         &nbsp;
                     {:else if chatStore.activeTokens}
@@ -647,9 +793,6 @@
 </aside>
 
 <style>
-    /* CSS islands — pseudo-element-heavy patterns */
-
-    /* Custom scrollbar for the panel */
     .thin-scrollbar::-webkit-scrollbar {
         width: 3px;
     }
@@ -661,7 +804,6 @@
         border-radius: 3px;
     }
 
-    /* Range slider thumb (uses accent-3 — the "action" highlight) */
     .range-styled::-webkit-slider-thumb {
         -webkit-appearance: none;
         appearance: none;
@@ -689,7 +831,7 @@
         cursor: pointer;
     }
 
-    /* iOS-style switch — base + on state + thumb. Pseudo-element-free but
+    /* iOS-style switch - base + on state + thumb. Pseudo-element-free but
      * the on-state styling and thumb slide are simpler to express here than
      * across the markup's class array. */
     .ios-switch {
@@ -718,7 +860,10 @@
         transform: translateX(14px);
     }
 
-    /* The chevron icon overlaid on selects — passed to Icon component */
+    .info-icon:hover .info-tooltip {
+        display: block;
+    }
+
     :global(.select-arrow) {
         position: absolute;
         right: 10px;

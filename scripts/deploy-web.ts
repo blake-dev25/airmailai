@@ -18,7 +18,7 @@ const dist = join(root, 'packages/courierai_web/dist');
 console.log('> Building courierai_web (gen-version + check + build)...');
 await $`bun run build:web`.cwd(root);
 
-// Order: assets and legal first (additive — no --delete so stale-cached HTML keeps resolving old
+// Order: assets and legal first (additive - no --delete so stale-cached HTML keeps resolving old
 // hashes during the window), then HTML, then invalidate. Once invalidation completes, no edge can
 // be serving stale HTML, so we sync assets again with --delete to prune orphan hashes.
 

@@ -1,13 +1,15 @@
 import type {
     Attachment,
     ChatMeta,
-    CourierUIMessage,
-    CourierUIMessageChunk,
+    CourierAIChunk,
+    CourierAIMessage,
     HydratedStoredMessage,
+    MessageAssemblerState,
     StoredChat,
     StoredMessage,
     StreamErrorSource,
-} from '@courier/shared';
+} from '@courierai/shared';
+import { applyCourierAIChunk, createMessageAssembler } from '@courierai/shared';
 import { SvelteSet } from 'svelte/reactivity';
 import { buildDemoChats } from './demo';
 import { reportAppError } from './errorStore.svelte';
@@ -27,11 +29,6 @@ import {
 import { providersStore } from './providersStore.svelte';
 import { settingsStore } from './settingsStore.svelte';
 import {
-    applyChunk,
-    createUIMessageReducer,
-    type UIMessageReducerState,
-} from './uiMessageReducer';
-import {
     messageText,
     truncateMessageTextParts,
     type Chat,
@@ -39,7 +36,7 @@ import {
     type SearchResult,
 } from './types';
 
-const LOG = '[courier:web]';
+const LOG = '[courierai:web]';
 const INITIAL_PAGE_SIZE = 40;
 const LOAD_MORE_PAGE_SIZE = 15;
 
@@ -47,7 +44,7 @@ function formatStreamError(message: string, source: StreamErrorSource): string {
     return `${source === 'extension' ? 'Ext' : 'API'} Error: ${message}`;
 }
 
-// Build a fresh user CourierUIMessage from raw text + attachments. Text
+// Build a fresh user CourierAIMessage from raw text + attachments. Text
 // part comes first so it reads top-to-bottom; attachments hang off as
 // `data-attachment` parts referencing bytes via hash.
 function buildUserMessage(
@@ -55,8 +52,8 @@ function buildUserMessage(
     createdAt: number,
     content: string,
     attachments?: Attachment[]
-): CourierUIMessage {
-    const parts: CourierUIMessage['parts'] = [];
+): CourierAIMessage {
+    const parts: CourierAIMessage['parts'] = [];
     if (content) {
         parts.push({ type: 'text', text: content, state: 'done' });
     }
@@ -82,7 +79,7 @@ function buildUserMessage(
 function buildAssistantPlaceholder(
     id: string,
     createdAt: number
-): CourierUIMessage {
+): CourierAIMessage {
     return {
         id,
         role: 'assistant',
@@ -91,12 +88,12 @@ function buildAssistantPlaceholder(
     };
 }
 
-// Wraps a CourierUIMessage as the put_message payload. `pendingBlobs` is
-// the chat's in-flight upload bytes map — we only inline bytes for hashes
+// Wraps a CourierAIMessage as the put_message payload. `pendingBlobs` is
+// the chat's in-flight upload bytes map - we only inline bytes for hashes
 // referenced by THIS message, keyed by hash.
 function messageToHydrated(
     chatId: string,
-    msg: CourierUIMessage,
+    msg: CourierAIMessage,
     pendingBlobs?: Map<string, Attachment>
 ): HydratedStoredMessage {
     const freshBlobs: HydratedStoredMessage['freshBlobs'] = {};
@@ -104,8 +101,7 @@ function messageToHydrated(
     if (pendingBlobs?.size) {
         for (const part of msg.parts) {
             if (part.type !== 'data-attachment') continue;
-            const data = part.data as { hash: string };
-            const att = pendingBlobs.get(data.hash);
+            const att = pendingBlobs.get(part.data.hash);
             if (!att) continue;
             freshBlobs[att.hash] = {
                 mediaType: att.mediaType,
@@ -116,7 +112,7 @@ function messageToHydrated(
     }
     return {
         chatId,
-        uiMessage: msg,
+        message: msg,
         ...(anyFresh ? { freshBlobs } : {}),
     };
 }
@@ -133,12 +129,14 @@ function chatToMeta(chat: Chat): ChatMeta {
         thinkingLevel: chat.thinkingLevel,
         adaptiveThinking: chat.adaptiveThinking,
         webSearch: chat.webSearch,
+        webFetch: chat.webFetch,
+        codeExecution: chat.codeExecution,
         systemPrompt: chat.systemPrompt,
     };
 }
 
 interface RemoteStreamPipeline {
-    reducer: UIMessageReducerState;
+    assembler: MessageAssemblerState;
     placeholderId: string;
     chat: Chat;
 }
@@ -166,9 +164,9 @@ class ChatStore {
 
     // Handles for active local streams.
     private streamHandles = new Map<string, StreamHandle>();
-    // Per-chat ReadableStream + reader pipeline for cross-tab broadcast
-    // chunks. AI SDK's readUIMessageStream rebuilds the full UIMessage
-    // from chunks, same way it does for local streams via sendToExtension.
+    // Per-chat message assembler for cross-tab broadcast chunks. Same fold
+    // used for local streams - incoming chunks mutate the placeholder
+    // assistant message's parts in place.
     private remotePipelines = new Map<string, RemoteStreamPipeline>();
 
     hasMoreChats = $derived(this.unloadedMetas.length > 0);
@@ -181,7 +179,7 @@ class ChatStore {
     isActiveStreaming = $derived(
         this.isActiveLocalStreaming || this.isActiveRemoteStreaming
     );
-    // Sidebar gets the union — any chat being streamed by any tab gets the
+    // Sidebar gets the union - any chat being streamed by any tab gets the
     // spinner. Plain Set keeps the per-row .has() check O(1) without the
     // reactive bookkeeping of SvelteSet (derived is read-only).
     allStreamingChatIds = $derived(
@@ -193,8 +191,8 @@ class ChatStore {
     activeMessages = $derived(
         this.chats.find((c) => c.id === this.activeChatId)?.messages ?? []
     );
-    // Set by streamForChat/applyRemoteTurnStart to the reducer's
-    // streamingText accumulator. ChatPanel reads this in preference to
+    // Maintained by streamForChat/applyRemoteTurnChunk as an O(1) text
+    // mirror of the streaming message. ChatPanel reads this in preference to
     // messageText(last) so the per-chunk path is O(delta) instead of
     // re-joining all parts. Falls to null when no stream is in flight.
     activeStreamingText = $derived(
@@ -218,7 +216,7 @@ class ChatStore {
     // --- Initial load + pagination ---
 
     private storedToMessages(stored: StoredMessage[]): Message[] {
-        return stored.map((s) => s.uiMessage);
+        return stored.map((s) => s.message);
     }
 
     async loadInitialPage(): Promise<void> {
@@ -308,6 +306,8 @@ class ChatStore {
             thinkingLevel: settingsStore.thinkingLevel,
             adaptiveThinking: settingsStore.adaptiveThinking,
             webSearch: settingsStore.webSearch,
+            webFetch: settingsStore.webFetch,
+            codeExecution: settingsStore.codeExecution,
         });
         this.chats = demoChats;
         this.unloadedMetas = [];
@@ -514,7 +514,7 @@ class ChatStore {
             const attachments: string[] = [];
             for (const part of msg.parts) {
                 if (part.type !== 'data-attachment') continue;
-                attachments.push((part.data as { name: string }).name);
+                attachments.push(part.data.name);
             }
             if (attachments.length) {
                 md += `Attachments: ${attachments.join(', ')}\n`;
@@ -551,7 +551,7 @@ class ChatStore {
         // Replace text parts with a single new text part; keep non-text parts
         // (attachments etc.) intact.
         const nonText = target.parts.filter((p) => p.type !== 'text');
-        const newParts: CourierUIMessage['parts'] = [
+        const newParts: CourierAIMessage['parts'] = [
             ...(content
                 ? [
                       {
@@ -756,7 +756,7 @@ class ChatStore {
     }
 
     // Graceful stop. `visibleChars` is the smoothText display length at click
-    // time — what the user could actually read. We tell the ext to truncate
+    // time - what the user could actually read. We tell the ext to truncate
     // its assembled message to that length before saving, and mirror the
     // same trim locally so the UI doesn't keep draining content the user
     // wanted to stop seeing. handle.stop runs first so the `stopped` flag
@@ -791,31 +791,61 @@ class ChatStore {
         if (!snap) return;
 
         // History sent to the ext: everything except the trailing assistant
-        // placeholder. Bare refs travel — the ext loads bytes from its
+        // placeholder. Bare refs travel - the ext loads bytes from its
         // files store by hash. Fresh uploads were inlined when persisting
         // the user message, so by the time the stream starts the ext has
         // every hash this history can reference.
-        const history: CourierUIMessage[] = snap.messages.slice(0, -1);
+        const history: CourierAIMessage[] = snap.messages.slice(0, -1);
 
         // Pre-turn message state included in the turn-start broadcast so
         // mirror tabs can render the chat without an extra IDB round-trip.
         const broadcastHistory: StoredMessage[] = history.map((m) => ({
             chatId,
-            uiMessage: m,
+            message: m,
         }));
 
-        const modelParams = providersStore.providers
+        const selectedModel = providersStore.providers
             .find((p) => p.id === snap.providerId)
-            ?.models.find((m) => m.id === snap.modelId)?.params;
+            ?.models.find((m) => m.id === snap.modelId);
+        const modelParams = selectedModel?.params;
+
+        // Tool wire payload - AND of (model declares support) ∧ (master toggle
+        // on) ∧ (per-chat toggle on). Value is the raw `ToolSupport` the model
+        // declared (a string for anthropic, true for everyone else), so the ext
+        // doesn't need a duplicate per-model lookup table. Missing keys mean
+        // "do not attach the tool".
+        const wireTools: Record<string, string | boolean> = {};
+        const modelTools = selectedModel?.tools;
+        if (
+            modelTools?.webSearch &&
+            settingsStore.enableWebSearch &&
+            snap.webSearch
+        ) {
+            wireTools.webSearch = modelTools.webSearch;
+        }
+        if (
+            modelTools?.webFetch &&
+            settingsStore.enableWebFetch &&
+            snap.webFetch
+        ) {
+            wireTools.webFetch = modelTools.webFetch;
+        }
+        if (
+            modelTools?.codeExecution &&
+            settingsStore.enableCodeExecution &&
+            snap.codeExecution
+        ) {
+            wireTools.codeExecution = modelTools.codeExecution;
+        }
 
         // Capture the assistant placeholder's $state proxy ref from the
         // array. Mutating the proxy (via the reducer) drives Svelte's
-        // fine-grained reactivity per text part — no per-chunk whole-
+        // fine-grained reactivity per text part - no per-chunk whole-
         // message swap or messageText re-join.
         const cachedChat: Chat = snap;
         const assistantRef =
             cachedChat.messages[cachedChat.messages.length - 1];
-        const reducer = createUIMessageReducer(assistantRef);
+        const assembler = createMessageAssembler(assistantRef);
         cachedChat.streamingText = '';
 
         const finishStream = () => {
@@ -841,7 +871,7 @@ class ChatStore {
                     maxTokens: snap.maxTokens,
                     thinkingLevel: snap.thinkingLevel,
                     adaptiveThinking: snap.adaptiveThinking,
-                    webSearch: settingsStore.enableWebSearch && snap.webSearch,
+                    tools: wireTools,
                     tagOpenRouterRequests: settingsStore.tagOpenRouterRequests,
                 },
                 meta: chatToMeta(snap),
@@ -850,8 +880,12 @@ class ChatStore {
             },
             {
                 onChunk: (chunk) => {
-                    applyChunk(reducer, chunk);
-                    cachedChat.streamingText = reducer.streamingText;
+                    applyCourierAIChunk(assembler, chunk);
+                    // O(1) text mirror for the smooth-text effect: appending
+                    // text-deltas matches messageText()'s join-all because
+                    // deltas arrive in render order.
+                    if (chunk.type === 'text-delta')
+                        cachedChat.streamingText += chunk.delta;
                 },
                 onDone: () => {
                     finishStream();
@@ -880,10 +914,9 @@ class ChatStore {
     // --- Remote (cross-tab) turn handlers ---
     //
     // When another tab streams a turn, the extension fans out lifecycle
-    // events to every connected tab. Each tab maintains its own
-    // ReadableStream + readUIMessageStream pipeline per remote chat so
-    // chunks rebuild the in-progress assistant message the same way
-    // local streams do — no bespoke chunk accumulator.
+    // events to every connected tab. Each tab feeds incoming chunks into
+    // a per-chat message assembler so the in-progress assistant message
+    // rebuilds the same way local streams do - no bespoke chunk accumulator.
 
     applyRemoteTurnStart(
         chatId: string,
@@ -917,26 +950,27 @@ class ChatStore {
         this.clearChatError(chatId);
 
         // Spin up a fresh pipeline for this remote stream. Each chunk goes
-        // straight into the reducer, which mutates the placeholder's parts
-        // in place — same path as local streamForChat.
+        // straight into the assembler, which mutates the placeholder's parts
+        // in place - same path as local streamForChat.
         this.closeRemotePipeline(chatId);
         const assistantRef = chat.messages[chat.messages.length - 1];
-        const reducer = createUIMessageReducer(assistantRef);
+        const assembler = createMessageAssembler(assistantRef);
         chat.streamingText = '';
         this.remotePipelines.set(chatId, {
-            reducer,
+            assembler,
             placeholderId: assistantMessageId,
             chat,
         });
     }
 
-    applyRemoteTurnChunk(chatId: string, chunk: CourierUIMessageChunk): void {
+    applyRemoteTurnChunk(chatId: string, chunk: CourierAIChunk): void {
         if (!this.remoteStreamingChatIds.has(chatId)) return;
         const pipeline = this.remotePipelines.get(chatId);
         if (!pipeline) return;
         try {
-            applyChunk(pipeline.reducer, chunk);
-            pipeline.chat.streamingText = pipeline.reducer.streamingText;
+            applyCourierAIChunk(pipeline.assembler, chunk);
+            if (chunk.type === 'text-delta')
+                pipeline.chat.streamingText += chunk.delta;
         } catch (e) {
             console.warn(LOG, 'remote chunk apply failed', e);
         }
@@ -956,9 +990,7 @@ class ChatStore {
         const last = chat.messages[chat.messages.length - 1];
         if (!last || last.role !== 'assistant') return;
         truncateMessageTextParts(last, charLen);
-        const truncated = messageText(last);
-        pipeline.reducer.streamingText = truncated;
-        chat.streamingText = truncated;
+        chat.streamingText = messageText(last);
     }
 
     private closeRemotePipeline(chatId: string): void {
@@ -1006,7 +1038,7 @@ class ChatStore {
         if (!this.remoteStreamingChatIds.has(chatId)) return;
         this.remoteStreamingChatIds.delete(chatId);
         this.closeRemotePipeline(chatId);
-        // Refresh from IDB for canonical state — the extension just saved.
+        // Refresh from IDB for canonical state - the extension just saved.
         await this.refreshChatFromIDB(chatId, {
             context: 'applyRemoteTurnDone: loadChat failed',
             userMessage: "Couldn't refresh chat from storage",

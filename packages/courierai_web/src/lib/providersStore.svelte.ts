@@ -7,7 +7,7 @@ import { reportAppError } from './errorStore.svelte';
 import { loadOpenRouterModels } from './extension';
 import { settingsStore } from './settingsStore.svelte';
 
-const LOG = '[courier:web]';
+const LOG = '[courierai:web]';
 
 class ProvidersStore {
     // OpenRouter's catalog hydrates async; the rest are static. The local

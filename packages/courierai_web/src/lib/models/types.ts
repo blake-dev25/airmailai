@@ -23,15 +23,27 @@ export interface ModelParams {
     };
 }
 
+// Per-tool support marker on a model.
+//   - `true`  - model supports the tool; ext uses the provider's default factory
+//   - string  - pinned tool variant (anthropic versions tool definitions by
+//               date, e.g. 'web_search_20260209'). Ext passes the string straight
+//               through as the Anthropic API tool `type`.
+//   - falsy   - model does not support the tool
+export type ToolSupport = boolean | string;
+
+export interface ModelTools {
+    webSearch?: ToolSupport;
+    webFetch?: ToolSupport;
+    codeExecution?: ToolSupport;
+    searchFetchLinked?: boolean;
+}
+
 export interface ModelOption {
     id: string;
     name: string;
     params: ModelParams;
-    // OpenRouter models preserve catalog input modalities so upload support
-    // can be computed per selected upstream model.
+    tools?: ModelTools;
     inputModalities?: string[];
-    // Marketplace providers (OpenRouter) attach the upstream vendor for
-    // grouping in the picker — undefined for first-party providers.
     vendor?: string;
 }
 
@@ -39,7 +51,5 @@ export interface ProviderOption {
     id: string;
     name: string;
     models: ModelOption[];
-    // Marketplace providers bypass tier curation and group by vendor instead.
-    // Defaults to false (first-party providers use the curated tier system).
     marketplace?: boolean;
 }

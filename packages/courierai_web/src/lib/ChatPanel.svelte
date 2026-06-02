@@ -1,5 +1,5 @@
 <script lang="ts">
-    import type { Attachment } from '@courier/shared';
+    import type { Attachment } from '@courierai/shared';
     import { tick, untrack } from 'svelte';
     import { SvelteSet } from 'svelte/reactivity';
     import { appLifecycle } from './appLifecycle.svelte';
@@ -18,8 +18,8 @@
     import type { ModelOption } from './models';
     import { providersStore } from './providersStore.svelte';
     import { settingsStore } from './settingsStore.svelte';
+    import { createChatScroll } from './chatScroll.svelte';
     import { createSmoothText } from './smoothText.svelte';
-    import { createStickToBottom } from './stickToBottom.svelte';
     import { messageText } from './types';
 
     let systemExpanded = $state(false);
@@ -27,6 +27,7 @@
     // (an index-keyed Set/index would shift onto the wrong message).
     const expandedThinking = new SvelteSet<string>();
     const expandedSources = new SvelteSet<string>();
+    const expandedCode = new SvelteSet<string>();
     let inputText = $state('');
     let messagesEl = $state<HTMLElement | null>(null);
     let messagesContentEl = $state<HTMLElement | null>(null);
@@ -83,37 +84,53 @@
         )
     );
 
-    const stick = createStickToBottom();
+    const chatScroll = createChatScroll();
+
+    function findLastUserMessageEl(): HTMLElement | null {
+        if (!messagesEl) return null;
+        const all = messagesEl.querySelectorAll<HTMLElement>(
+            '[data-msg-role="user"]'
+        );
+        return all.length ? all[all.length - 1] : null;
+    }
 
     const smooth = createSmoothText({
         mode: () => settingsStore.smoothTextMode,
         streaming: () => untrack(() => chatStore.isActiveStreaming),
         onReset: () => {
-            if (untrack(() => settingsStore.autoscroll)) stick.reSticky();
+            if (untrack(() => settingsStore.autoscrollMode) === 'pin-bottom')
+                chatScroll.markAtBottom();
         },
     });
 
     $effect(() => {
         if (!messagesEl || !messagesContentEl) return;
-        return stick.attach(
+        return chatScroll.attach(
             messagesEl,
             messagesContentEl,
-            () => settingsStore.autoscroll
+            () => settingsStore.autoscrollMode,
+            findLastUserMessageEl
         );
     });
 
-    // Split-path read: during streaming, the reducer maintains a fast O(1)
-    // text accumulator on chat.streamingText (see uiMessageReducer.ts). At
-    // stream end, streamingText flips to null and we fall back to
-    // messageText(last) on the saved/loaded message. The two return
-    // identical strings at the handoff instant — no animation glitch.
-    // Don't collapse this back to a single messageText() call: that path is
-    // O(N) per chunk and walks all parts, which is O(N²) over a long turn.
+    // Toggle the spacer / clear it when the user switches modes.
+    $effect(() => {
+        settingsStore.autoscrollMode;
+        chatScroll.onModeChange();
+    });
+
+    // Split-path read: during streaming, chatStore maintains an incremental
+    // text mirror on chat.streamingText. The smooth-text path reads that
+    // mirror instead of rejoining all message parts on every chunk. At stream
+    // end, streamingText flips to null and we fall back to messageText(last)
+    // on the saved/loaded message; those strings should match at handoff.
+    // smoothText still receives the full accumulated target string so it can
+    // drain toward a stable prefix and detect non-prefix resets.
     //
     // Uses $effect.pre (not $effect) so smooth.setRaw lands BEFORE the
     // template's {@const displayContent} re-evaluates. Without that, each
     // chunk renders once with the new rawText but stale smooth.target (the
-    // smooth.target === rawText check fails → falls to rawText branch →
+    // smooth.target === rawText check fails -> falls to rawText branch ->
     // user sees the full chunk dump instead of the smooth drain).
     $effect.pre(() => {
         const streaming = chatStore.activeStreamingText;
@@ -226,10 +243,10 @@
             return;
         }
 
-        stick.scrollToBottom();
         const atts = pendingAttachments;
         pendingAttachments = [];
         chatStore.sendMessage(text, atts.length ? atts : undefined);
+        chatScroll.onSubmit();
         inputText = '';
         if (textareaEl) textareaEl.style.height = '';
     }
@@ -495,7 +512,6 @@
 </script>
 
 <div class="flex-1 flex flex-col overflow-hidden bg-canvas min-w-0">
-    <!-- System prompt -->
     <div class="relative shrink-0 bg-canvas border-b border-border">
         <button
             type="button"
@@ -536,10 +552,9 @@
         {/if}
     </div>
 
-    <!-- Messages -->
     <div class="flex-1 relative min-h-0">
         <div
-            class="absolute top-0 left-0 right-0 h-16 bg-linear-to-b from-canvas to-transparent pointer-events-none z-2 transition-opacity duration-200 {!isAtTop
+            class="absolute top-0 left-0 right-0 h-lh text-sm leading-[1.65] bg-linear-to-b from-canvas to-transparent pointer-events-none z-2 transition-opacity duration-200 {!isAtTop
                 ? 'opacity-100'
                 : 'opacity-0'}"
             aria-hidden="true"
@@ -585,16 +600,24 @@
                         {@const isLastStreaming =
                             chatStore.isActiveStreaming &&
                             i === chatStore.activeMessages.length - 1}
-                        {@const rawText = messageText(message)}
+                        {@const streamingText =
+                            isLastStreaming && message.role === 'assistant'
+                                ? chatStore.activeStreamingText
+                                : null}
+                        {@const messageContent =
+                            streamingText !== null
+                                ? streamingText
+                                : messageText(message)}
                         {@const displayContent =
                             i === chatStore.activeMessages.length - 1 &&
                             message.role === 'assistant' &&
-                            smooth.target === rawText
+                            smooth.target === messageContent
                                 ? smooth.display
-                                : rawText}
+                                : messageContent}
                         <MessageItem
                             {message}
                             index={i}
+                            {messageContent}
                             {displayContent}
                             isStreaming={chatStore.isActiveStreaming}
                             {isLastStreaming}
@@ -604,6 +627,7 @@
                             hovered={hoveredMessageId === message.id}
                             thinkingExpanded={expandedThinking.has(message.id)}
                             sourcesExpanded={expandedSources.has(message.id)}
+                            codeExpanded={expandedCode.has(message.id)}
                             onhoverenter={() => setHovered(message.id)}
                             onhoverleave={() => setHovered(null)}
                             onstartedit={(content, bubbleEl) =>
@@ -620,18 +644,27 @@
                                     expandedSources.delete(message.id);
                                 else expandedSources.add(message.id);
                             }}
+                            oncodetoggle={() => {
+                                if (expandedCode.has(message.id))
+                                    expandedCode.delete(message.id);
+                                else expandedCode.add(message.id);
+                            }}
                             onretry={() => handleRetry(i)}
                             ondelete={() => chatStore.deleteMessage(i)}
                         />
                     {/each}
+                    <div
+                        aria-hidden="true"
+                        style:height="{chatScroll.spacerHeight}px"
+                    ></div>
                 {/if}
             </div>
         </div>
-        {#if !stick.sticky}
+        {#if !chatScroll.atBottom}
             <button
                 type="button"
                 class="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center justify-center w-7.5 h-7.5 bg-surface-sunken border border-border rounded-full text-fg cursor-pointer z-5 transition-[background-color] duration-150 animate-fade-up hover:bg-border"
-                onclick={() => stick.scrollToBottom()}
+                onclick={() => chatScroll.scrollToBottom()}
                 aria-label="Scroll to bottom"
             >
                 <Icon name="chevron-down" />
@@ -639,7 +672,6 @@
         {/if}
     </div>
 
-    <!-- App error -->
     {#if errorStore.appError}
         <div
             class="shrink-0 flex items-center gap-3 px-4 py-2 text-sm text-accent-fg border-t border-border bg-canvas"
@@ -659,7 +691,6 @@
         </div>
     {/if}
 
-    <!-- Stream error -->
     {#if chatStore.activeStreamError}
         <div
             class="shrink-0 flex items-center gap-3 px-4 py-2 text-sm text-accent-fg border-t border-border bg-canvas"
@@ -679,7 +710,6 @@
         </div>
     {/if}
 
-    <!-- Input -->
     <div class="shrink-0 border-t border-border bg-canvas">
         {#if fileErrors.length}
             <div class="flex flex-col gap-1 px-4 pt-2">
@@ -781,6 +811,7 @@
             <textarea
                 class="flex-1 min-h-[calc(22px+0.875rem*1.5)] max-h-50 px-3.5 py-2.5 bg-canvas border border-border rounded-lg text-fg font-sans text-sm leading-normal resize-none box-border outline-none transition-[border-color] duration-150 focus:border-accent-fg placeholder:text-fg-muted [&::-webkit-scrollbar]:hidden"
                 placeholder="Write a message"
+                aria-label="Message"
                 rows="1"
                 bind:value={inputText}
                 bind:this={textareaEl}

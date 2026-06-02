@@ -1,6 +1,6 @@
-import type { OpenRouterModel } from '@courier/shared';
+import type { OpenRouterModel } from '@courierai/shared';
 
-const LOG = '[courier:ext]';
+const LOG = '[courierai:ext]';
 
 // Stale-while-revalidate window. Within FRESH_MS we never hit the network;
 // past it we serve stale instantly and refresh in the background.
@@ -8,7 +8,7 @@ const FRESH_MS = 24 * 60 * 60 * 1000;
 // On fetch error we set a cooldown so successive picker opens can't hammer
 // openrouter.ai. Stale cache (if any) keeps serving in the meantime.
 const ERROR_COOLDOWN_MS = 5 * 60 * 1000;
-const CACHE_VERSION = 3;
+export const CACHE_VERSION = 3;
 
 export const CACHE_KEY = 'openrouter_models_cache';
 const URL = 'https://openrouter.ai/api/v1/models/user';
@@ -85,7 +85,7 @@ async function writeCache(entry: CacheEntry): Promise<void> {
 }
 
 // Returns the freshest models we can serve right now. Caller never blocks on
-// the network when stale cache exists — we kick off a background refresh and
+// the network when stale cache exists - we kick off a background refresh and
 // return the stale list immediately. Without an API key, this is cache-only.
 export async function getOpenRouterModels(
     apiKey?: string
@@ -102,7 +102,7 @@ export async function getOpenRouterModels(
     }
 
     if (cache?.nextRetryAt && now < cache.nextRetryAt) {
-        // In error cooldown — keep serving stale even if past FRESH_MS.
+        // In error cooldown - keep serving stale even if past FRESH_MS.
         return cache.models.length > 0 ? cache.models : null;
     }
 
@@ -112,7 +112,7 @@ export async function getOpenRouterModels(
         return cache.models;
     }
 
-    // Cold start — must wait for the first fetch. We rethrow so the web side
+    // Cold start - must wait for the first fetch. We rethrow so the web side
     // can surface "OpenRouter unreachable" rather than silently showing an
     // empty model picker, but we still seed the cooldown to avoid hammering.
     try {

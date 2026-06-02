@@ -7,6 +7,28 @@ export const ANTHROPIC: ProviderOption = {
     name: 'Anthropic',
     models: [
         {
+            id: 'claude-opus-4-8',
+            name: 'Claude Opus 4.8',
+            params: {
+                contextWindow: 1000000,
+                maxOutputTokens: 128000,
+                defaultMaxTokens: 8192,
+                temperatureMax: 1,
+                defaultTemperature: 1,
+                knowledgeCutoff: 'Jan 2026',
+                thinking: {
+                    levels: ['none', 'low', 'medium', 'high', 'max'],
+                    defaultLevel: 'high',
+                    adaptive: 'required',
+                },
+            },
+            tools: {
+                webSearch: 'web_search_20260209',
+                webFetch: 'web_fetch_20260209',
+                codeExecution: 'code_execution_20260120',
+            },
+        },
+        {
             id: 'claude-opus-4-7',
             name: 'Claude Opus 4.7',
             params: {
@@ -21,6 +43,11 @@ export const ANTHROPIC: ProviderOption = {
                     defaultLevel: 'high',
                     adaptive: 'required',
                 },
+            },
+            tools: {
+                webSearch: 'web_search_20260209',
+                webFetch: 'web_fetch_20260209',
+                codeExecution: 'code_execution_20260120',
             },
         },
         {
@@ -39,6 +66,11 @@ export const ANTHROPIC: ProviderOption = {
                     adaptive: 'optional',
                 },
             },
+            tools: {
+                webSearch: 'web_search_20260209',
+                webFetch: 'web_fetch_20260209',
+                codeExecution: 'code_execution_20260120',
+            },
         },
         {
             id: 'claude-opus-4-6',
@@ -56,6 +88,11 @@ export const ANTHROPIC: ProviderOption = {
                     adaptive: 'optional',
                 },
             },
+            tools: {
+                webSearch: 'web_search_20260209',
+                webFetch: 'web_fetch_20260209',
+                codeExecution: 'code_execution_20260120',
+            },
         },
         {
             id: 'claude-opus-4-5-20251101',
@@ -71,6 +108,11 @@ export const ANTHROPIC: ProviderOption = {
                     defaultLevel: 'high',
                 },
             },
+            tools: {
+                webSearch: 'web_search_20250305',
+                webFetch: 'web_fetch_20250910',
+                codeExecution: 'code_execution_20260120',
+            },
         },
         {
             id: 'claude-haiku-4-5',
@@ -83,6 +125,11 @@ export const ANTHROPIC: ProviderOption = {
                 defaultTemperature: 1,
                 knowledgeCutoff: 'Feb 2025',
             },
+            tools: {
+                webSearch: 'web_search_20250305',
+                webFetch: 'web_fetch_20250910',
+                codeExecution: 'code_execution_20250825',
+            },
         },
         {
             id: 'claude-sonnet-4-5-20250929',
@@ -93,6 +140,11 @@ export const ANTHROPIC: ProviderOption = {
                 defaultMaxTokens: 8192,
                 temperatureMax: 1,
                 defaultTemperature: 1,
+            },
+            tools: {
+                webSearch: 'web_search_20250305',
+                webFetch: 'web_fetch_20250910',
+                codeExecution: 'code_execution_20260120',
             },
         },
         {
@@ -105,6 +157,11 @@ export const ANTHROPIC: ProviderOption = {
                 temperatureMax: 1,
                 defaultTemperature: 1,
             },
+            tools: {
+                webSearch: 'web_search_20250305',
+                webFetch: 'web_fetch_20250910',
+                codeExecution: 'code_execution_20250825',
+            },
         },
         {
             id: 'claude-opus-4-20250514',
@@ -116,6 +173,11 @@ export const ANTHROPIC: ProviderOption = {
                 temperatureMax: 1,
                 defaultTemperature: 1,
             },
+            tools: {
+                webSearch: 'web_search_20250305',
+                webFetch: 'web_fetch_20250910',
+                codeExecution: 'code_execution_20250825',
+            },
         },
         {
             id: 'claude-sonnet-4-20250514',
@@ -126,6 +188,11 @@ export const ANTHROPIC: ProviderOption = {
                 defaultMaxTokens: 8192,
                 temperatureMax: 1,
                 defaultTemperature: 1,
+            },
+            tools: {
+                webSearch: 'web_search_20250305',
+                webFetch: 'web_fetch_20250910',
+                codeExecution: 'code_execution_20250825',
             },
         },
     ],

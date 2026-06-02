@@ -1,7 +1,7 @@
-import type { OpenRouterModel } from '@courier/shared';
+import type { OpenRouterModel } from '@courierai/shared';
 import type { ModelOption, ProviderOption } from './types';
 
-// Skeleton — hydrated at runtime from the extension's OpenRouter cache.
+// Skeleton - hydrated at runtime from the extension's OpenRouter cache.
 // Until hydration runs the picker shows an empty list under this provider.
 export const OPENROUTER: ProviderOption = {
     id: 'openrouter',
@@ -39,6 +39,9 @@ function rawToOption(m: OpenRouterModel): ModelOption {
                   }
                 : {}),
         },
+        // OpenRouter server tools run model-agnostically; their docs say
+        // "any model can call during a request". Code execution isn't offered.
+        tools: { webSearch: true, webFetch: true },
     };
 }
 

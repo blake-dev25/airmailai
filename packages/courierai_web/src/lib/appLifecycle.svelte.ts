@@ -8,7 +8,7 @@ import { waitForExtension } from './extension';
 import { providersStore } from './providersStore.svelte';
 import { settingsStore } from './settingsStore.svelte';
 
-const LOG = '[courier:web]';
+const LOG = '[courierai:web]';
 
 class AppLifecycle {
     // Flips true after the initial extension/settings/chats load completes
@@ -29,7 +29,7 @@ class AppLifecycle {
             // When the user changes tier and the active model is no longer in
             // the filtered list, snap to the first model of the first filtered
             // provider. Skip the snap when the active chat already has
-            // messages — the stored model is the source of truth and stays
+            // messages - the stored model is the source of truth and stays
             // visible even if out-of-tier.
             $effect(() => {
                 const tier = settingsStore.modelTier;
@@ -91,7 +91,7 @@ class AppLifecycle {
         }
         console.log(LOG, 'extension detected:', detected);
 
-        // When the extension isn't installed, skip every ext-bound call —
+        // When the extension isn't installed, skip every ext-bound call -
         // they'd all reject with "Extension not detected" and spam the error
         // banner. UI runs on defaults until the user installs and reloads.
         // Mid-session ext death is still surfaced loudly: runtime ops (save,
@@ -129,8 +129,6 @@ class AppLifecycle {
     }
 
     enterDemoMode(): void {
-        // Pause settings persistence so demo edits don't overwrite real
-        // saved settings.
         settingsStore.paused = true;
         chatStore.loadDemo();
         this.showExtensionPrompt = false;

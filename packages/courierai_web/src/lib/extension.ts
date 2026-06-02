@@ -2,7 +2,7 @@ import type {
     BroadcastEvent,
     BroadcastRequest,
     ChatMeta,
-    CourierUIMessageChunk,
+    CourierAIChunk,
     ExtensionStreamEvent,
     HydratedStoredMessage,
     OpenRouterModel,
@@ -13,15 +13,15 @@ import type {
     StreamErrorSource,
     TurnStartRequest,
     UserSettings,
-} from '@courier/shared';
+} from '@courierai/shared';
 
 export interface StreamHandlers {
     // Fires for each chunk arriving from the ext. Caller is responsible for
-    // feeding the chunk into its UIMessageReducer — we keep the reducer
-    // out of this transport layer so it can be reused symmetrically by the
-    // cross-tab broadcast pipeline.
-    onChunk: (chunk: CourierUIMessageChunk) => void;
-    // Terminal success — the ext has saved the row. No usage payload here
+    // feeding the chunk into its reducer - we keep the reducer out of this
+    // transport layer so it can be reused symmetrically by the cross-tab
+    // broadcast pipeline.
+    onChunk: (chunk: CourierAIChunk) => void;
+    // Terminal success - the ext has saved the row. No usage payload here
     // because tokens land via message-metadata chunks, surfaced through
     // onChunk.
     onDone: () => void;
@@ -42,19 +42,19 @@ export interface StreamHandle {
 // turn-start so the originating tab can ignore its own echo.
 export const tabId = crypto.randomUUID();
 
-const LOG = '[courier:web]';
+const LOG = '[courierai:web]';
 // Cadence for the broadcast-port heartbeat. Comfortably inside Chrome's 30s
-// SW idle timer so any tab being open keeps the worker warm — no separate
+// SW idle timer so any tab being open keeps the worker warm - no separate
 // per-stream keepalive needed.
 const KEEPALIVE_MS = 20_000;
 
 // The content script runs at document_start and writes
 // `document.documentElement.dataset.courieraiExtId` before any page script
 // runs. Reading it synchronously at module load gives us a CPU-throttle-proof
-// presence check — no message round-trip required.
+// presence check - no message round-trip required.
 //
 // TODO: once the extension is published with a static ID, verify the dataset
-// value matches the expected ID before trusting it — defends against another
+// value matches the expected ID before trusting it - defends against another
 // installed extension impersonating ours by writing the same dataset key.
 let extensionId: string | null =
     document.documentElement.dataset.courieraiExtId ?? null;
@@ -62,7 +62,10 @@ if (extensionId) console.log(LOG, 'extension ID from DOM marker', extensionId);
 
 // Still listen for postMessage as a fallback (e.g. content script re-announces).
 window.addEventListener('message', (e: MessageEvent) => {
-    if (e.data?.type === 'COURIER_EXT_READY' && typeof e.data.id === 'string') {
+    if (
+        e.data?.type === 'COURIERAI_EXT_READY' &&
+        typeof e.data.id === 'string'
+    ) {
         extensionId = e.data.id;
         console.log(LOG, 'extension ID received', extensionId);
     }
@@ -81,7 +84,7 @@ export function waitForExtension(): Promise<boolean> {
 
 // Throws if the extension isn't reachable or returns an error response. Every
 // caller is expected to either await + .catch, or rely on the storage helpers
-// below — which all surface errors loudly rather than swallowing them.
+// below - which all surface errors loudly rather than swallowing them.
 async function sendStorageMessage(
     request: StorageRequest
 ): Promise<StorageResponse> {
@@ -93,7 +96,7 @@ async function sendStorageMessage(
         );
         throw new Error('Extension not detected.');
     }
-    console.log(LOG, '→ storage', request.type);
+    console.log(LOG, '-> storage', request.type);
     const response = await new Promise<StorageResponse | undefined>(
         (resolve) => {
             chrome.runtime.sendMessage(
@@ -104,16 +107,16 @@ async function sendStorageMessage(
         }
     );
     if (!response) {
-        console.error(LOG, '← storage: no response', request.type);
+        console.error(LOG, '<- storage: no response', request.type);
         throw new Error(
             `Extension didn't respond to ${request.type}. It may have been disabled or updated.`
         );
     }
     if (response.type === 'error') {
-        console.error(LOG, '← storage error', response.message);
+        console.error(LOG, '<- storage error', response.message);
         throw new Error(response.message);
     }
-    console.log(LOG, '← storage', response.type);
+    console.log(LOG, '<- storage', response.type);
     return response;
 }
 
@@ -202,7 +205,7 @@ export async function loadChat(chatId: string): Promise<StoredChat | null> {
 }
 
 // Returns null when there's no API key + no cache (legitimate empty state).
-// Throws on fetch failure — caller surfaces via setAppError.
+// Throws on fetch failure - caller surfaces via setAppError.
 export async function loadOpenRouterModels(): Promise<
     OpenRouterModel[] | null
 > {
@@ -232,10 +235,9 @@ export async function clearAllStorage(): Promise<void> {
 
 // Wraps a port-based turn stream. Chunks from the ext are forwarded one-by-
 // one to the caller via `onChunk`; the caller feeds them into its own
-// UIMessageReducer (see uiMessageReducer.ts) which mutates the assistant
-// placeholder's parts in place. Keeping the reducer out of the transport
-// layer lets the cross-tab broadcast pipeline reuse the same reducer
-// symmetrically.
+// message assembler which mutates the assistant placeholder's parts in
+// place. Keeping the assembler out of the transport layer lets the cross-tab
+// broadcast pipeline reuse the same fold symmetrically.
 export function sendToExtension(
     request: Omit<TurnStartRequest, 'type'>,
     handlers: StreamHandlers
@@ -249,7 +251,7 @@ export function sendToExtension(
         return { abort: () => {}, stop: () => {} };
     }
 
-    console.log(LOG, '→ chat request', {
+    console.log(LOG, '-> chat request', {
         chatId: request.chatId,
         provider: request.provider,
         model: request.model,
@@ -278,7 +280,7 @@ export function sendToExtension(
                 done = true;
                 console.error(
                     LOG,
-                    '← stream error',
+                    '<- stream error',
                     event.source,
                     event.message
                 );
@@ -351,7 +353,7 @@ export function subscribeToBroadcast(handlers: {
         if (unsubscribed) return;
         clearReconnect();
         if (!extensionId) {
-            // Extension not detected yet — try again shortly.
+            // Extension not detected yet - try again shortly.
             reconnectTimer = setTimeout(connect, 1000);
             return;
         }
@@ -414,7 +416,7 @@ export function subscribeToBroadcast(handlers: {
     }
 
     // BFCache handling: Chrome closes the port channel when the page enters
-    // bfcache (Chrome 123+). pagehide+persisted means we're freezing — drop
+    // bfcache (Chrome 123+). pagehide+persisted means we're freezing - drop
     // the dead reference so the post-restore keepalive can't fire on it.
     // pageshow+persisted means we just thawed; reconnect immediately rather
     // than waiting for the disconnect-driven 1s backoff.

@@ -1,5 +1,3 @@
-import type { UIMessage, UIMessageChunk } from 'ai';
-
 // Persisted form. Carries everything needed to render an attachment chip and
 // look up the bytes by content-hash. Storage lives in the ext's `files` IDB
 // store keyed by `hash`, dedup'd via refCount across chats.
@@ -11,62 +9,253 @@ export interface AttachmentRef {
 }
 
 // In-flight form. Adds the base64-encoded bytes used by fresh uploads. Bytes
-// flow web → ext only on put_message — once stored in the files store, only
+// flow web -> ext only on put_message - once stored in the files store, only
 // the ref travels.
 export interface Attachment extends AttachmentRef {
     encodedSizeBytes: number;
     data: string; // base64
 }
 
-// Metadata carried on every CourierUIMessage. `createdAt` drives load-order
-// in IDB (compound index reaches into uiMessage.metadata.createdAt) and is
+// Metadata carried on every CourierAIMessage. `createdAt` drives load-order
+// in IDB (compound index reaches into message.metadata.createdAt) and is
 // also surfaced in the UI. `tokens` lands on assistant messages once usage
 // is reported and feeds the footer/header indicators.
-export interface CourierMessageMetadata {
+export interface CourierAIMessageMetadata {
     createdAt: number;
     tokens?: { input: number; output: number };
+    // Normalized finish reason. Refusals fold into a text part + this flag
+    // rather than a dedicated part (each provider spells refusal differently;
+    // we map them all to 'refusal').
+    stopReason?: 'stop' | 'length' | 'refusal' | 'content-filter' | 'error';
 }
 
-// Custom `data-*` parts. The only one today is `attachment`: a content-
-// addressed reference whose bytes live in the ext's files store, looked up
-// via convertDataPart on the way to the provider. Bytes never live in the
-// persisted UIMessage — keeps rows small and dedupes across re-uses.
-//
-// Must satisfy AI SDK's `UIDataTypes = Record<string, unknown>` constraint,
-// so we use a `type` with an index signature rather than an `interface`.
-export type CourierDataParts = {
-    attachment: {
+// ============================================================================
+// OWNED STREAMING PROTOCOL (re-derived from provider response schemas)
+// ----------------------------------------------------------------------------
+// Built UP from what Anthropic / OpenAI / Google / OpenRouter actually emit,
+// NOT trimmed down from a generic SDK message type. Decontamination rule:
+// every type/field traces to a provider API or a product need.
+// ============================================================================
+
+// Provider-namespaced opaque metadata (our replacement for `ai`'s
+// ProviderMetadata). Outer key = provider id ('anthropic'); inner = that
+// provider's blob. Carries replay-critical bits we cannot re-derive: Anthropic
+// thinking `signature` + web_search_result `encrypted_content`, Google
+// `thoughtSignature`. (OpenAI reasoning is NOT replayed - store:false + the
+// Sources text-fold, see plan D3.)
+export type CourierAIProviderMetadata = Record<string, Record<string, unknown>>;
+
+// The server-executed tools we support. CLOSED on purpose - no open
+// `tool-${string}` generic (that's what forced the cast sites in the old
+// reducer). Adding a tool = extend this union + the tool part/chunk below.
+export type CourierAIToolName = 'web_search' | 'web_fetch' | 'code_execution';
+
+// An assistant/user message is an ORDERED list of these. Order is the point -
+// it preserves reasoning <-> text <-> tool interleave in render order.
+export type CourierAIPart =
+    | CourierAITextPart
+    | CourierAIReasoningPart
+    | CourierAIToolPart
+    | CourierAISourceUrlPart
+    | CourierAISourceDocumentPart
+    | CourierAIFilePart
+    | CourierAIDataAttachmentPart;
+
+export interface CourierAITextPart {
+    type: 'text';
+    text: string;
+    state: 'streaming' | 'done';
+}
+
+// thinking / reasoning summary. providerMetadata carries the replay token the
+// producing provider needs to re-send this on a later turn: anthropic.signature
+// (ThinkingBlock), google.thoughtSignature.
+export interface CourierAIReasoningPart {
+    type: 'reasoning';
+    text: string;
+    state: 'streaming' | 'done';
+    providerMetadata?: CourierAIProviderMetadata;
+}
+
+// A server tool invocation, discriminated by `name` so input/output type per
+// tool with no casts. web_search emits its results as separate source-url
+// parts (not in `output`); code_execution emits produced images/files as
+// separate file parts.
+type CourierAIToolPartBase = {
+    type: 'tool';
+    toolCallId: string;
+    state: 'running' | 'done' | 'error';
+    errorText?: string;
+    providerMetadata?: CourierAIProviderMetadata;
+};
+export type CourierAIToolPart =
+    | (CourierAIToolPartBase & {
+          name: 'web_search';
+          input?: { query?: string };
+      })
+    | (CourierAIToolPartBase & { name: 'web_fetch'; input?: { url?: string } })
+    | (CourierAIToolPartBase & {
+          name: 'code_execution';
+          input?: { code?: string };
+          output?: { stdout?: string; stderr?: string };
+      });
+
+// Web-search citation. providerMetadata.anthropic.encrypted_content carries the
+// blob Anthropic needs to round-trip the result natively; for OpenAI/Google/
+// OpenRouter url+title suffice (replay is the Sources text-fold).
+export interface CourierAISourceUrlPart {
+    type: 'source-url';
+    sourceId: string;
+    url: string;
+    title?: string;
+    providerMetadata?: CourierAIProviderMetadata;
+}
+
+// Document/PDF citation (Anthropic CitationPageLocation/CharLocation, OpenAI
+// file_citation). citedText + location are what make these richer than a URL.
+export interface CourierAISourceDocumentPart {
+    type: 'source-document';
+    sourceId: string;
+    title?: string;
+    mediaType?: string;
+    citedText?: string;
+    location?: { kind: 'page' | 'char'; start: number; end: number };
+    providerMetadata?: CourierAIProviderMetadata;
+}
+
+// Assistant-produced file/image (code-execution output, inline image data).
+// `url` is a remote URL or a data: URL the ext inlines.
+export interface CourierAIFilePart {
+    type: 'file';
+    mediaType: string;
+    url: string;
+    filename?: string;
+    providerMetadata?: CourierAIProviderMetadata;
+}
+
+// Our own part (no provider emits this): a content-addressed user upload whose
+// bytes live in the ext files store, looked up by hash on the way to a provider.
+export interface CourierAIDataAttachmentPart {
+    type: 'data-attachment';
+    id?: string;
+    data: {
         hash: string;
         name: string;
         mediaType: string;
         sizeBytes: number;
     };
-} & Record<string, unknown>;
-
-export type CourierUIMessage = UIMessage<
-    CourierMessageMetadata,
-    CourierDataParts
->;
-
-export type CourierUIMessageChunk = UIMessageChunk<
-    CourierMessageMetadata,
-    CourierDataParts
->;
-
-// Persisted form. One IDB row per message, keyPath `['chatId', 'uiMessage.id']`,
-// ordered by index `['chatId', 'uiMessage.metadata.createdAt', 'uiMessage.id']`.
-export interface StoredMessage {
-    chatId: string;
-    uiMessage: CourierUIMessage;
 }
 
-// In-flight form sent from web → ext via put_message. `freshBlobs` carries
+// A full message - an ordered list of parts + metadata. System prompt is
+// carried separately (TurnStartRequest.system), so role is user|assistant here.
+export interface CourierAIMessage {
+    id: string;
+    role: 'user' | 'assistant';
+    parts: CourierAIPart[];
+    metadata: CourierAIMessageMetadata;
+}
+
+// The streaming deltas the ext emits and the web folds into parts. start/delta/
+// end + id is the interleave mechanism; everything else is atomic (server tools
+// + citations arrive whole). error/abort are NOT here - they ride the port
+// envelope (ExtensionStreamEvent). No step boundaries - that was the SDK's
+// agent-loop concept; our server tools run inside one provider response.
+export type CourierAIChunk =
+    | { type: 'text-start'; id: string }
+    | { type: 'text-delta'; id: string; delta: string }
+    | { type: 'text-end'; id: string }
+    | { type: 'reasoning-start'; id: string }
+    | { type: 'reasoning-delta'; id: string; delta: string }
+    | {
+          type: 'reasoning-end';
+          id: string;
+          providerMetadata?: CourierAIProviderMetadata;
+      }
+    | {
+          type: 'tool-call';
+          toolCallId: string;
+          name: 'web_search';
+          input?: { query?: string };
+      }
+    | {
+          type: 'tool-call';
+          toolCallId: string;
+          name: 'web_fetch';
+          input?: { url?: string };
+      }
+    | {
+          type: 'tool-call';
+          toolCallId: string;
+          name: 'code_execution';
+          input?: { code?: string };
+      }
+    | {
+          type: 'tool-result';
+          toolCallId: string;
+          output?: { stdout?: string; stderr?: string };
+          errorText?: string;
+      }
+    | {
+          type: 'source-url';
+          sourceId: string;
+          url: string;
+          title?: string;
+          providerMetadata?: CourierAIProviderMetadata;
+      }
+    | {
+          type: 'source-document';
+          sourceId: string;
+          title?: string;
+          mediaType?: string;
+          citedText?: string;
+          location?: { kind: 'page' | 'char'; start: number; end: number };
+          providerMetadata?: CourierAIProviderMetadata;
+      }
+    | {
+          type: 'file';
+          mediaType: string;
+          url: string;
+          filename?: string;
+          providerMetadata?: CourierAIProviderMetadata;
+      }
+    | {
+          type: 'start';
+          messageId?: string;
+          metadata?: Partial<CourierAIMessageMetadata>;
+      }
+    | { type: 'finish'; metadata?: Partial<CourierAIMessageMetadata> };
+
+// Provider stream contract. Each provider builds its request from
+// CourierAIMessage[], opens the SSE, and maps provider events to our chunk
+// vocabulary; background.ts pumps the iterator. createdAt is set by the
+// message producer, so provider chunks carry only partial metadata
+// (tokens/stopReason).
+export interface ProviderStreamArgs {
+    apiKey: string;
+    model: string;
+    messages: CourierAIMessage[];
+    system?: string;
+    params: Record<string, unknown>;
+    signal?: AbortSignal;
+}
+export type ProviderStream = (
+    args: ProviderStreamArgs
+) => AsyncIterable<CourierAIChunk>;
+
+// Persisted form. One IDB row per message, keyPath `['chatId', 'message.id']`,
+// ordered by index `['chatId', 'message.metadata.createdAt', 'message.id']`.
+export interface StoredMessage {
+    chatId: string;
+    message: CourierAIMessage;
+}
+
+// In-flight form sent from web -> ext via put_message. `freshBlobs` carries
 // the base64 bytes for any new `data-attachment` parts whose hash isn't yet
 // in the files store. The ext extracts them into the files store and
 // persists the message with bare refs. Map keys are the attachment hashes.
 export interface HydratedStoredMessage {
     chatId: string;
-    uiMessage: CourierUIMessage;
+    message: CourierAIMessage;
     freshBlobs?: Record<string, { mediaType: string; base64: string }>;
 }
 
@@ -79,7 +268,7 @@ export interface HydratedStoredMessage {
 //
 // `history` is the pre-turn message state used ONLY for cross-tab broadcast
 // (so mirror tabs can render the chat instantly). The extension does NOT
-// persist it — user messages and edits are the web's responsibility (via
+// persist it - user messages and edits are the web's responsibility (via
 // put_message / save_meta / etc), the terminal save just appends one new
 // assistant row.
 export interface TurnStartRequest {
@@ -92,8 +281,8 @@ export interface TurnStartRequest {
     // `data-attachment` parts must reference hashes already in the ext's
     // files store (the web persists the user message + bytes before
     // sending this request).
-    messages: CourierUIMessage[];
-    // Optional system prompt; applied via streamText's `system` param.
+    messages: CourierAIMessage[];
+    // Optional system prompt, carried separately from the message list.
     system?: string;
     params?: Record<string, unknown>;
     meta: ChatMeta;
@@ -113,34 +302,25 @@ export interface TurnStopRequest {
     truncateTo: number;
 }
 
-// No-op heartbeat sent over the existing stream port while a provider is
-// quiet. Chrome MV3 keeps the worker alive when messages move over a port;
-// simply having the port open is not enough.
-export interface TurnKeepaliveRequest {
-    type: 'keepalive';
-}
-
-export type TurnRequest =
-    | TurnStartRequest
-    | TurnStopRequest
-    | TurnKeepaliveRequest;
+export type TurnRequest = TurnStartRequest | TurnStopRequest;
 
 export type StreamErrorSource = 'api' | 'extension';
 
-// Sent from ext → source tab over the turn port. UIMessageChunk passes
-// through verbatim — that's the wire protocol. Pre-stream errors (no API
-// key, hydrate failure) get their own envelope so we can attribute them
-// to the ext rather than the API; in-stream errors arrive as inline
-// `{ type: 'error', errorText }` chunks per the AI SDK spec.
+// Sent from ext -> source tab over the turn port. CourierAIChunk values pass
+// through verbatim as `chunk` events - that's the wire protocol. Errors never
+// ride as chunks; they surface as the `error` event below, with `source`
+// attributing them to the ext (pre-stream: no API key, hydrate failure) or
+// the API (in-stream).
 export type ExtensionStreamEvent =
-    | { type: 'chunk'; chunk: CourierUIMessageChunk }
+    | { type: 'chunk'; chunk: CourierAIChunk }
     | { type: 'done' }
     | { type: 'error'; source: StreamErrorSource; message: string };
 
 // Sent on the long-lived 'broadcast' port from the extension to every
-// connected tab so tabs can mirror cross-tab turn lifecycle. The originating
-// tab ignores its own turn-start (sourceTabId === own tabId); other events
-// are classified by membership in remoteStreamingChatIds.
+// connected tab so tabs can mirror cross-tab turn lifecycle. The extension
+// skips the source tab server-side (each broadcast port is tagged with its
+// sourceTabId via the 'register' message), so events arrive only at mirror
+// tabs.
 export type BroadcastEvent =
     | {
           type: 'turn-start';
@@ -153,14 +333,14 @@ export type BroadcastEvent =
     | {
           type: 'turn-chunk';
           chatId: string;
-          chunk: CourierUIMessageChunk;
+          chunk: CourierAIChunk;
       }
     | { type: 'turn-done'; chatId: string }
     | { type: 'turn-error'; chatId: string; message: string }
     | { type: 'turn-aborted'; chatId: string }
     // Sent immediately after a stop, before turn-done. Mirror tabs snap their
     // assistant placeholder's text parts to `charLen` so every tab shows the
-    // same final text — without this, mirror tabs would display all the
+    // same final text - without this, mirror tabs would display all the
     // chunks that arrived before stop and then visibly shrink on the IDB
     // refresh that turn-done triggers.
     | { type: 'turn-truncate'; chatId: string; charLen: number };
@@ -191,21 +371,28 @@ export interface UserSettings {
     smoothTextMode: 'smooth' | 'boost-on-complete' | 'dump-on-complete' | 'raw';
     submitKeystroke: 'enter' | 'ctrl+enter';
     modelTier: 'latest' | 'previous' | 'legacy';
-    autoscroll: boolean;
+    autoscrollMode: 'pin-user-message' | 'pin-bottom' | 'off';
+    // Master toggles in Advanced settings. Gate whether the corresponding
+    // per-chat tool toggle is rendered in ModelConfig at all.
     enableWebSearch: boolean;
+    enableWebFetch: boolean;
+    enableCodeExecution: boolean;
     providerId: string;
     modelId: string;
     temperature: number;
     maxTokens: number;
     thinkingLevel: string;
     adaptiveThinking: boolean;
+    // Per-chat tool toggles (also act as defaults for new chats).
     webSearch: boolean;
+    webFetch: boolean;
+    codeExecution: boolean;
     tagOpenRouterRequests: boolean;
     // Content hash of the last accepted ToS/Privacy pair. Empty/missing = never agreed.
     legalAcceptedVersion: string;
 }
 
-// The mapped-type constraint forces every UserSettings field to appear here —
+// The mapped-type constraint forces every UserSettings field to appear here -
 // adding a field to UserSettings without listing it here is a compile error.
 const SETTINGS_KEY_MAP: { [K in keyof UserSettings]: 0 } = {
     theme: 0,
@@ -214,8 +401,10 @@ const SETTINGS_KEY_MAP: { [K in keyof UserSettings]: 0 } = {
     smoothTextMode: 0,
     submitKeystroke: 0,
     modelTier: 0,
-    autoscroll: 0,
+    autoscrollMode: 0,
     enableWebSearch: 0,
+    enableWebFetch: 0,
+    enableCodeExecution: 0,
     providerId: 0,
     modelId: 0,
     temperature: 0,
@@ -223,6 +412,8 @@ const SETTINGS_KEY_MAP: { [K in keyof UserSettings]: 0 } = {
     thinkingLevel: 0,
     adaptiveThinking: 0,
     webSearch: 0,
+    webFetch: 0,
+    codeExecution: 0,
     tagOpenRouterRequests: 0,
     legalAcceptedVersion: 0,
 };
@@ -241,12 +432,13 @@ export interface ChatMeta {
     thinkingLevel: string;
     adaptiveThinking: boolean;
     webSearch: boolean;
+    webFetch: boolean;
+    codeExecution: boolean;
     systemPrompt: string;
 }
 
-// Aggregated form: a chat with all its messages, the canonical "load a chat
-// for the UI" shape. Assembled by the extension from the meta row + a range
-// query on chat_messages.
+// All messages for one chat, in load order. Meta is loaded separately via
+// load_chat_metas.
 export interface StoredChat {
     id: string;
     messages: StoredMessage[];
@@ -270,7 +462,7 @@ export interface OpenRouterModel {
 // Sent via chrome.runtime.sendMessage for one-off storage operations.
 //
 // Per-message granularity (put_message / delete_message / delete_messages_after)
-// replaces the old blob-style save_chat — writes to disjoint rows don't race,
+// replaces the old blob-style save_chat - writes to disjoint rows don't race,
 // so renames/edits/stream-finalize can interleave safely without locks.
 export type StorageRequest =
     | { type: 'save_key'; provider: string; apiKey: string }
@@ -292,7 +484,7 @@ export type StorageRequest =
     | { type: 'clear_chats' }
     | { type: 'clear_all' };
 
-// Per-area byte counts shown in Settings → Storage.
+// Per-area byte counts shown in Settings -> Storage.
 export interface StorageUsage {
     localSettingsBytes: number;
     openRouterCacheBytes: number;

@@ -4,11 +4,14 @@
         "lib": ["ES2023"],
         "module": "ESNext",
         "moduleResolution": "bundler",
+        "paths": {
+            "@courierai/shared": ["../packages/shared/src/index.ts"]
+        },
         "types": ["node", "bun"],
         "strict": true,
         "noEmit": true,
         "skipLibCheck": true,
         "moduleDetection": "force"
     },
-    "include": ["*.ts"]
+    "include": ["**/*.ts"]
 }

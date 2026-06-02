@@ -35,3 +35,9 @@ Thumbs.db
 # deploy scratch/etc
 .deploy-tmp/
 .tmp/
+
+# playwright generated artifacts
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/

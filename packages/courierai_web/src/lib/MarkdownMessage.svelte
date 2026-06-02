@@ -28,7 +28,6 @@
 ></div>
 
 <style>
-    /* Code block wrapper — holds the language label + Shiki <pre> */
     :global(.prose .code-block) {
         position: relative;
         margin-top: 0.5em;
@@ -71,7 +70,7 @@
         color: var(--color-fg);
     }
 
-    /* Shiki outputs <pre> with inline background — give it our surface token as fallback */
+    /* Shiki outputs <pre> with inline background - give it our surface token as fallback */
     :global(.prose pre) {
         background-color: var(--color-surface-sunken);
         border: 1px solid var(--color-border);
@@ -79,7 +78,6 @@
         margin-bottom: 0;
     }
 
-    /* Inline code */
     :global(.prose code:not(pre code)) {
         background-color: var(--color-surface-sunken);
         border: 1px solid var(--color-border);
@@ -113,7 +111,6 @@
         border-bottom-color: var(--color-border);
     }
 
-    /* Extended markdown */
     :global(.prose mark) {
         background-color: color-mix(
             in srgb,

@@ -27,7 +27,7 @@ btnExport.addEventListener('click', async () => {
     const result = await chrome.storage.local.get(CACHE_KEY);
     const cache = result[CACHE_KEY];
     if (!cache) {
-        setStatus('No cache yet — open the model picker first.', true);
+        setStatus('No cache yet - open the model picker first.', true);
         return;
     }
     const blob = new Blob([JSON.stringify(cache, null, 2)], {

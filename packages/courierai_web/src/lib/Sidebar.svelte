@@ -11,7 +11,7 @@
     let searchValue = $state('');
     let listRef = $state<VList<Chat> | undefined>(undefined);
 
-    // Auto-load more when within ~1.5 viewport heights of the bottom — hides
+    // Auto-load more when within ~1.5 viewport heights of the bottom - hides
     // the request behind the user's existing scroll momentum.
     function maybeLoadMore() {
         if (!listRef || !chatStore.hasMoreChats || chatStore.isLoadingMore)
@@ -38,7 +38,6 @@
         );
     }
 
-    // Chat context menu
     let openMenuChat = $state<Chat | null>(null);
     let menuPos = $state({ top: 0, left: 0 });
     let renamingChatId = $state<string | null>(null);
@@ -73,18 +72,19 @@
         renameValue = '';
     }
 
-    // Airmail diagonal stripe decoration — reversed direction (\), with beige gaps
+    // Airmail diagonal stripe decoration - reversed direction (\), with beige gaps
     const stripeH = 20;
-    const stripeW = 40; // width of each colored stripe
-    const gap = 40; // beige gap (equal width to colored stripes)
-    const pitch = stripeW + gap; // 80px per stripe slot
+    const stripeW = 40;
+    const gap = 40;
+    const pitch = stripeW + gap;
     const sidebarW = 256;
     const startI = -Math.ceil(stripeH / pitch) - 1;
     const endI = Math.ceil(sidebarW / pitch) + 1;
     const stripes = Array.from({ length: endI - startI + 1 }, (_, idx) => {
         const i = startI + idx;
-        const x = i * pitch - 22; // offset so leftmost stripe is clipped by left edge
-        // Reversed direction: top edge is shifted right by stripeH, bottom is at x
+        // -22 so the leftmost stripe gets clipped by the left edge.
+        const x = i * pitch - 22;
+        // Reversed direction: top edge shifted right by stripeH, bottom at x.
         return {
             points: `${x + stripeH},0 ${x + stripeH + stripeW},0 ${x + stripeW},${stripeH} ${x},${stripeH}`,
             red: i % 2 === 0,
@@ -274,7 +274,7 @@
                 Recent Chats
             </p>
             {#if !appLifecycle.initialized}
-                <!-- Blank until extension responds — avoids "No conversations yet" flash on refresh. -->
+                <!-- Blank until extension responds - avoids "No conversations yet" flash on refresh. -->
             {:else if chatStore.chats.length === 0}
                 <p class="px-2 pt-2 pb-5 text-sm text-fg text-center m-0">
                     No conversations yet
@@ -439,8 +439,6 @@
 {/if}
 
 <style>
-    /* CSS islands — passed-through Icon classes + scrollbar pseudos with hover-driven visibility */
-
     :global(.search-icon) {
         color: var(--color-fg);
     }
@@ -449,7 +447,6 @@
         transform: translateY(-2px);
     }
 
-    /* Search-mode scrollbar — hidden until parent .history.hovered, then shows the thumb */
     .history.search-mode::-webkit-scrollbar {
         width: 3px;
     }
@@ -464,7 +461,6 @@
         background-color: var(--color-border);
     }
 
-    /* Chat-mode scrollbar — same hover-reveal, but on the inner virtua list (passed via class) */
     :global(.chat-vlist::-webkit-scrollbar) {
         width: 3px;
     }
@@ -479,7 +475,7 @@
         background-color: var(--color-border);
     }
 
-    /* Search-mark — applied to {@html}-injected markup, can't take utility classes */
+    /* Search-mark - applied to {@html}-injected markup, can't take utility classes */
     :global(.search-mark) {
         background-color: var(--color-accent-2-bg);
         color: var(--color-on-accent-2-bg);

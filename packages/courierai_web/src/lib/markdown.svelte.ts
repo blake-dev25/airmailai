@@ -13,7 +13,7 @@ export function isHighlighterReady(): boolean {
     return ready;
 }
 
-// Loaded lazily — Vite splits markdown-highlighter into its own chunk so
+// Loaded lazily - Vite splits markdown-highlighter into its own chunk so
 // the main bundle stays light (~169 KB). MarkdownMessage triggers this only
 // when a triple-backtick fence appears. DO NOT reintroduce an idle preload
 // (e.g. requestIdleCallback in App.svelte): Lighthouse counted the ~2 MB
@@ -90,7 +90,7 @@ marked.use({
                 .replace(/>/g, '&gt;');
             return `<pre><code>${escaped}</code></pre>`;
         },
-        // Escape raw HTML from the LLM — show it as text, not rendered DOM
+        // Escape raw HTML from the LLM - show it as text, not rendered DOM
         html({ text }) {
             return text
                 .replace(/&/g, '&amp;')
