@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Last updated:** May 28, 2026
+**Last updated:** June 12, 2026
 
 ## The short version
 
@@ -84,7 +84,7 @@ not sent to any server operated by us:
 | API keys | `chrome.storage.local` for use by the extension |
 | Chat history, attachments, system prompts, and token counts | IndexedDB (local to each browser profile) |
 | Theme, model, and UI preferences | `chrome.storage.sync` |
-| Theme preference (paint-time cache, so the correct background renders before the extension finishes loading) | Website `localStorage` (key: `courierai-theme`) - kept in sync with, and overwritten by, the canonical value from `chrome.storage.sync` |
+| Theme, message-font, and branding-visibility preferences (paint-time cache, so the correct appearance renders before the extension finishes loading) | Website `localStorage` (keys: `courierai-theme`, `courierai-message-font`, `courierai-show-branding`) - kept in sync with, and overwritten by, the canonical values from `chrome.storage.sync` |
 
 You can delete any of this at any time by uninstalling the extension or
 clearing the extension's storage through your browser.
@@ -113,10 +113,11 @@ content.
 
 ## Cookies and tracking
 
-We do not use cookies, with one exception: a single `localStorage` key
-(`courierai-theme`) that the website stores in your browser to render
-the correct theme background before the extension finishes loading.
-This is a functional preference cache, not a tracking mechanism. We do
+We do not use cookies, with one exception: three `localStorage` keys
+(`courierai-theme`, `courierai-message-font`, and
+`courierai-show-branding`) that the website stores in your browser to
+render the correct appearance before the extension finishes loading.
+These are functional preference caches, not tracking mechanisms. We do
 not use client-side web analytics, tracking pixels, fingerprinting, or
 advertising identifiers. We do not enable per-request CDN access logs
 or real-time logs. The only CDN metrics we receive are the aggregate

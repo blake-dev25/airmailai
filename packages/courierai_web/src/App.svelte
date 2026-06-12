@@ -3,6 +3,7 @@
     import { appLifecycle } from './lib/appLifecycle.svelte';
     import ChatPanel from './lib/ChatPanel.svelte';
     import ExtensionPrompt from './lib/ExtensionPrompt.svelte';
+    import FilesPane from './lib/FilesPane.svelte';
     import LegalGate from './lib/LegalGate.svelte';
     import ModelConfig from './lib/ModelConfig.svelte';
     import Sidebar from './lib/Sidebar.svelte';
@@ -26,8 +27,12 @@
 <div class="app-root">
     <div class="app">
         <Sidebar />
-        <ChatPanel />
-        <ModelConfig />
+        {#if appLifecycle.view === 'files'}
+            <FilesPane />
+        {:else}
+            <ChatPanel />
+            <ModelConfig />
+        {/if}
     </div>
 </div>
 

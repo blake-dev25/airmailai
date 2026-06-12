@@ -1,8 +1,11 @@
 <script lang="ts">
+    import type { FileAvailability } from '@courierai/shared';
+    import { reportAppError } from './errorStore.svelte';
+    import { getFileBlob } from './extension';
+    import { formatFileSize, triggerBlobDownload } from './files';
     import Icon from './Icon.svelte';
     import MarkdownMessage from './MarkdownMessage.svelte';
     import {
-        messageAttachments,
         messageCodeExecutions,
         messageThinking,
         type Message,
@@ -13,6 +16,7 @@
         index,
         messageContent,
         displayContent,
+        fileStatuses = {},
         isStreaming,
         isLastStreaming,
         editing,
@@ -32,11 +36,13 @@
         oncodetoggle,
         onretry,
         ondelete,
+        ondeletefile,
     }: {
         message: Message;
         index: number;
         messageContent: string;
         displayContent: string;
+        fileStatuses?: Record<string, FileAvailability>;
         isStreaming: boolean;
         isLastStreaming: boolean;
         editing: boolean;
@@ -56,18 +62,68 @@
         oncodetoggle: () => void;
         onretry: () => void;
         ondelete: () => void;
+        ondeletefile: (key: string) => void;
     } = $props();
 
     let bubbleEl = $state<HTMLElement | null>(null);
 
+    interface ChipModel {
+        key: string;
+        filename: string;
+        sizeBytes: number;
+        mediaType: string;
+        hash: string;
+    }
+
     const isUser = $derived(message.role === 'user');
-    const attachments = $derived(messageAttachments(message));
+    const chips = $derived.by(() => {
+        const out: ChipModel[] = [];
+        const seen = new Set<string>();
+        for (const part of message.parts) {
+            if (part.type !== 'file') continue;
+            if (seen.has(part.hash)) continue;
+            seen.add(part.hash);
+            out.push({
+                key: part.hash,
+                filename: part.filename,
+                sizeBytes: part.sizeBytes,
+                mediaType: part.mediaType,
+                hash: part.hash,
+            });
+        }
+        return out;
+    });
+
+    function chipStatus(c: ChipModel): FileAvailability {
+        return fileStatuses[c.hash] ?? 'local';
+    }
+
+    function chipUnavailableText(status: FileAvailability): string | null {
+        if (status === 'expired') {
+            return "This file's provider copy has expired and it will not be sent with future messages.";
+        }
+        if (status === 'missing') {
+            return 'This file has been deleted and will not be sent with future messages.';
+        }
+        return null;
+    }
     const thinking = $derived(messageThinking(message));
     const codeExecutions = $derived(messageCodeExecutions(message));
 
-    // Flatten every source-url part into a deduped citation list. Several
-    // web_search calls in a single turn can repeat the same URL - render
-    // each once.
+    const stopNotice = $derived.by(() => {
+        if (message.role !== 'assistant') return null;
+        switch (message.metadata?.stopReason) {
+            case 'length':
+                return 'Response truncated (max tokens reached)';
+            case 'refusal':
+                return 'Model declined to continue';
+            case 'content-filter':
+                return 'Stopped by content filter';
+            default:
+                return null;
+        }
+    });
+
     const flatSources = $derived.by(() => {
         const seen = new Set<string>();
         const out: { url: string; title?: string }[] = [];
@@ -80,10 +136,6 @@
         return out;
     });
 
-    // Document citations (Anthropic PDF) land as `source-document` parts with
-    // top-level citedText + a page/char location. Render a chip per part (no
-    // dedup - each cite is its own location). Only page locations get a "p.X"
-    // suffix; char locations render the title alone.
     const docCitations = $derived.by(() => {
         const out: Array<{
             title: string;
@@ -108,6 +160,22 @@
         await navigator.clipboard.writeText(content);
     }
 
+    async function downloadChip(chip: ChipModel) {
+        try {
+            const blob = await getFileBlob(chip.hash);
+            if (!blob) {
+                throw new Error('file not found in local storage');
+            }
+            triggerBlobDownload(chip.filename, blob.mediaType, blob.base64);
+        } catch (err) {
+            reportAppError(
+                'file download failed',
+                `Couldn't download ${chip.filename}`,
+                err
+            );
+        }
+    }
+
     const bubbleBase =
         'max-w-full px-3.5 py-2.5 rounded-[14px] text-sm leading-[1.65] wrap-break-word';
     const bubbleAssistant = `${bubbleBase} bg-bubble-assistant text-on-bubble-assistant rounded-bl-[4px]`;
@@ -127,7 +195,51 @@
     const codePreClass =
         'm-0 px-2.5 py-2 bg-canvas border border-border rounded-md font-mono text-xs leading-normal overflow-x-auto whitespace-pre-wrap wrap-break-word';
     const codeLabelClass = 'text-[11px] font-medium opacity-50';
+    const chipBtnClass =
+        'flex items-center justify-center w-4 h-4 p-0 bg-transparent border-0 text-current opacity-50 cursor-pointer shrink-0 transition-opacity duration-150 hover:opacity-100';
 </script>
+
+{#snippet chip(c: ChipModel)}
+    {@const status = chipStatus(c)}
+    {@const unavailableText = chipUnavailableText(status)}
+    <span
+        class={[
+            'inline-flex items-center gap-1.5 px-2.5 py-1 bg-canvas border rounded-lg text-xs max-w-full',
+            unavailableText
+                ? 'border-accent-fg/50 text-accent-fg'
+                : 'border-border',
+        ]}
+        title={unavailableText}
+    >
+        <Icon name="file" />
+        <span class="overflow-hidden text-ellipsis whitespace-nowrap max-w-45"
+            >{c.filename}</span
+        >
+        {#if c.sizeBytes > 0}
+            <span class="opacity-50">{formatFileSize(c.sizeBytes)}</span>
+        {/if}
+        {#if status === 'local'}
+            <button
+                type="button"
+                class={chipBtnClass}
+                title="Download {c.filename}"
+                aria-label="Download {c.filename}"
+                onclick={() => downloadChip(c)}
+            >
+                <Icon name="download" />
+            </button>
+        {/if}
+        <button
+            type="button"
+            class={chipBtnClass}
+            title="Remove {c.filename}"
+            aria-label="Remove {c.filename}"
+            onclick={() => ondeletefile(c.key)}
+        >
+            <Icon name="trash" />
+        </button>
+    </span>
+{/snippet}
 
 <div
     class={['flex', isUser ? 'justify-end' : 'justify-start']}
@@ -147,13 +259,10 @@
         ]}
     >
         {#if isUser}
-            {#if attachments.length}
+            {#if chips.length}
                 <div class="flex flex-wrap gap-1.5 justify-end">
-                    {#each attachments as att (att.hash)}
-                        <span
-                            class="inline-flex items-center px-2.5 py-1 bg-bubble-user text-on-bubble-user rounded-lg text-xs font-medium max-w-60 overflow-hidden text-ellipsis whitespace-nowrap"
-                            >{att.name}</span
-                        >
+                    {#each chips as c (c.key)}
+                        {@render chip(c)}
                     {/each}
                 </div>
             {/if}
@@ -237,13 +346,22 @@
                                                 ? cite.endPage !== undefined &&
                                                   cite.endPage !==
                                                       cite.startPage
-                                                    ? ` p.${cite.startPage}–${cite.endPage}`
+                                                    ? ` p.${cite.startPage}-${cite.endPage}`
                                                     : ` p.${cite.startPage}`
                                                 : ''}</span
                                         >
                                     </span>
                                 {/each}
                             </div>
+                        </div>
+                    {/if}
+                    {#if chips.length}
+                        <div
+                            class="mt-2 pt-2 border-t border-current/15 flex flex-wrap gap-1.5"
+                        >
+                            {#each chips as c (c.key)}
+                                {@render chip(c)}
+                            {/each}
                         </div>
                     {/if}
                     {#if codeExecutions.length}
@@ -266,6 +384,9 @@
                                     {#each codeExecutions as ce (ce.id)}
                                         <div class="flex flex-col gap-1">
                                             {#if ce.code}
+                                                <div class={codeLabelClass}>
+                                                    Input
+                                                </div>
                                                 <pre class={codePreClass}><code
                                                         >{ce.code}</code
                                                     ></pre>
@@ -339,6 +460,13 @@
                     {/if}
                 </div>
             {/if}
+        {/if}
+
+        {#if stopNotice && !isLastStreaming && !editing}
+            <div class="flex items-center gap-1.5 px-1 text-xs text-fg-muted">
+                <Icon name="info" />
+                <span>{stopNotice}</span>
+            </div>
         {/if}
 
         {#if hovered && !editing && !isLastStreaming}

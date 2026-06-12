@@ -44,7 +44,12 @@ btnExport.addEventListener('click', async () => {
 });
 
 btnClearChats.addEventListener('click', async () => {
-    if (!confirm('Delete all chat history? This cannot be undone.')) return;
+    if (
+        !confirm(
+            'Delete all chat history? This also deletes locally stored files. Files on provider servers are not affected. Cannot be undone.'
+        )
+    )
+        return;
     setLoading(true);
     setStatus('');
     const res = await chrome.runtime.sendMessage({ type: 'admin_clear_chats' });
@@ -59,7 +64,7 @@ btnClearChats.addEventListener('click', async () => {
 btnClearAll.addEventListener('click', async () => {
     if (
         !confirm(
-            'Delete all storage? This removes your API keys, settings, and all chat history. Cannot be undone.'
+            'Delete all local storage? This removes your API keys, settings, chat history, and locally stored files. Files on provider servers are not affected. Cannot be undone.'
         )
     )
         return;
@@ -68,7 +73,7 @@ btnClearAll.addEventListener('click', async () => {
     const res = await chrome.runtime.sendMessage({ type: 'admin_clear_all' });
     setLoading(false);
     if (res?.ok) {
-        setStatus('All storage deleted.');
+        setStatus('All local storage deleted.');
     } else {
         setStatus(res?.message ?? 'Something went wrong.', true);
     }

@@ -7,6 +7,7 @@ export type {
 } from './models';
 export {
     buildOpenRouterProvider,
+    defaultModelForProvider,
     filterProvidersByTier,
     MODEL_TIERS,
     modelMatchesTier,

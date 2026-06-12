@@ -2,9 +2,11 @@ import {
     type Content,
     GoogleGenAI,
     Outcome,
+    type Part,
     type ThinkingConfig,
     ThinkingLevel,
     type Tool,
+    UrlRetrievalStatus,
 } from '@google/genai';
 import type {
     CourierAIChunk,
@@ -13,9 +15,18 @@ import type {
     ProviderStreamArgs,
 } from '@courierai/shared';
 import { DEBUG_API_LOGGING } from '../debug';
-import { foldSourcesIntoText } from './fold-sources';
+import { base64ToBytes, hashBytes } from '../storage/encoding';
+import { type ProviderReplicas, resolveAttachments } from './attachments';
+import { foldReplayIntoText } from './fold-replay';
 
 const LOG = '[courierai:ext]';
+
+function outputFilename(index: number, mediaType: string): string {
+    const subtype = mediaType.split('/')[1]?.split(';')[0] ?? '';
+    const ext =
+        subtype === 'jpeg' ? 'jpg' : subtype === 'plain' ? 'txt' : subtype;
+    return `output-${index}.${ext || 'bin'}`;
+}
 
 function mapStopReason(
     reason: string | undefined
@@ -31,17 +42,16 @@ function mapStopReason(
     return 'stop';
 }
 
-// Gemini 2.5 uses thinkingBudget (token count); 3.x uses thinkingLevel enum.
-// adaptive (thinkingBudget: -1) lets the model decide and works on both.
 function buildThinkingConfig(
     model: string,
     thinkingLevel: string | undefined,
     adaptive: boolean
 ): ThinkingConfig | undefined {
-    if (!thinkingLevel || thinkingLevel === 'none') return undefined;
-    if (adaptive) return { thinkingBudget: -1, includeThoughts: true };
+    if (!thinkingLevel) return undefined;
 
     if (model.includes('2.5')) {
+        if (thinkingLevel === 'none') return { thinkingBudget: 0 };
+        if (adaptive) return { thinkingBudget: -1, includeThoughts: true };
         const budgets: Record<string, number> = {
             low: 512,
             medium: 4096,
@@ -54,7 +64,7 @@ function buildThinkingConfig(
         return { thinkingBudget: Math.max(128, budget), includeThoughts: true };
     }
 
-    // Gemini 3+. max/xhigh have no distinct level, so clamp to HIGH.
+    if (thinkingLevel === 'none') return undefined;
     const levelMap: Record<string, ThinkingLevel> = {
         minimal: ThinkingLevel.MINIMAL,
         low: ThinkingLevel.LOW,
@@ -68,20 +78,49 @@ function buildThinkingConfig(
     return { thinkingLevel: level, includeThoughts: true };
 }
 
-function toGoogleContents(messages: CourierAIMessage[]): Content[] {
-    // Google grounding URLs are output-only and don't round-trip, so assistant
-    // turns replay via the Sources text-fold (foldSourcesIntoText). TODO:
-    // hydrate data-attachment parts into inlineData parts.
-    return messages.map((msg) => ({
-        role: msg.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: foldSourcesIntoText(msg) }],
-    }));
+function toGoogleContents(
+    messages: CourierAIMessage[],
+    blobs: Record<string, { mediaType: string; base64: string }>,
+    replicas: ProviderReplicas | undefined
+): Content[] {
+    return messages.map((msg) => {
+        const text = foldReplayIntoText(msg);
+        const parts: Part[] = [];
+        if (text) parts.push({ text });
+        for (const att of resolveAttachments(msg, blobs, replicas)) {
+            if (att.kind === 'provider') {
+                if (att.providerId !== 'google') continue;
+                if (att.uri) {
+                    parts.push({
+                        fileData: {
+                            fileUri: att.uri,
+                            ...(att.mediaType
+                                ? { mimeType: att.mediaType }
+                                : {}),
+                        },
+                    });
+                } else if (att.base64) {
+                    parts.push({
+                        inlineData: {
+                            mimeType: att.mediaType,
+                            data: att.base64,
+                        },
+                    });
+                }
+                continue;
+            }
+            parts.push({
+                inlineData: { mimeType: att.mediaType, data: att.base64 },
+            });
+        }
+        if (parts.length === 0) parts.push({ text: '' });
+        return {
+            role: msg.role === 'assistant' ? 'model' : 'user',
+            parts,
+        };
+    });
 }
 
-// Hand-rolled Google provider. Gemini streams whole response chunks with no
-// per-part boundaries, so we synthesize text/reasoning start/end whenever the
-// part mode flips. Grounding metadata -> source-url; executableCode /
-// codeExecutionResult parts -> code_execution tool-call/result. See plan D4.
 export async function* streamGoogle(
     args: ProviderStreamArgs
 ): AsyncGenerator<CourierAIChunk> {
@@ -106,9 +145,13 @@ export async function* streamGoogle(
     if (wireTools.webFetch) tools.push({ urlContext: {} });
     if (wireTools.codeExecution) tools.push({ codeExecution: {} });
 
+    const replicas: ProviderReplicas | undefined =
+        args.providerFiles && Object.keys(args.providerFiles).length
+            ? { providerId: 'google', files: args.providerFiles }
+            : undefined;
     const requestBody = {
         model: args.model,
-        contents: toGoogleContents(args.messages),
+        contents: toGoogleContents(args.messages, args.blobs ?? {}, replicas),
         config: {
             ...(args.system ? { systemInstruction: args.system } : {}),
             maxOutputTokens: maxTokens,
@@ -121,21 +164,18 @@ export async function* streamGoogle(
         },
     };
 
-    // @google/genai transforms this object into the wire body internally and
-    // does not expose a fetch hook here; logging the final SDK output would mean
-    // patching the SDK/global fetch, so this logs the SDK input request instead.
     if (DEBUG_API_LOGGING) {
         console.log(LOG, '[debug] google: -> sdk input', requestBody);
     }
 
-    // Gemini has no part ids; synthesize them and bracket on mode switches.
     let mode: 'text' | 'reasoning' | null = null;
     let currentId = '';
     let counter = 0;
-    // Gemini pairs an executableCode part with its codeExecutionResult via a
-    // shared `id`; hold the last code id to pair them when that id is absent.
+    let fileCounter = 0;
     let pendingCodeExecId: string | undefined;
     const seenUrls = new Set<string>();
+    const seenSearchQueries = new Set<string>();
+    const seenFetchedUrls = new Set<string>();
     let promptTokens = 0;
     let candidateTokens = 0;
     let stopReason: CourierAIMessageMetadata['stopReason'];
@@ -144,6 +184,46 @@ export async function* streamGoogle(
         const stream = await client.models.generateContentStream(requestBody);
         for await (const chunk of stream) {
             const candidate = chunk.candidates?.[0];
+
+            for (const query of candidate?.groundingMetadata
+                ?.webSearchQueries ?? []) {
+                if (seenSearchQueries.has(query)) continue;
+                seenSearchQueries.add(query);
+                const id = `websearch-${seenSearchQueries.size}`;
+                yield {
+                    type: 'tool-call',
+                    toolCallId: id,
+                    name: 'web_search',
+                    input: { query },
+                };
+                yield { type: 'tool-result', toolCallId: id };
+            }
+
+            for (const um of candidate?.urlContextMetadata?.urlMetadata ?? []) {
+                const url = um.retrievedUrl;
+                if (!url || seenFetchedUrls.has(url)) continue;
+                seenFetchedUrls.add(url);
+                const id = `webfetch-${seenFetchedUrls.size}`;
+                const ok =
+                    um.urlRetrievalStatus == null ||
+                    um.urlRetrievalStatus ===
+                        UrlRetrievalStatus.URL_RETRIEVAL_STATUS_SUCCESS;
+                yield {
+                    type: 'tool-call',
+                    toolCallId: id,
+                    name: 'web_fetch',
+                    input: { url },
+                };
+                yield {
+                    type: 'tool-result',
+                    toolCallId: id,
+                    ...(ok ? {} : { errorText: String(um.urlRetrievalStatus) }),
+                };
+                if (ok && !seenUrls.has(url)) {
+                    seenUrls.add(url);
+                    yield { type: 'source-url', sourceId: url, url };
+                }
+            }
 
             for (const gc of candidate?.groundingMetadata?.groundingChunks ??
                 []) {
@@ -182,7 +262,6 @@ export async function* streamGoogle(
                     const ok =
                         result.outcome == null ||
                         result.outcome === Outcome.OUTCOME_OK;
-                    // OUTCOME_OK -> output is stdout; otherwise it's stderr/desc.
                     const output =
                         typeof result.output === 'string'
                             ? result.output
@@ -198,6 +277,23 @@ export async function* streamGoogle(
                               }
                             : {}),
                         ...(ok ? {} : { errorText: String(result.outcome) }),
+                    };
+                    continue;
+                }
+                if (part.inlineData?.data) {
+                    const data = part.inlineData.data;
+                    const bytes = base64ToBytes(data);
+                    const hash = await hashBytes(bytes.buffer);
+                    const mediaType =
+                        part.inlineData.mimeType ?? 'application/octet-stream';
+                    fileCounter++;
+                    yield {
+                        type: 'file',
+                        filename: outputFilename(fileCounter, mediaType),
+                        mediaType,
+                        sizeBytes: bytes.byteLength,
+                        hash,
+                        base64: data,
                     };
                     continue;
                 }

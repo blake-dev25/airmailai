@@ -259,7 +259,10 @@ async function applyOpenAIDocFallback(models: DerivedModel[]): Promise<void> {
         model.contextWindow = parsed.contextWindow ?? model.contextWindow;
         model.maxOutputTokens = parsed.maxOutputTokens ?? model.maxOutputTokens;
         model.knowledgeCutoff = parsed.knowledgeCutoff ?? model.knowledgeCutoff;
-        if (!model.thinking && parsed.reasoning?.kind === 'levels-known') {
+        if (
+            !model.thinkingPinned &&
+            parsed.reasoning?.kind === 'levels-known'
+        ) {
             model.thinking = {
                 levels: sortLevels(parsed.reasoning.levels),
                 defaultLevel: parsed.reasoning.defaultLevel,
@@ -285,8 +288,6 @@ async function probeOpenAIModel(
         await client.responses.create({
             model: id,
             input: 'a',
-            // OpenAI Responses rejects values below 16 before checking model
-            // availability, so use the smallest value that reaches the model.
             max_output_tokens: 16,
         });
         return { status: 'ok', code: '200' };
@@ -361,15 +362,17 @@ function deriveOpenAI(
         ? {
               levels: sortLevels(o.thinking.levels),
               defaultLevel: o.thinking.defaultLevel,
+              ...(o.thinking.adaptive ? { adaptive: o.thinking.adaptive } : {}),
           }
         : inferOpenAIThinking(raw.id, info);
 
     const needsLevels =
         supportsOpenRouterParam(info, 'reasoning') && thinking === undefined;
 
+    const isOSeries = /^o[1-9](?:-|$)/.test(raw.id);
     const supportsTemperature =
         o?.temperatureMax !== undefined ||
-        supportsOpenRouterParam(info, 'temperature');
+        (!isOSeries && supportsOpenRouterParam(info, 'temperature'));
     const notes: string[] = [];
     if (needsLevels) {
         notes.push('reasoning supported but no inferred levels');
@@ -388,6 +391,7 @@ function deriveOpenAI(
         knowledgeCutoff:
             o?.knowledgeCutoff ?? inferOpenAIKnowledgeCutoff(raw.id, info),
         thinking,
+        thinkingPinned: !!o?.thinking,
         temperatureMax: supportsTemperature
             ? (o?.temperatureMax ?? 2)
             : undefined,

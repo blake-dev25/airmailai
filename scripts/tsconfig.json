@@ -13,5 +13,5 @@
         "skipLibCheck": true,
         "moduleDetection": "force"
     },
-    "include": ["**/*.ts"]
+    "include": ["**/*.ts", "../packages/courierai_ext/globals.d.ts"]
 }

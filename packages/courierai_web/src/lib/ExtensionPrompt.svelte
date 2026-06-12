@@ -1,4 +1,6 @@
 <script lang="ts">
+    import Icon from './Icon.svelte';
+
     type Variant = 'no-extension' | 'unsupported-browser' | 'mobile';
 
     let {
@@ -49,7 +51,8 @@
             CourierAI requires a Chromium browser (Chrome, Edge, Brave, etc)
             with the CourierAI extension installed. See our <a
                 href="/faq"
-                class="text-accent-fg no-underline hover:underline">FAQ ↗</a
+                class="inline-flex items-center gap-0.5 text-accent-fg no-underline hover:underline"
+                >FAQ<Icon name="external-link" /></a
             >
         </p>
         <button

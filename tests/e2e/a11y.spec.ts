@@ -7,7 +7,6 @@ test('main app has no serious/critical accessibility violations', async ({
     await courierai.goto();
 
     const results = await new AxeBuilder({ page: courierai.page })
-        // Opacity-driven muted text is intentional; contrast is tracked separately.
         .disableRules(['color-contrast'])
         .analyze();
 

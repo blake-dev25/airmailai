@@ -1,12 +1,13 @@
-// Broadcasts the extension ID to the host page so it can initiate port connections.
-// Two channels:
-//  1. Synchronous DOM marker at document_start - page JS can read it without
-//     waiting (immune to CPU throttling that delays message round-trips).
-//  2. window.postMessage - kept as a fallback / re-announce path.
 const LOG = '[courierai:ext]';
 
+// *** TODO(static-id): once the extension is published to the Chrome Web Store its
+// ID is static. The website will then probe the hardcoded ID directly via
+// chrome.runtime.sendMessage; delete this content script and the READY/PING
+// handshake in courierai_web's extension.ts.
 export default defineContentScript({
-    matches: ['http://localhost:*/*', 'https://*.courierai.net/*'],
+    matches: __ALLOW_LOCALHOST__
+        ? ['http://localhost:*/*', 'https://*.courierai.net/*']
+        : ['https://*.courierai.net/*'],
     runAt: 'document_start',
     main() {
         document.documentElement.dataset.courieraiExtId = chrome.runtime.id;

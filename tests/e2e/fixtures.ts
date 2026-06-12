@@ -38,13 +38,7 @@ const LEGAL_DIR = path.join(
 );
 const BASE_URL = process.env.COURIERAI_BASE_URL ?? 'http://localhost:5173';
 
-// A DOM action settles in a few seconds, but a chat turn against a reasoning
-// model can burn 10-20s thinking before any text lands (worse on tool turns),
-// so cap waits at 30s - long enough to ride out the think, short enough that a
-// genuine hang still surfaces well under the per-test ceiling.
 export const QUICK_TIMEOUT = 30_000;
-// Web-search / tool-call turns make an extra provider round trip, so they get a
-// longer ceiling - the one exception to the <10s rule.
 export const TOOL_TURN_TIMEOUT = 120_000;
 
 const PROVIDER_ENV: Record<string, string> = {
@@ -54,9 +48,6 @@ const PROVIDER_ENV: Record<string, string> = {
     openrouter: 'OPENROUTER_API_KEY',
 };
 
-// Mirror of readLegalVersion() in courierai_web/vite.config.ts. Seeding this
-// into chrome.storage.sync satisfies the LegalGate without driving the consent
-// UI (human-only by design).
 function legalVersion(): string {
     const hash = createHash('sha256');
     for (const name of ['terms.md', 'privacy.md']) {
@@ -87,13 +78,6 @@ function apiKeysFromEnv(): Record<string, string> {
     return keys;
 }
 
-// Seed the fresh extension profile via the service worker (where chrome.* lives):
-// API keys + OpenRouter catalog cache -> chrome.storage.local, settings ->
-// chrome.storage.sync. With `withKeys: false` no keys (and no catalog cache)
-// are seeded - used to exercise the "No API key saved" error path without any
-// real API call. `webSearch` / `webFetch` / `codeExec` seed the matching master
-// Advanced toggles (all default off), so the per-model tool control renders
-// without driving the Settings UI for it.
 async function seedExtension(
     sw: Worker,
     {
@@ -109,9 +93,6 @@ async function seedExtension(
     }
 ): Promise<void> {
     const local: Record<string, unknown> = withKeys ? apiKeysFromEnv() : {};
-    // Pre-seed the OpenRouter catalog cache with a fresh fetchedAt so
-    // getOpenRouterModels serves it without the network. Only meaningful with
-    // the OR key seeded - without a key the cold-fetch path never fires.
     if (withKeys) {
         local[OPENROUTER_CACHE_KEY] = {
             version: OPENROUTER_CACHE_VERSION,
@@ -159,9 +140,6 @@ interface StoredMsg {
     };
 }
 
-// Text content of a stored message: its `text` parts joined. Mirrors what a
-// bubble renders as body text - reasoning, tool, and source-url parts render
-// as their own UI, so they're excluded here.
 function storedMessageText(msg: StoredMsg): string {
     return msg.message.parts
         .filter((p) => p.type === 'text')
@@ -169,24 +147,15 @@ function storedMessageText(msg: StoredMsg): string {
         .join('');
 }
 
-// Strip to lowercase letters/numbers so a DOM<->IDB text compare survives
-// markdown re-rendering: the DOM has markdown rendered away (`**x**` -> `x`)
-// while the IDB holds the raw source, but the syntax chars are non-alnum on
-// both sides and drop out here, as do whitespace and punctuation. It does NOT
-// reconcile link URLs (raw-only) or the Sources/citation UI (DOM-only), so
-// turns carrying those compare with mode:'contains' instead of equality.
 function normalizeText(s: string): string {
     return s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
 }
 
-// Read the extension's chat IDB straight through the SW. The page can't see it
-// (different origin), so this is the source-of-truth check that a row persisted.
 function readExtDb(
     sw: Worker
 ): Promise<{ metas: StoredMeta[]; messages: StoredMsg[] }> {
     return sw.evaluate(async () => {
         const db = await new Promise<IDBDatabase>((resolve, reject) => {
-            // No version -> open at the current version, never trigger an upgrade.
             const req = indexedDB.open('courierai');
             req.onsuccess = () => resolve(req.result);
             req.onerror = () => reject(req.error);
@@ -209,8 +178,6 @@ function readExtDb(
     }) as Promise<{ metas: StoredMeta[]; messages: StoredMsg[] }>;
 }
 
-// Thin page object so specs read like the test plan. Locators are accessibility-
-// first (role + name); message rows fall back to the existing data-msg-* attrs.
 export class CourierAI {
     constructor(
         public readonly page: Page,
@@ -249,12 +216,9 @@ export class CourierAI {
     providerSelect() {
         return this.page.getByLabel('Provider');
     }
-    // ModelPicker's trigger is the only listbox-popup button on the page.
     modelTrigger() {
         return this.page.locator('button[aria-haspopup="listbox"]');
     }
-    // Both the app-wide errorStore banner and the per-chat stream error render
-    // as role="alert" - either satisfies "errors must be loud".
     appError() {
         return this.page.getByRole('alert');
     }
@@ -262,8 +226,6 @@ export class CourierAI {
     modelSearch() {
         return this.page.getByPlaceholder('Search models...');
     }
-    // Per-chat tool toggles in ModelConfig. exact:true so they don't also match
-    // the "Enable ..." master switches in Settings.
     webSearchToggle() {
         return this.page.getByRole('switch', {
             name: 'Web Search',
@@ -298,10 +260,6 @@ export class CourierAI {
         await this.page.getByRole('option', { name }).click();
     }
 
-    // Select a model by its stable id (data-model-id) rather than display name,
-    // so OpenRouter's slug-style ids (e.g. '~anthropic/claude-haiku-latest')
-    // and first-party ids both work. The picker only shows a search box past 50
-    // models (OpenRouter), so fill it when present to bring the row into view.
     async setModelById(id: string): Promise<void> {
         await this.modelTrigger().click();
         const search = this.modelSearch();
@@ -309,18 +267,12 @@ export class CourierAI {
         await this.page.locator(`[data-model-id="${id}"]`).click();
     }
 
-    // OpenRouter's catalog hydrates async from the ext on load; the picker
-    // trigger stays disabled until models arrive.
     async waitForOpenRouterCatalog(): Promise<void> {
         await expect(this.modelTrigger()).toBeEnabled({
             timeout: QUICK_TIMEOUT,
         });
     }
 
-    // Drag the Thinking slider to None (its min). Selecting a thinking model
-    // sets the level to that model's default (often non-zero), so specs that
-    // need text to stream immediately (e.g. the stop-mid-stream flow) turn it
-    // off first.
     async setThinkingNone(): Promise<void> {
         await this.page.getByRole('slider', { name: 'Thinking' }).press('Home');
     }
@@ -341,8 +293,6 @@ export class CourierAI {
             await toggle.click();
     }
 
-    // Temperature badge is a contenteditable spinbutton (same pattern as max
-    // tokens); the model clamps to its temperatureMax on blur.
     async setTemperature(value: number): Promise<void> {
         const badge = this.page.getByRole('spinbutton', {
             name: 'Temperature',
@@ -362,9 +312,6 @@ export class CourierAI {
             .fill(text);
     }
 
-    // Edit the last assistant bubble's text in place (hover -> Edit -> Save).
-    // editMessage keeps non-text parts, so source-url citations survive the
-    // edit - which is what the §4 re-injection check relies on.
     async editAssistant(newText: string): Promise<void> {
         const msg = this.assistantMessages().last();
         await msg.hover();
@@ -374,9 +321,15 @@ export class CourierAI {
         await msg.getByRole('button', { name: 'Save' }).click();
     }
 
-    // Expand the Code expando on the last assistant message (the rendered
-    // code_execution tool call: code body + stdout/stderr). Used so --ui / trace
-    // snapshots capture it; the spec asserts the underlying persisted tool part.
+    async editUser(newText: string): Promise<void> {
+        const msg = this.userMessages().last();
+        await msg.hover();
+        await msg.getByRole('button', { name: 'Edit' }).click();
+        const editor = msg.getByRole('textbox');
+        await editor.fill(newText);
+        await msg.getByRole('button', { name: 'Save' }).click();
+    }
+
     async expandCode(): Promise<void> {
         await this.assistantMessages()
             .last()
@@ -384,8 +337,6 @@ export class CourierAI {
             .click();
     }
 
-    // Expand the Sources expando on the last assistant message and return the
-    // raw href attributes (the DOM-truth URLs the model actually searched).
     async assistantSourceHrefs(): Promise<string[]> {
         const msg = this.assistantMessages().last();
         await msg.getByRole('button', { name: 'Sources' }).click();
@@ -404,15 +355,10 @@ export class CourierAI {
         return this.settingsDialog().getByRole('button', { name });
     }
     async closeSettings(): Promise<void> {
-        // The popover has no close button; clicking its backdrop closes it. The
-        // dialog is centered, so a corner click lands on the backdrop.
         await this.page.mouse.click(5, 5);
         await expect(this.settingsDialog()).toBeHidden();
     }
 
-    // Fill + send without waiting for a reply. Use for error paths, where the
-    // assistant placeholder is removed when the error arrives (so `send`'s
-    // wait-for-bubble would race).
     async compose(text: string): Promise<void> {
         await this.composer().fill(text);
         await this.sendButton().click();
@@ -424,18 +370,12 @@ export class CourierAI {
     ): Promise<void> {
         const before = await this.assistantMessages().count();
         await this.compose(text);
-        // Placeholder appears immediately at stream start - always quick, even
-        // for tool-call turns (the tool runs after the placeholder is shown).
         await expect(this.assistantMessages()).toHaveCount(before + 1, {
             timeout: QUICK_TIMEOUT,
         });
         await this.waitForTurn(turnTimeout);
     }
 
-    // Streaming is done when Stop reverts to Send. smoothTextMode is seeded to
-    // 'raw', so there's no post-stream drain animation to wait on. `timeout`
-    // bounds the whole turn: default for plain chat, TOOL_TURN_TIMEOUT for the
-    // longer web-search round trip.
     async waitForTurn(timeout = QUICK_TIMEOUT): Promise<void> {
         await expect(this.stopButton()).toBeHidden({ timeout });
         await expect
@@ -446,16 +386,11 @@ export class CourierAI {
     }
 
     async lastAssistantText(): Promise<string> {
-        // Scope to the rendered markdown body (.prose) so the Thinking expando,
-        // Sources list, and citation chips - each rendered as its own UI and
-        // excluded from the persisted text parts - don't leak into the
-        // round-trip text compare.
         return (
             await this.assistantMessages().last().locator('.prose').innerText()
         ).trim();
     }
 
-    // The badge is a contenteditable spinbutton, so type rather than fill.
     async setMaxTokens(value: number): Promise<void> {
         const badge = this.maxTokensBadge();
         await badge.click();
@@ -469,10 +404,6 @@ export class CourierAI {
         return readExtDb(this.sw);
     }
 
-    // Stored messages of `role` for a chat (default: the first/only chat), in
-    // chat order. getAll() returns key order (by uuid), so sort by createdAt
-    // then id to match the ext's INDEX_CHAT_ORDER - `.at(-1)` is then the
-    // latest turn.
     private async chatMessages(
         role: 'user' | 'assistant',
         chatId?: string
@@ -489,8 +420,6 @@ export class CourierAI {
             );
     }
 
-    // Persisted text per message of `role`, in chat order. The IDB-truth
-    // counterpart to the DOM message locators, for round-trip checks.
     async persistedTexts(
         role: 'user' | 'assistant',
         chatId?: string
@@ -498,8 +427,6 @@ export class CourierAI {
         return (await this.chatMessages(role, chatId)).map(storedMessageText);
     }
 
-    // source-url hrefs persisted on the latest assistant message - the IDB
-    // truth behind the rendered Sources list.
     async persistedSourceUrls(chatId?: string): Promise<string[]> {
         const last = (await this.chatMessages('assistant', chatId)).at(-1);
         if (!last) return [];
@@ -508,9 +435,6 @@ export class CourierAI {
             .map((p) => p.url ?? '');
     }
 
-    // source-url titles persisted on the latest assistant message. Google cites
-    // opaque grounding-redirect URLs and carries the readable host here in the
-    // title, so the §4 recall check matches on title OR url.
     async persistedSourceTitles(chatId?: string): Promise<string[]> {
         const last = (await this.chatMessages('assistant', chatId)).at(-1);
         if (!last) return [];
@@ -519,12 +443,6 @@ export class CourierAI {
             .map((p) => p.title ?? '');
     }
 
-    // Names of `tool` parts persisted on the latest assistant message - the
-    // IDB-truth that a server tool (web_search / web_fetch / code_execution)
-    // actually fired. Used by the code-exec spec. Providers disagree on whether
-    // web_fetch emits a tool part (Anthropic does; Google/OpenAI/OpenRouter
-    // surface the fetch only as a Sources entry), so the web-fetch spec asserts
-    // on the Sources expando instead of this.
     async persistedToolNames(chatId?: string): Promise<string[]> {
         const last = (await this.chatMessages('assistant', chatId)).at(-1);
         if (!last) return [];
@@ -533,18 +451,6 @@ export class CourierAI {
             .map((p) => p.name ?? '');
     }
 
-    // Assert the latest assistant turn closed the full UI -> ext -> provider ->
-    // ext -> UI round trip: it's both rendered (DOM) and persisted (ext IDB).
-    // The IDB read is polled because the ext writes the assistant row at
-    // end-of-turn, which can land just after the web flips Stop -> Send.
-    //
-    // mode 'equal' (default): normalized DOM text === normalized persisted
-    // text - the strict check for plain-text replies. mode 'contains': only
-    // require the persisted row to be non-empty; pair with `needle` for turns
-    // where DOM and IDB differ by construction (web search adds link URLs / a
-    // Sources expando the persisted text parts lack). `needle`, when given,
-    // must appear in the DOM - proving not just *a* round trip but the *right*
-    // content.
     async expectAssistantRoundTrip(
         needle?: string | RegExp,
         { mode = 'equal' }: { mode?: 'equal' | 'contains' } = {}
@@ -575,12 +481,7 @@ export class CourierAI {
 }
 
 interface CourierAIOptions {
-    // Set false in a spec (`test.use({ seedApiKeys: false })`) to seed no API
-    // keys, exercising the extension's "No API key saved" error path.
     seedApiKeys: boolean;
-    // Set true in a spec (`test.use({ seedWebSearchEnabled: true })` etc.) to
-    // seed the matching Advanced master toggle on, so ModelConfig renders that
-    // per-model tool control (all off by default).
     seedWebSearchEnabled: boolean;
     seedWebFetchEnabled: boolean;
     seedCodeExecEnabled: boolean;
@@ -600,7 +501,7 @@ export const test = base.extend<CourierAIOptions & CourierAIFixtures>({
     seedCodeExecEnabled: [false, { option: true }],
     // eslint-disable-next-line no-empty-pattern
     context: async ({}, use) => {
-        // '' = ephemeral profile, auto-removed on close. headed: MV3 extensions
+        // *** '' = ephemeral profile, auto-removed on close. headed: MV3 extensions
         // don't load in old headless. Bundled Chromium (no `channel`): stable
         // Chrome (~137+) blocks the --load-extension flag we rely on, while
         // Playwright's Chromium still honors it.
@@ -615,8 +516,6 @@ export const test = base.extend<CourierAIOptions & CourierAIFixtures>({
         await use(context);
         await context.close();
     },
-    // Reuse the blank tab the persistent context opens with, instead of adding
-    // a second one.
     page: async ({ context }, use) => {
         const page = context.pages()[0] ?? (await context.newPage());
         await use(page);
@@ -626,12 +525,6 @@ export const test = base.extend<CourierAIOptions & CourierAIFixtures>({
         if (!sw) sw = await context.waitForEvent('serviceworker');
         await use(sw);
     },
-    // Auto: collect page console warnings/errors (skips the app's chatty
-    // console.log) + uncaught page errors. On teardown, if any, write them to a
-    // focused per-test log (test-results/<test>/console-warnings.log) and echo
-    // them to the terminal so failures are quick to scan without opening the
-    // trace. (The extension service worker's console isn't exposed by
-    // Playwright; web-side mirrors ext errors, so those still land here.)
     consoleCapture: [
         async ({ page }, use) => {
             const lines: string[] = [];
@@ -651,8 +544,6 @@ export const test = base.extend<CourierAIOptions & CourierAIFixtures>({
             const file = info.outputPath('console-warnings.log');
             const block = lines.join('\n') + '\n';
             appendFileSync(file, block);
-            // Echo inline so page-side errors surface in the terminal under the
-            // failing test; the file keeps a per-test copy for digging.
             process.stderr.write(
                 `\nConsole warnings - ${info.title}:\n${block}`
             );
@@ -681,6 +572,4 @@ export const test = base.extend<CourierAIOptions & CourierAIFixtures>({
 });
 
 export { expect };
-// Re-exported so specs keep a single import surface (`./fixtures`); edit the
-// picks in ./models.
 export { PROVIDER_MODELS, type ProviderKey } from './models';

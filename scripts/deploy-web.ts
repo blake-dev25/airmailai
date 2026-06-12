@@ -18,10 +18,6 @@ const dist = join(root, 'packages/courierai_web/dist');
 console.log('> Building courierai_web (gen-version + check + build)...');
 await $`bun run build:web`.cwd(root);
 
-// Order: assets and legal first (additive - no --delete so stale-cached HTML keeps resolving old
-// hashes during the window), then HTML, then invalidate. Once invalidation completes, no edge can
-// be serving stale HTML, so we sync assets again with --delete to prune orphan hashes.
-
 console.log('\n> S3 sync /assets/* (immutable long cache)...');
 await $`aws s3 sync ${dist}/assets/ s3://${BUCKET}/assets/ --cache-control ${LONG_CACHE} --no-progress`;
 

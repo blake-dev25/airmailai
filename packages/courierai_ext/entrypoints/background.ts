@@ -4,9 +4,14 @@ import type {
     CourierAIChunk,
     CourierAIMessage,
     ExtensionStreamEvent,
+    FileAvailability,
     HydratedStoredMessage,
+    ProviderFileEntry,
+    ProviderFileInfo,
+    ProviderFileRef,
     StorageRequest,
     StorageResponse,
+    StreamErrorSource,
     TurnRequest,
     UserSettings,
 } from '@courierai/shared';
@@ -20,12 +25,44 @@ import {
     CACHE_KEY as OPENROUTER_CACHE_KEY,
     getOpenRouterModels,
 } from '../openrouter-models';
+import {
+    deleteAnthropicFile,
+    listAnthropicFiles,
+    uploadAnthropicFile,
+} from '../providers/anthropic-files';
+import {
+    deleteOpenAIFile,
+    listOpenAIFiles,
+    uploadOpenAIFile,
+} from '../providers/openai-files';
+import {
+    downloadOpenAIContainerFile,
+    listOpenAIContainerFiles,
+} from '../providers/openai-container-files';
+import {
+    deleteGoogleFile,
+    listGoogleFiles,
+    uploadGoogleFile,
+} from '../providers/google-files';
 import { streamProvider } from '../providers/stream';
 import {
     dbClearChats,
+    dbClearDraftAttachments,
     dbDeleteChat,
     dbDeleteMessage,
     dbDeleteMessagesAfter,
+    dbDeleteStoredFile,
+    dbForgetProviderFile,
+    dbGetFileBlob,
+    dbGetFileBlobBase64,
+    dbGetFileFacts,
+    dbListLocalFiles,
+    dbGetMeta,
+    dbLookupProviderFile,
+    dbLookupProviderFileHashes,
+    dbRecordProviderFile,
+    dbRemoveDraftAttachment,
+    dbStageDraftAttachment,
     dbGetStorageUsage,
     dbLoadChat,
     dbLoadChatMetas,
@@ -33,21 +70,16 @@ import {
     dbLoadChatsByIds,
     dbPutMessage,
     dbSaveMeta,
+    dbSetContainer,
+    dbWipeAll,
 } from '../storage/db';
+import { base64ToBytes, bytesToBase64, hashBytes } from '../storage/encoding';
 
 const LOG = '[courierai:ext]';
 const API_KEY_PREFIX = 'apiKey_';
 
-// Per-chat lock. While a chatId is in this map, another tab attempting to
-// stream the same chat is rejected so writes can't race.
-const inflightTurns = new Map<string, AbortController>();
+const inflightTurns = new Set<string>();
 
-// Long-lived broadcast ports - one per connected tab. Mapped to the web's
-// sourceTabId (set via the 'register' message immediately after connect) so
-// `broadcast()` can skip the source tab when fanning turn-* events. In the
-// single-tab case there's exactly one port and it matches the turn's source,
-// turning every broadcast into a no-op (zero structured clones on the
-// streaming hot path).
 const broadcastPorts = new Map<chrome.runtime.Port, string | undefined>();
 
 function broadcast(event: BroadcastEvent, skipTabId?: string) {
@@ -56,9 +88,6 @@ function broadcast(event: BroadcastEvent, skipTabId?: string) {
         try {
             port.postMessage(event);
         } catch {
-            // Port closed between iteration and post (e.g. tab entered bfcache,
-            // tab closed). Drop it now instead of waiting for onDisconnect so
-            // the next broadcast doesn't hit the same dead port.
             broadcastPorts.delete(port);
         }
     }
@@ -71,6 +100,158 @@ function apiKeyName(provider: string): string {
 async function readApiKey(provider: string): Promise<string | undefined> {
     const result = await chrome.storage.local.get(apiKeyName(provider));
     return result[apiKeyName(provider)] as string | undefined;
+}
+
+async function readProviderFileStorageEnabled(): Promise<boolean> {
+    const result = await chrome.storage.sync.get('enableProviderFileStorage');
+    return result.enableProviderFileStorage === true;
+}
+
+async function deleteProviderFile(
+    providerId: string,
+    apiKey: string,
+    fileId: string
+): Promise<string[]> {
+    if (providerId === 'anthropic') {
+        await deleteAnthropicFile(apiKey, fileId);
+    } else if (providerId === 'openai') {
+        await deleteOpenAIFile(apiKey, fileId);
+    } else if (providerId === 'google') {
+        await deleteGoogleFile(apiKey, fileId);
+    }
+    return dbForgetProviderFile(providerId, fileId);
+}
+
+async function deleteProviderFiles(refs: ProviderFileRef[]): Promise<void> {
+    if (!refs.length) return;
+    const byProvider = new Map<string, string[]>();
+    const seen = new Set<string>();
+    for (const ref of refs) {
+        const key = `${ref.providerId}:${ref.fileId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const list = byProvider.get(ref.providerId) ?? [];
+        list.push(ref.fileId);
+        byProvider.set(ref.providerId, list);
+    }
+    for (const [providerId, fileIds] of byProvider) {
+        const apiKey = await readApiKey(providerId);
+        if (!apiKey) {
+            console.warn(
+                LOG,
+                'orphaned provider files left (no api key)',
+                providerId,
+                fileIds.length
+            );
+            continue;
+        }
+        for (const fileId of fileIds) {
+            try {
+                await deleteProviderFile(providerId, apiKey, fileId);
+            } catch (err) {
+                console.error(
+                    LOG,
+                    'failed to delete orphaned provider file',
+                    providerId,
+                    fileId,
+                    err
+                );
+            }
+        }
+    }
+}
+
+const FILE_PROVIDERS = new Set(['anthropic', 'openai', 'google']);
+const REPLICA_EXPIRY_MARGIN_MS = 60_000;
+
+function replicaFresh(entry: ProviderFileEntry): boolean {
+    return (
+        entry.expiresAt === undefined ||
+        Date.now() < entry.expiresAt - REPLICA_EXPIRY_MARGIN_MS
+    );
+}
+
+async function uploadWithDedup(
+    provider: string,
+    apiKey: string,
+    bytes: Uint8Array<ArrayBuffer>,
+    mediaType: string,
+    filename: string
+): Promise<ProviderFileEntry> {
+    const hash = await hashBytes(bytes.buffer);
+    const existing = await dbLookupProviderFile(hash, provider);
+    if (existing && replicaFresh(existing)) {
+        console.log(
+            LOG,
+            'dedup: reusing provider file',
+            provider,
+            existing.fileId
+        );
+        return existing;
+    }
+    let entry: ProviderFileEntry;
+    if (provider === 'anthropic') {
+        entry = {
+            fileId: await uploadAnthropicFile(
+                apiKey,
+                bytes,
+                mediaType,
+                filename
+            ),
+        };
+    } else if (provider === 'openai') {
+        entry = {
+            fileId: await uploadOpenAIFile(apiKey, bytes, mediaType, filename),
+        };
+    } else if (provider === 'google') {
+        entry = await uploadGoogleFile(apiKey, bytes, mediaType, filename);
+    } else {
+        throw new Error(
+            `Provider file storage is not supported for ${provider}.`
+        );
+    }
+    await dbRecordProviderFile(hash, provider, entry, filename, mediaType);
+    return entry;
+}
+
+async function ensureReplicas(
+    messages: CourierAIMessage[],
+    provider: string,
+    apiKey: string
+): Promise<Record<string, ProviderFileEntry> | undefined> {
+    const infos = new Map<string, { filename: string; mediaType: string }>();
+    for (const msg of messages) {
+        for (const part of msg.parts) {
+            if (part.type === 'file') {
+                infos.set(part.hash, {
+                    filename: part.filename,
+                    mediaType: part.mediaType,
+                });
+            }
+        }
+    }
+    if (!infos.size) return undefined;
+    const map: Record<string, ProviderFileEntry> = {};
+    for (const [hash, info] of infos) {
+        let entry = await dbLookupProviderFile(hash, provider);
+        if (!entry || !replicaFresh(entry)) {
+            const blob = await dbGetFileBlob(hash);
+            if (!blob) {
+                console.warn(LOG, 'replica skipped, no local bytes', hash);
+                continue;
+            }
+            console.log(LOG, 'replicating file to provider', provider, hash);
+            entry = await uploadWithDedup(
+                provider,
+                apiKey,
+                new Uint8Array(await blob.arrayBuffer()),
+                blob.type || info.mediaType,
+                info.filename
+            );
+        }
+        map[hash] = entry;
+    }
+    return Object.keys(map).length ? map : undefined;
 }
 
 async function handleStorage(
@@ -128,23 +309,78 @@ async function handleStorage(
             console.log(LOG, '-> storage response: saved');
             return { type: 'saved' };
         }
+        case 'stage_draft_attachment': {
+            await dbStageDraftAttachment(
+                message.chatId,
+                message.attachment,
+                message.base64
+            );
+            let warning: string | undefined;
+            if (
+                message.replicateTo &&
+                FILE_PROVIDERS.has(message.replicateTo)
+            ) {
+                try {
+                    const apiKey = await readApiKey(message.replicateTo);
+                    if (!apiKey) {
+                        throw new Error(
+                            `No API key saved for ${message.replicateTo}.`
+                        );
+                    }
+                    await uploadWithDedup(
+                        message.replicateTo,
+                        apiKey,
+                        base64ToBytes(message.base64),
+                        message.attachment.mediaType,
+                        message.attachment.name
+                    );
+                } catch (err) {
+                    console.error(LOG, 'draft replica upload failed', err);
+                    warning = err instanceof Error ? err.message : String(err);
+                }
+            }
+            return { type: 'saved', ...(warning ? { warning } : {}) };
+        }
+        case 'remove_draft_attachment': {
+            const refs = await dbRemoveDraftAttachment(
+                message.chatId,
+                message.key
+            );
+            await deleteProviderFiles(refs);
+            return { type: 'saved' };
+        }
+        case 'clear_draft_attachments': {
+            const refs = await dbClearDraftAttachments(message.chatId);
+            await deleteProviderFiles(refs);
+            return { type: 'saved' };
+        }
         case 'put_message': {
-            await dbPutMessage(message.message);
+            const refs = await dbPutMessage(message.message);
+            await deleteProviderFiles(refs);
             console.log(LOG, '-> storage response: saved');
             return { type: 'saved' };
         }
         case 'delete_message': {
-            await dbDeleteMessage(message.chatId, message.messageId);
+            const refs = await dbDeleteMessage(
+                message.chatId,
+                message.messageId
+            );
+            await deleteProviderFiles(refs);
             console.log(LOG, '-> storage response: saved');
             return { type: 'saved' };
         }
         case 'delete_messages_after': {
-            await dbDeleteMessagesAfter(message.chatId, message.lastKeptId);
+            const refs = await dbDeleteMessagesAfter(
+                message.chatId,
+                message.lastKeptId
+            );
+            await deleteProviderFiles(refs);
             console.log(LOG, '-> storage response: saved');
             return { type: 'saved' };
         }
         case 'delete_chat': {
-            await dbDeleteChat(message.chatId);
+            const refs = await dbDeleteChat(message.chatId);
+            await deleteProviderFiles(refs);
             console.log(LOG, '-> storage response: saved');
             return { type: 'saved' };
         }
@@ -196,6 +432,113 @@ async function handleStorage(
             );
             return { type: 'openrouter_models', models };
         }
+        case 'get_file_blob': {
+            const blob = await dbGetFileBlobBase64(message.hash);
+            console.log(LOG, '-> storage response: file_blob', !!blob);
+            return { type: 'file_blob', blob };
+        }
+        case 'file_status': {
+            const storageOn = await readProviderFileStorageEnabled();
+            const facts = await dbGetFileFacts(
+                message.hashes,
+                message.provider
+            );
+            const statuses: Record<string, FileAvailability> = {};
+            for (const [hash, f] of Object.entries(facts)) {
+                if (f.local) statuses[hash] = 'local';
+                else if (!f.providerEntry || !storageOn)
+                    statuses[hash] = 'missing';
+                else if (replicaFresh(f.providerEntry))
+                    statuses[hash] = 'provider';
+                else statuses[hash] = 'expired';
+            }
+            console.log(
+                LOG,
+                '-> storage response: file_status',
+                message.hashes.length
+            );
+            return { type: 'file_status', statuses };
+        }
+        case 'list_local_files': {
+            const files = await dbListLocalFiles();
+            console.log(LOG, '-> storage response: local_files', files.length);
+            return { type: 'local_files', files };
+        }
+        case 'list_provider_files': {
+            const apiKey = await readApiKey(message.provider);
+            if (!apiKey) {
+                return {
+                    type: 'error',
+                    message: `No API key for ${message.provider}.`,
+                };
+            }
+            let files: ProviderFileInfo[];
+            if (message.provider === 'anthropic') {
+                files = await listAnthropicFiles(apiKey);
+            } else if (message.provider === 'openai') {
+                files = await listOpenAIFiles(apiKey);
+            } else if (message.provider === 'google') {
+                files = await listGoogleFiles(apiKey);
+            } else {
+                return {
+                    type: 'error',
+                    message: `File listing for ${message.provider} isn't supported yet.`,
+                };
+            }
+            const hashes = await dbLookupProviderFileHashes(message.provider);
+            files = files.map((f) => {
+                const hash = hashes.get(f.fileId);
+                return hash ? { ...f, hash } : f;
+            });
+            console.log(
+                LOG,
+                '-> storage response: provider_files',
+                message.provider,
+                files.length
+            );
+            return { type: 'provider_files', files };
+        }
+        case 'delete_stored_file': {
+            if (message.target.kind === 'provider') {
+                const apiKey = await readApiKey(message.target.providerId);
+                if (!apiKey) {
+                    return {
+                        type: 'error',
+                        message: `No API key for ${message.target.providerId}.`,
+                    };
+                }
+                const chatIds = await deleteProviderFile(
+                    message.target.providerId,
+                    apiKey,
+                    message.target.fileId
+                );
+                if (chatIds.length) {
+                    broadcast(
+                        { type: 'files-changed', chatIds },
+                        message.sourceTabId
+                    );
+                }
+                console.log(
+                    LOG,
+                    '-> storage response: provider file deleted',
+                    message.target.fileId
+                );
+                return { type: 'stored_file_deleted', chatIds };
+            }
+            const chatIds = await dbDeleteStoredFile(message.target.hash);
+            if (chatIds.length) {
+                broadcast(
+                    { type: 'files-changed', chatIds },
+                    message.sourceTabId
+                );
+            }
+            console.log(
+                LOG,
+                '-> storage response: stored_file_deleted',
+                chatIds.length
+            );
+            return { type: 'stored_file_deleted', chatIds };
+        }
         case 'get_storage_usage': {
             const [
                 idbUsage,
@@ -225,24 +568,125 @@ async function handleStorage(
         }
         case 'clear_chats': {
             await dbClearChats();
+            broadcast({ type: 'chats-cleared' }, message.sourceTabId);
             console.log(LOG, '-> storage response: saved');
             return { type: 'saved' };
         }
         case 'clear_all': {
+            await dbWipeAll();
             await Promise.all([
-                dbClearChats(),
                 chrome.storage.local.clear(),
                 chrome.storage.sync.clear(),
             ]);
+            broadcast({ type: 'chats-cleared' }, message.sourceTabId);
             console.log(LOG, '-> storage response: saved');
             return { type: 'saved' };
         }
     }
 }
 
-// Trim text parts (in render order) to `maxChars` total, dropping parts past
-// the cut. Mirror of `truncateMessageTextParts` on the web side; kept local
-// to the ext so the two packages don't share runtime code.
+interface OpenAICaptureResult {
+    freshBlobs: HydratedStoredMessage['freshBlobs'];
+    containerFileIds: string[];
+    warning?: string;
+}
+
+async function captureOpenAIOutputs(
+    message: CourierAIMessage,
+    chatId: string,
+    apiKey: string,
+    containerId: string,
+    storageOn: boolean
+): Promise<OpenAICaptureResult> {
+    const meta = await dbGetMeta(chatId);
+    const captured = new Set(
+        meta?.containerId === containerId ? (meta.containerFileIds ?? []) : []
+    );
+    const files = await listOpenAIContainerFiles(apiKey, containerId);
+    const freshBlobs: Record<string, { mediaType: string; base64: string }> =
+        {};
+    const containerFileIds: string[] = [];
+    const warnings: string[] = [];
+    for (const f of files) {
+        if (f.source !== 'assistant') continue;
+        containerFileIds.push(f.fileId);
+        if (captured.has(f.fileId)) continue;
+        const buf = await downloadOpenAIContainerFile(
+            apiKey,
+            containerId,
+            f.fileId
+        );
+        const bytes = new Uint8Array(buf);
+        const hash = await hashBytes(buf);
+        freshBlobs[hash] = {
+            mediaType: f.mediaType,
+            base64: bytesToBase64(bytes),
+        };
+        message.parts.push({
+            type: 'file',
+            filename: f.filename,
+            mediaType: f.mediaType,
+            sizeBytes: bytes.byteLength,
+            hash,
+        });
+        if (storageOn) {
+            try {
+                await uploadWithDedup(
+                    'openai',
+                    apiKey,
+                    bytes,
+                    f.mediaType,
+                    f.filename
+                );
+            } catch (err) {
+                console.error(LOG, 'output replica upload failed', err);
+                warnings.push(
+                    `${f.filename}: ${err instanceof Error ? err.message : String(err)}`
+                );
+            }
+        }
+    }
+    return {
+        freshBlobs: Object.keys(freshBlobs).length ? freshBlobs : undefined,
+        containerFileIds,
+        ...(warnings.length ? { warning: warnings.join('; ') } : {}),
+    };
+}
+
+function replicaUsableWithoutBytes(
+    provider: string,
+    entry: ProviderFileEntry
+): boolean {
+    return provider === 'google' ? entry.uri !== undefined : true;
+}
+
+async function hydrateBlobs(
+    messages: CourierAIMessage[],
+    provider: string,
+    replicas: Record<string, ProviderFileEntry> | undefined
+): Promise<Record<string, { mediaType: string; base64: string }>> {
+    const mediaTypes = new Map<string, string>();
+    for (const m of messages) {
+        for (const part of m.parts) {
+            if (part.type === 'file') mediaTypes.set(part.hash, part.mediaType);
+        }
+    }
+    const blobs: Record<string, { mediaType: string; base64: string }> = {};
+    for (const [hash, mediaType] of mediaTypes) {
+        const replica = replicas?.[hash];
+        if (
+            replica &&
+            replicaUsableWithoutBytes(provider, replica) &&
+            !mediaType.startsWith('text/')
+        ) {
+            continue;
+        }
+        const b = await dbGetFileBlobBase64(hash);
+        if (b) blobs[hash] = b;
+    }
+    return blobs;
+}
+
 function truncateAssistantParts(msg: CourierAIMessage, maxChars: number): void {
     let textConsumed = 0;
     let i = 0;
@@ -269,8 +713,6 @@ function truncateAssistantParts(msg: CourierAIMessage, maxChars: number): void {
 export default defineBackground(() => {
     console.log(LOG, 'background ready');
 
-    // Internal messages from the popup. The popup shows a generic
-    // "Something went wrong" - we forward the actual reason so it can do better.
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         if (message.type === 'admin_clear_chats') {
             dbClearChats()
@@ -287,7 +729,7 @@ export default defineBackground(() => {
         }
         if (message.type === 'admin_clear_all') {
             Promise.all([
-                dbClearChats(),
+                dbWipeAll(),
                 chrome.storage.local.clear(),
                 chrome.storage.sync.clear(),
             ])
@@ -304,10 +746,6 @@ export default defineBackground(() => {
         }
     });
 
-    // One-off storage operations (save/check API keys, settings, chat history).
-    // Any throw inside handleStorage gets converted to a structured error
-    // response so the web side learns about it rather than hanging on a
-    // missing reply.
     chrome.runtime.onMessageExternal.addListener(
         (message: StorageRequest, _sender, sendResponse) => {
             handleStorage(message)
@@ -325,17 +763,11 @@ export default defineBackground(() => {
                             err instanceof Error ? err.message : String(err),
                     });
                 });
-            return true; // keep channel open for async response
+            return true;
         }
     );
 
-    // Streaming chat over a port. Lifecycle: web sends 'start' to begin a
-    // turn, may send 'stop' mid-stream. Extension owns lock + save end-to-end.
     chrome.runtime.onConnectExternal.addListener((port) => {
-        // 'broadcast' ports are long-lived fan-out channels for cross-tab
-        // turn mirroring. The only inbound traffic is a periodic keepalive
-        // from each tab - its sole job is to reset the SW's 30s idle timer
-        // so we stay warm whenever the website is open.
         if (port.name === 'broadcast') {
             console.log(LOG, 'broadcast port connected');
             broadcastPorts.set(port, undefined);
@@ -347,9 +779,6 @@ export default defineBackground(() => {
                 if (msg.type === 'keepalive') return;
             });
             port.onDisconnect.addListener(() => {
-                // Read lastError to consume any close reason Chrome attached
-                // (e.g. bfcache eviction). Without this, Chrome surfaces it as
-                // "Unchecked runtime.lastError".
                 const reason = chrome.runtime.lastError?.message;
                 console.log(
                     LOG,
@@ -363,11 +792,6 @@ export default defineBackground(() => {
 
         console.log(LOG, 'turn port connected');
         const controller = new AbortController();
-
-        // Disposition tracks how the turn ends. 'aborted' means web
-        // disconnected without a graceful stop (e.g. retry/delete) - we skip
-        // the save in that case. 'stopped' means web sent an explicit stop;
-        // we save whatever was assembled by the abort point.
         type Disposition =
             | 'pending'
             | 'streaming'
@@ -380,10 +804,8 @@ export default defineBackground(() => {
         let lockedSourceTabId: string | null = null;
         let assistantMessageId: string | null = null;
         let inStreamErrorText: string | null = null;
+        let errorSource: StreamErrorSource = 'api';
         let portOpen = true;
-        // Set by the 'stop' message: visible char count from the source tab.
-        // Applied to the assembled message before save so the persisted row
-        // matches what the user saw on screen at click time.
         let truncateTo: number | null = null;
 
         const send = (event: ExtensionStreamEvent) => {
@@ -395,8 +817,6 @@ export default defineBackground(() => {
             console.log(LOG, 'port disconnected, disposition:', disposition);
             if (disposition === 'pending' || disposition === 'streaming') {
                 disposition = 'aborted';
-                // Release the lock eagerly so a follow-up request (e.g. retry)
-                // can re-take it without racing the finally block.
                 if (lockedChatId) inflightTurns.delete(lockedChatId);
             }
             controller.abort();
@@ -413,10 +833,6 @@ export default defineBackground(() => {
                 );
                 disposition = 'stopped';
                 truncateTo = msg.truncateTo;
-                // Mirror tabs need to snap their assistant placeholder before
-                // turn-done triggers their IDB refresh, or they'd flash the
-                // full received chunks then shrink. Source tab's broadcast
-                // port is tagged with its sourceTabId so it's skipped here.
                 if (lockedChatId) {
                     broadcast(
                         {
@@ -433,7 +849,6 @@ export default defineBackground(() => {
 
             if (disposition !== 'pending') return;
 
-            // Take the lock first so a duplicate tab is rejected immediately.
             if (inflightTurns.has(msg.chatId)) {
                 console.log(LOG, 'lock taken, rejecting', msg.chatId);
                 send({
@@ -444,15 +859,12 @@ export default defineBackground(() => {
                 if (portOpen) port.disconnect();
                 return;
             }
-            inflightTurns.set(msg.chatId, controller);
+            inflightTurns.add(msg.chatId);
             lockedChatId = msg.chatId;
             lockedSourceTabId = msg.sourceTabId;
             assistantMessageId = msg.assistantMessageId;
             disposition = 'streaming';
 
-            // Announce the turn to every other tab so they can mirror state.
-            // Source tab is skipped server-side (its broadcast port is tagged
-            // with the same sourceTabId).
             broadcast(
                 {
                     type: 'turn-start',
@@ -465,8 +877,6 @@ export default defineBackground(() => {
                 msg.sourceTabId
             );
 
-            // Fold the provider chunk stream into the assistant message as it
-            // arrives, so the terminal save has the complete CourierAIMessage.
             const assembler = createMessageAssembler({
                 id: msg.assistantMessageId,
                 role: 'assistant',
@@ -474,15 +884,22 @@ export default defineBackground(() => {
                 metadata: { createdAt: Date.now() },
             });
 
+            let capturedContainerId: string | undefined;
+            let capturedContainerExpiresAt: string | undefined;
+            let storageOn = false;
+            let apiKey: string | undefined;
+            const outputWarnings: string[] = [];
+            const streamOutputBlobs: Record<
+                string,
+                { mediaType: string; base64: string }
+            > = {};
+
             try {
-                const apiKey = await readApiKey(msg.provider);
+                apiKey = await readApiKey(msg.provider);
                 if (!apiKey) {
                     console.error(LOG, 'no API key for provider', msg.provider);
-                    send({
-                        type: 'error',
-                        source: 'extension',
-                        message: `No API key saved for ${msg.provider}. Add one in Settings.`,
-                    });
+                    inStreamErrorText = `No API key saved for ${msg.provider}. Add one in Settings.`;
+                    errorSource = 'extension';
                     disposition = 'errored';
                     return;
                 }
@@ -503,6 +920,51 @@ export default defineBackground(() => {
                     });
                 }
 
+                storageOn = await readProviderFileStorageEnabled();
+                let providerFiles:
+                    | Record<string, ProviderFileEntry>
+                    | undefined;
+                if (FILE_PROVIDERS.has(msg.provider) && storageOn) {
+                    providerFiles = await ensureReplicas(
+                        msg.messages,
+                        msg.provider,
+                        apiKey
+                    );
+                }
+                const blobs = await hydrateBlobs(
+                    msg.messages,
+                    msg.provider,
+                    providerFiles
+                );
+
+                let turnParams = msg.params ?? {};
+                if (msg.provider === 'anthropic' || msg.provider === 'openai') {
+                    const wireTools = (turnParams.tools ?? {}) as Record<
+                        string,
+                        unknown
+                    >;
+                    if (wireTools.codeExecution) {
+                        const meta = await dbGetMeta(msg.chatId);
+                        if (
+                            meta?.containerId &&
+                            meta.containerExpiresAt &&
+                            new Date(meta.containerExpiresAt).getTime() -
+                                60_000 >
+                                Date.now()
+                        ) {
+                            turnParams = {
+                                ...turnParams,
+                                container: meta.containerId,
+                            };
+                            console.log(
+                                LOG,
+                                'reusing container',
+                                meta.containerId
+                            );
+                        }
+                    }
+                }
+
                 let chunkStream: AsyncIterable<CourierAIChunk>;
                 try {
                     chunkStream = streamProvider(msg.provider, {
@@ -510,27 +972,82 @@ export default defineBackground(() => {
                         model: msg.model,
                         messages: msg.messages,
                         system: msg.system,
-                        params: msg.params ?? {},
+                        params: turnParams,
                         signal: controller.signal,
+                        blobs,
+                        providerFiles,
                     });
                 } catch (e) {
-                    // Sync errors (unknown provider, malformed config).
                     console.error(LOG, 'streamProvider threw', e);
-                    send({
-                        type: 'error',
-                        source: 'extension',
-                        message: e instanceof Error ? e.message : String(e),
-                    });
+                    inStreamErrorText =
+                        e instanceof Error ? e.message : String(e);
+                    errorSource = 'extension';
                     disposition = 'errored';
                     return;
                 }
 
                 for await (const chunk of chunkStream) {
+                    let outbound = chunk;
+                    if (chunk.type === 'file' && chunk.base64) {
+                        streamOutputBlobs[chunk.hash] = {
+                            mediaType: chunk.mediaType,
+                            base64: chunk.base64,
+                        };
+                        if (chunk.replicaFileId) {
+                            try {
+                                if (storageOn) {
+                                    await dbRecordProviderFile(
+                                        chunk.hash,
+                                        msg.provider,
+                                        { fileId: chunk.replicaFileId },
+                                        chunk.filename,
+                                        chunk.mediaType
+                                    );
+                                } else {
+                                    await deleteProviderFile(
+                                        msg.provider,
+                                        apiKey,
+                                        chunk.replicaFileId
+                                    );
+                                }
+                            } catch (err) {
+                                console.error(
+                                    LOG,
+                                    'output replica policy failed',
+                                    err
+                                );
+                                const m =
+                                    err instanceof Error
+                                        ? err.message
+                                        : String(err);
+                                outputWarnings.push(
+                                    storageOn
+                                        ? `Couldn't record a provider copy of ${chunk.filename} (will retry on your next message): ${m}`
+                                        : `Couldn't delete ${chunk.filename} from ${msg.provider} storage (you can delete it from the Files tab): ${m}`
+                                );
+                            }
+                        }
+                        const stripped = { ...chunk };
+                        delete stripped.base64;
+                        delete stripped.replicaFileId;
+                        outbound = stripped;
+                    }
                     applyCourierAIChunk(assembler, chunk);
+                    if (chunk.type === 'finish') {
+                        if (chunk.containerId)
+                            capturedContainerId = chunk.containerId;
+                        if (chunk.containerExpiresAt)
+                            capturedContainerExpiresAt =
+                                chunk.containerExpiresAt;
+                    }
                     if (disposition === 'streaming') {
-                        send({ type: 'chunk', chunk });
+                        send({ type: 'chunk', chunk: outbound });
                         broadcast(
-                            { type: 'turn-chunk', chatId: msg.chatId, chunk },
+                            {
+                                type: 'turn-chunk',
+                                chatId: msg.chatId,
+                                chunk: outbound,
+                            },
                             msg.sourceTabId
                         );
                     }
@@ -540,10 +1057,6 @@ export default defineBackground(() => {
                     disposition = 'completed';
                 }
             } catch (e: unknown) {
-                // Provider generators throw on API/stream error (after the
-                // for-await begins). Aborts return silently, so a throw here is
-                // a real error unless a port listener already flipped the
-                // disposition to 'stopped'/'aborted'.
                 console.error(LOG, 'stream threw', e);
                 if (disposition === 'streaming') {
                     inStreamErrorText =
@@ -551,27 +1064,17 @@ export default defineBackground(() => {
                     disposition = 'errored';
                 }
             } finally {
-                // Re-widen: TS narrows `disposition` based on assignments in
-                // try/catch, but the port listeners can mutate it to
-                // 'aborted' or 'stopped' mid-await - narrowing misses those
-                // paths.
                 let disp = disposition as Disposition;
-
-                // Persist the assembled assistant message. Skipped on 'aborted'
-                // (web bailed without a graceful stop) and when nothing
-                // assembled. On graceful stop, truncateTo trims text parts to
-                // the source tab's visible char count so the persisted row
-                // matches what the user saw.
                 const assembled = assembler.message;
+                if (truncateTo !== null) {
+                    truncateAssistantParts(assembled, truncateTo);
+                }
                 if (
                     disp !== 'aborted' &&
                     lockedChatId &&
                     assistantMessageId &&
                     assembled.parts.length > 0
                 ) {
-                    if (truncateTo !== null) {
-                        truncateAssistantParts(assembled, truncateTo);
-                    }
                     const finalMessage: CourierAIMessage = {
                         ...assembled,
                         id: assistantMessageId,
@@ -586,12 +1089,45 @@ export default defineBackground(() => {
                                 : {}),
                         },
                     };
+                    let freshBlobs: HydratedStoredMessage['freshBlobs'];
+                    let containerFileIds: string[] | undefined;
+                    if (
+                        apiKey &&
+                        msg.provider === 'openai' &&
+                        capturedContainerId
+                    ) {
+                        try {
+                            const captured = await captureOpenAIOutputs(
+                                finalMessage,
+                                lockedChatId,
+                                apiKey,
+                                capturedContainerId,
+                                storageOn
+                            );
+                            freshBlobs = captured.freshBlobs;
+                            containerFileIds = captured.containerFileIds;
+                            if (captured.warning) {
+                                outputWarnings.push(
+                                    `Saved generated file(s) on this device, but couldn't copy to OpenAI storage (will retry on your next message): ${captured.warning}`
+                                );
+                            }
+                        } catch (err) {
+                            console.error(LOG, 'output capture failed', err);
+                            inStreamErrorText = `Couldn't download generated file(s): ${err instanceof Error ? err.message : String(err)}`;
+                            disp = 'errored';
+                        }
+                    }
+                    if (Object.keys(streamOutputBlobs).length) {
+                        freshBlobs = { ...streamOutputBlobs, ...freshBlobs };
+                    }
                     const stored: HydratedStoredMessage = {
                         chatId: lockedChatId,
                         message: finalMessage,
+                        ...(freshBlobs ? { freshBlobs } : {}),
                     };
                     try {
-                        await dbPutMessage(stored);
+                        const refs = await dbPutMessage(stored);
+                        await deleteProviderFiles(refs);
                     } catch (err) {
                         console.error(LOG, 'save failed', err);
                         const m =
@@ -599,22 +1135,34 @@ export default defineBackground(() => {
                         inStreamErrorText = `Couldn't save assistant message: ${m}`;
                         disp = 'errored';
                     }
+                    if (capturedContainerId) {
+                        try {
+                            await dbSetContainer(
+                                lockedChatId,
+                                capturedContainerId,
+                                capturedContainerExpiresAt,
+                                containerFileIds
+                            );
+                        } catch (err) {
+                            console.error(LOG, 'container persist failed', err);
+                        }
+                    }
+                    if (outputWarnings.length && disp !== 'errored') {
+                        inStreamErrorText = outputWarnings.join('\n');
+                        disp = 'errored';
+                    }
                 }
 
                 if (disp === 'errored' && inStreamErrorText) {
                     send({
                         type: 'error',
-                        source: 'api',
+                        source: errorSource,
                         message: inStreamErrorText,
                     });
                 } else if (disp !== 'aborted') {
                     send({ type: 'done' });
                 }
 
-                // Fan out the terminal lifecycle event. 'aborted' means the
-                // source tab bailed without saving - other tabs should roll
-                // back to IDB's pre-turn state. Source tab is skipped - it
-                // already knows the disposition via the turn port.
                 if (lockedChatId) {
                     if (disp === 'errored' && inStreamErrorText) {
                         broadcast(

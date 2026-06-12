@@ -1,9 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
-// Playwright's CLI runs under Node, which (unlike bun) doesn't auto-load .env.
-// Parse the repo-root .env ourselves so provider API keys are in process.env
-// for the seeding fixture. Existing process.env values win.
 const ROOT = path.resolve(__dirname, '../..');
 const ENV_PATH = path.join(ROOT, '.env');
 

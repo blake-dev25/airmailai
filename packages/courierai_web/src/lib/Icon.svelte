@@ -6,6 +6,7 @@
     import Download from '@lucide/svelte/icons/download';
     import ExternalLink from '@lucide/svelte/icons/external-link';
     import File from '@lucide/svelte/icons/file';
+    import Folder from '@lucide/svelte/icons/folder';
     import Info from '@lucide/svelte/icons/info';
     import LoaderCircle from '@lucide/svelte/icons/loader-circle';
     import Mail from '@lucide/svelte/icons/mail';
@@ -17,6 +18,7 @@
     import Send from '@lucide/svelte/icons/send';
     import Settings from '@lucide/svelte/icons/settings';
     import Square from '@lucide/svelte/icons/square';
+    import Star from '@lucide/svelte/icons/star';
     import Trash from '@lucide/svelte/icons/trash';
     import X from '@lucide/svelte/icons/x';
 
@@ -30,6 +32,7 @@
         | 'edit'
         | 'external-link'
         | 'file'
+        | 'folder'
         | 'info'
         | 'mail'
         | 'mail-plus'
@@ -39,6 +42,7 @@
         | 'send'
         | 'settings'
         | 'spinner'
+        | 'star'
         | 'stop'
         | 'trash';
 
@@ -46,10 +50,17 @@
         name: IconName;
         size?: number;
         strokeWidth?: number;
+        fill?: string;
         class?: string;
     }
 
-    let { name, size, strokeWidth, class: className = '' }: Props = $props();
+    let {
+        name,
+        size,
+        strokeWidth,
+        fill,
+        class: className = '',
+    }: Props = $props();
 
     const ICONS = {
         check: Check,
@@ -61,6 +72,7 @@
         edit: Pencil,
         'external-link': ExternalLink,
         file: File,
+        folder: Folder,
         info: Info,
         mail: Mail,
         'mail-plus': MailPlus,
@@ -70,11 +82,11 @@
         send: Send,
         settings: Settings,
         spinner: LoaderCircle,
+        star: Star,
         stop: Square,
         trash: Trash,
     } as const;
 
-    // Defaults preserved from the previous hand-rolled icons so layouts don't shift.
     const DEFAULT_SIZE: Record<IconName, number> = {
         check: 15,
         'chevron-down': 14,
@@ -85,6 +97,7 @@
         edit: 12,
         'external-link': 11,
         file: 12,
+        folder: 14,
         info: 13,
         mail: 18,
         'mail-plus': 32,
@@ -94,6 +107,7 @@
         send: 16,
         settings: 15,
         spinner: 12,
+        star: 11,
         stop: 14,
         trash: 12,
     };
@@ -106,6 +120,7 @@
 <Component
     size={resolvedSize}
     strokeWidth={resolvedStroke}
+    {...fill ? { fill } : {}}
     class={`courier-icon ${name === 'spinner' ? 'courier-icon-spin' : ''} ${className}`}
 />
 

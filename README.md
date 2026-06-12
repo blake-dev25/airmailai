@@ -1,6 +1,4 @@
-# ✉️CourierAI
-Chat with AI. Bring your own keys. Pay as you go.
-
-Use frontier models from multiple providers without stacking monthly AI subscriptions.
+# CourierAI
+The lightweight, security-focused, privacy-first BYOK LLM chat app.
 
 TODO: finish

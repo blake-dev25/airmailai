@@ -4,6 +4,8 @@
     import { chatStore } from './chatStore.svelte';
     import Icon from './Icon.svelte';
     import SettingsPopover from './SettingsPopover.svelte';
+    import StampLogo from './StampLogo.svelte';
+    import { settingsStore } from './settingsStore.svelte';
     import type { Chat } from './types';
 
     let showSettings = $state(false);
@@ -11,8 +13,6 @@
     let searchValue = $state('');
     let listRef = $state<VList<Chat> | undefined>(undefined);
 
-    // Auto-load more when within ~1.5 viewport heights of the bottom - hides
-    // the request behind the user's existing scroll momentum.
     function maybeLoadMore() {
         if (!listRef || !chatStore.hasMoreChats || chatStore.isLoadingMore)
             return;
@@ -65,14 +65,18 @@
     }
 
     function commitRename() {
-        if (renamingChatId && renameValue.trim()) {
-            chatStore.rename(renamingChatId, renameValue.trim());
+        const title = Array.from(renameValue)
+            .filter((c) => c.charCodeAt(0) >= 32)
+            .join('')
+            .trim()
+            .slice(0, 255);
+        if (renamingChatId && title) {
+            chatStore.rename(renamingChatId, title);
         }
         renamingChatId = null;
         renameValue = '';
     }
 
-    // Airmail diagonal stripe decoration - reversed direction (\), with beige gaps
     const stripeH = 20;
     const stripeW = 40;
     const gap = 40;
@@ -82,9 +86,7 @@
     const endI = Math.ceil(sidebarW / pitch) + 1;
     const stripes = Array.from({ length: endI - startI + 1 }, (_, idx) => {
         const i = startI + idx;
-        // -22 so the leftmost stripe gets clipped by the left edge.
         const x = i * pitch - 22;
-        // Reversed direction: top edge shifted right by stripeH, bottom at x.
         return {
             points: `${x + stripeH},0 ${x + stripeH + stripeW},0 ${x + stripeW},${stripeH} ${x},${stripeH}`,
             red: i % 2 === 0,
@@ -102,47 +104,70 @@
 <aside
     class="sidebar w-64 shrink-0 flex flex-col bg-canvas border-r border-border overflow-hidden select-none [&_input]:select-text"
 >
-    <svg
-        width={sidebarW}
-        height={stripeH}
-        viewBox="0 0 {sidebarW} {stripeH}"
-        class="block shrink-0"
-        aria-hidden="true"
-    >
-        <defs>
-            <clipPath id="stripe-clip">
-                <rect width={sidebarW} height={stripeH} />
-            </clipPath>
-        </defs>
-        <g clip-path="url(#stripe-clip)">
-            <rect
-                width={sidebarW}
-                height={stripeH}
-                fill="var(--color-canvas)"
-            />
-            <!-- eslint-disable-next-line svelte/require-each-key -->
-            {#each stripes as stripe}
-                <polygon
-                    points={stripe.points}
-                    fill={stripe.red
-                        ? 'var(--color-accent-bg)'
-                        : 'var(--color-accent-2-bg)'}
-                />
-            {/each}
-        </g>
-    </svg>
-
-    <div
-        class="flex shrink-0 items-center justify-center gap-2.5 px-4 py-4.5 text-fg border-b border-border"
-    >
-        <Icon name="mail" size={32} class="logo-mail" />
-        <span
-            class="text-[34px] font-semibold tracking-[-0.02em] font-[Courier,monospace]"
-            >CourierAI</span
+    {#if settingsStore.showBranding}
+        <svg
+            width={sidebarW}
+            height={stripeH}
+            viewBox="0 0 {sidebarW} {stripeH}"
+            class="block shrink-0"
+            aria-hidden="true"
         >
-    </div>
+            <defs>
+                <clipPath id="stripe-clip">
+                    <rect width={sidebarW} height={stripeH} />
+                </clipPath>
+            </defs>
+            <g clip-path="url(#stripe-clip)">
+                <rect
+                    width={sidebarW}
+                    height={stripeH}
+                    fill="var(--color-canvas)"
+                />
+                <!-- eslint-disable-next-line svelte/require-each-key -->
+                {#each stripes as stripe}
+                    <polygon
+                        points={stripe.points}
+                        fill={stripe.red
+                            ? 'var(--color-accent-bg)'
+                            : 'var(--color-accent-2-bg)'}
+                    />
+                {/each}
+            </g>
+        </svg>
+
+        <div
+            class="flex shrink-0 items-center justify-center gap-2 px-4 py-4.5 text-fg border-b border-border"
+        >
+            <span class="flex -translate-y-0.2">
+                <StampLogo size={44} />
+            </span>
+            <span
+                class="text-[34px] font-semibold tracking-[-0.02em] font-serif"
+                >CourierAI</span
+            >
+        </div>
+    {/if}
 
     <div class="flex shrink-0 flex-col gap-1.5 p-3 border-b border-border">
+        <button
+            type="button"
+            class={[
+                'flex items-center gap-2 w-full px-2.5 py-2 bg-transparent border-0 rounded-md text-sm text-fg cursor-pointer transition-[background-color,color] duration-100 hover:bg-surface-raised',
+                appLifecycle.view === 'files' &&
+                    'bg-surface-raised text-accent-fg',
+            ]}
+            onclick={() => {
+                if (chatStore.demoMode) {
+                    appLifecycle.requestExtension();
+                    return;
+                }
+                appLifecycle.view =
+                    appLifecycle.view === 'files' ? 'chat' : 'files';
+            }}
+        >
+            <Icon name="folder" />
+            Files
+        </button>
         <div
             class="flex items-center gap-2 w-full px-2.5 py-1.75 bg-canvas border border-border rounded-lg box-border opacity-45 transition-[opacity,border-color] duration-150 focus-within:opacity-100 focus-within:border-fg-muted"
         >
@@ -181,7 +206,10 @@
         <button
             type="button"
             class="flex items-center justify-center gap-2 w-full px-3 py-2.25 bg-accent-bg text-on-accent-bg border-0 rounded-lg text-sm font-medium cursor-pointer transition-[background-color,color] duration-150 hover:bg-accent-bg-hover hover:text-on-accent-bg-hover"
-            onclick={() => chatStore.newChat()}
+            onclick={() => {
+                appLifecycle.view = 'chat';
+                chatStore.newChat();
+            }}
         >
             <Icon name="plus" />
             New Chat
@@ -199,13 +227,28 @@
             onmouseleave={() => (historyHovered = false)}
         >
             <p
-                class="px-2.5 pt-2.5 pb-1 text-[0.6875rem] font-semibold tracking-[0.06em] uppercase text-fg-muted m-0"
+                class="px-2.5 pt-2.5 pb-1 text-[0.6875rem] font-semibold tracking-wider uppercase text-fg-muted m-0"
             >
                 {chatStore.searchResults.length} result{chatStore.searchResults
                     .length === 1
                     ? ''
                     : 's'}
             </p>
+            {#if chatStore.hasMoreChats || chatStore.searchingAll}
+                <button
+                    type="button"
+                    class="flex items-center justify-center gap-1.5 w-full px-2.5 py-1.5 mb-1 bg-transparent border border-border rounded-md text-xs text-fg-muted cursor-pointer transition-[background-color,color] duration-100 hover:bg-surface-raised hover:text-fg disabled:cursor-default"
+                    disabled={chatStore.searchingAll}
+                    onclick={() => chatStore.searchAllChats()}
+                >
+                    {#if chatStore.searchingAll}
+                        <Icon name="spinner" />
+                        Searching all chats...
+                    {:else}
+                        Search all chats ({chatStore.unloadedMetas.length} more)
+                    {/if}
+                </button>
+            {/if}
             {#if chatStore.searchResults.length === 0}
                 <p class="px-2 pt-2 pb-5 text-sm text-fg text-center m-0">
                     No matches found
@@ -222,11 +265,13 @@
                         <button
                             type="button"
                             class={chatItemClass}
-                            onclick={() =>
+                            onclick={() => {
+                                appLifecycle.view = 'chat';
                                 chatStore.activate(
                                     result.id,
                                     result.matchIndex
-                                )}
+                                );
+                            }}
                             title={result.title}
                         >
                             <span
@@ -269,7 +314,7 @@
             onmouseleave={() => (historyHovered = false)}
         >
             <p
-                class="px-2.5 pt-2.5 pb-1 text-[0.6875rem] font-semibold tracking-[0.06em] uppercase text-fg-muted m-0"
+                class="px-2.5 pt-2.5 pb-1 text-[0.6875rem] font-semibold tracking-wider uppercase text-fg-muted m-0"
             >
                 Recent Chats
             </p>
@@ -322,8 +367,10 @@
                                     <button
                                         type="button"
                                         class={chatItemClass}
-                                        onclick={() =>
-                                            chatStore.activate(chat.id)}
+                                        onclick={() => {
+                                            appLifecycle.view = 'chat';
+                                            chatStore.activate(chat.id);
+                                        }}
                                         title={chat.title}
                                     >
                                         <span
@@ -443,10 +490,6 @@
         color: var(--color-fg);
     }
 
-    :global(.logo-mail) {
-        transform: translateY(-2px);
-    }
-
     .history.search-mode::-webkit-scrollbar {
         width: 3px;
     }
@@ -475,7 +518,6 @@
         background-color: var(--color-border);
     }
 
-    /* Search-mark - applied to {@html}-injected markup, can't take utility classes */
     :global(.search-mark) {
         background-color: var(--color-accent-2-bg);
         color: var(--color-on-accent-2-bg);

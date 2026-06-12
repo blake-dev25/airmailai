@@ -3,13 +3,14 @@
     import { appLifecycle } from './appLifecycle.svelte';
     import { chatStore } from './chatStore.svelte';
     import {
+        defaultModelForProvider,
         filterProvidersByTier,
         MODEL_TIERS,
         type ModelOption,
         type ModelTier,
     } from './constants';
     import Icon from './Icon.svelte';
-    import ModelPicker from './ModelPicker.svelte';
+    import ModelPicker, { type ModelGroup } from './ModelPicker.svelte';
     import { providersStore } from './providersStore.svelte';
     import { settingsStore } from './settingsStore.svelte';
 
@@ -31,8 +32,6 @@
     );
 
     let providerOptions = $derived.by(() => {
-        // Ensure the chat's stored provider stays visible even if it has no
-        // in-tier models - otherwise the select would show a blank value.
         const out = [...filteredProviders];
         if (!out.find((p) => p.id === settingsStore.providerId)) {
             const stored = providersStore.providers.find(
@@ -43,57 +42,47 @@
         return out;
     });
 
-    // Marketplace providers (OpenRouter) skip tier curation. Their catalog is
-    // pre-sorted by the parent (vendor-pinned, then newest-first), and we
-    // group by vendor here so users can scan by upstream maker.
     let modelGroups = $derived.by(() => {
         const provider =
             providerOptions.find((p) => p.id === settingsStore.providerId) ??
             providerOptions[0];
-        if (!provider)
-            return [] as Array<{ label: string; models: ModelOption[] }>;
+        if (!provider) return [] as ModelGroup[];
 
         if (provider.marketplace) {
-            // `~`-prefix is OpenRouter's premier-provider tag - a curated
+            // *** `~`-prefix is OpenRouter's premier-provider tag - a curated
             // subset (e.g. latest models) that lives as its own group, distinct
             // from the same vendor's non-premier catalog.
-            const formatVendor = (v: string) =>
-                v.startsWith('~') ? `★ ${v.slice(1)}` : v;
-            const groups: Array<{ label: string; models: ModelOption[] }> = [];
+            const groups: ModelGroup[] = [];
+            const pushBucket = (vendor: string, models: ModelOption[]) => {
+                const pinned = vendor.startsWith('~');
+                groups.push({
+                    label: pinned ? vendor.slice(1) : vendor,
+                    pinned,
+                    models,
+                });
+            };
             let currentVendor: string | null = null;
             let bucket: ModelOption[] = [];
             for (const m of provider.models) {
                 const v = m.vendor ?? 'other';
                 if (v !== currentVendor) {
-                    if (bucket.length)
-                        groups.push({
-                            label: formatVendor(currentVendor!),
-                            models: bucket,
-                        });
+                    if (bucket.length) pushBucket(currentVendor!, bucket);
                     currentVendor = v;
                     bucket = [];
                 }
                 bucket.push(m);
             }
-            if (bucket.length)
-                groups.push({
-                    label: formatVendor(currentVendor!),
-                    models: bucket,
-                });
+            if (bucket.length) pushBucket(currentVendor!, bucket);
             return groups;
         }
 
-        // Tier-grouped, sorted options for first-party providers. If the
-        // chat's stored model is out-of-tier, it gets its own group at the top
-        // so the picker can display it (and the user can revert to it by
-        // closing without picking).
         const inTier = new Set(
             filteredProviders
                 .find((p) => p.id === provider.id)
                 ?.models.map((m) => m.id) ?? []
         );
 
-        const groups: Array<{ label: string; models: ModelOption[] }> = [];
+        const groups: ModelGroup[] = [];
         const stored = providersStore.providers
             .find((p) => p.id === provider.id)
             ?.models.find((m) => m.id === settingsStore.modelId);
@@ -122,7 +111,6 @@
 
     $effect(() => {
         if (badgeEl && !badgeFocused) {
-            // contenteditable badge - Svelte yields ownership while editing.
             // eslint-disable-next-line svelte/no-dom-manipulating
             badgeEl.textContent = settingsStore.temperature.toFixed(2);
         }
@@ -249,7 +237,8 @@
         const fallback = providersStore.providers.find(
             (p) => p.id === settingsStore.providerId
         );
-        const first = filtered?.models[0] ?? fallback?.models[0];
+        const source = filtered ?? fallback;
+        const first = source ? defaultModelForProvider(source) : undefined;
         if (first) {
             settingsStore.modelId = first.id;
             settingsStore.maxTokens = first.params.defaultMaxTokens;
@@ -259,9 +248,7 @@
                 first.params.thinking?.defaultLevel ?? 'none';
             settingsStore.adaptiveThinking =
                 first.params.thinking?.adaptive !== undefined;
-            settingsStore.webSearch = false;
-            settingsStore.webFetch = false;
-            settingsStore.codeExecution = false;
+            settingsStore.applyToolDefaults(first);
         }
     }
 
@@ -275,15 +262,10 @@
                 model.params.thinking?.defaultLevel ?? 'none';
             settingsStore.adaptiveThinking =
                 model.params.thinking?.adaptive !== undefined;
-            settingsStore.webSearch = false;
-            settingsStore.webFetch = false;
-            settingsStore.codeExecution = false;
+            settingsStore.applyToolDefaults(model);
         }
     }
 
-    // Per-tool toggle visibility - gated on master setting AND current model
-    // declaring support. Providers that fold search+fetch into one tool (OpenAI)
-    // get a single combined toggle that drives both flags in lockstep.
     let modelTools = $derived(currentModel?.tools);
     let webSearchSupported = $derived(!!modelTools?.webSearch);
     let webFetchSupported = $derived(!!modelTools?.webFetch);
@@ -305,8 +287,6 @@
     let showCodeExec = $derived(
         codeExecSupported && settingsStore.enableCodeExecution
     );
-    // Linked toggle is "on" only if BOTH backing flags are on, so flipping it
-    // moves them together.
     let linkedWebOn = $derived(
         settingsStore.webSearch && settingsStore.webFetch
     );
@@ -316,7 +296,6 @@
         settingsStore.webFetch = next;
     }
 
-    // Airmail stripe - same geometry as Sidebar, adapted for modelConfig width
     const mcStripeH = 20;
     const mcStripeW = 40;
     const mcGap = 40;
@@ -336,7 +315,6 @@
         }
     );
 
-    // Safety clamp for externally set values (e.g. loading a chat saved with an old model limit)
     $effect(() => {
         if (!currentModel) return;
         const params = currentModel.params;
@@ -350,7 +328,6 @@
                 settingsStore.temperature > params.temperatureMax
             )
                 settingsStore.temperature = params.defaultTemperature ?? 1;
-            // If the loaded thinkingLevel isn't valid for this model, fall back to default
             if (
                 params.thinking &&
                 !(params.thinking.levels as readonly string[]).includes(
@@ -360,15 +337,11 @@
                 settingsStore.thinkingLevel = params.thinking.defaultLevel;
             }
             if (!params.thinking) settingsStore.thinkingLevel = 'none';
-            // Coerce adaptiveThinking to a valid state for the current model
             const adaptiveSupport = params.thinking?.adaptive;
             if (adaptiveSupport === 'required')
                 settingsStore.adaptiveThinking = true;
             else if (adaptiveSupport === undefined)
                 settingsStore.adaptiveThinking = false;
-            // Drop tool flags the new model can't support, so a chat saved
-            // with web_search on doesn't keep firing after switching to a
-            // model that lacks it.
             if (settingsStore.webSearch && !tools?.webSearch)
                 settingsStore.webSearch = false;
             if (settingsStore.webFetch && !tools?.webFetch)
@@ -390,7 +363,7 @@
     const rangeHintsClass =
         'flex justify-between text-[0.6875rem] text-fg -mt-1';
     const detailRowClass = 'flex flex-col gap-[3px]';
-    const detailLabelClass = 'text-xs text-fg uppercase tracking-wider';
+    const detailLabelClass = 'text-xs text-fg-muted';
     const detailValueClass =
         'text-xs text-fg [font-variant-numeric:tabular-nums]';
 </script>
@@ -501,7 +474,7 @@
                         }}
                     />
                     <div class={rangeHintsClass}>
-                        <span>None</span>
+                        <span>{levelLabel(thinkingConfig.levels[0])}</span>
                         <span
                             >{levelLabel(
                                 thinkingConfig.levels[
@@ -524,7 +497,7 @@
                             id="adaptive-thinking"
                             type="button"
                             class={[
-                                'ios-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
+                                'toggle-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
                                 locked && 'cursor-not-allowed opacity-60',
                                 settingsStore.adaptiveThinking && 'on',
                             ]}
@@ -541,7 +514,7 @@
                                         !settingsStore.adaptiveThinking;
                             }}
                         >
-                            <span class="ios-switch-thumb"></span>
+                            <span class="toggle-switch-thumb"></span>
                         </button>
                     </div>
                 </div>
@@ -617,7 +590,7 @@
                             id="web-linked"
                             type="button"
                             class={[
-                                'ios-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
+                                'toggle-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
                                 linkedWebOn && 'on',
                             ]}
                             role="switch"
@@ -625,7 +598,7 @@
                             aria-label="Web search and fetch"
                             onclick={toggleLinkedWeb}
                         >
-                            <span class="ios-switch-thumb"></span>
+                            <span class="toggle-switch-thumb"></span>
                         </button>
                     </div>
                 </div>
@@ -641,7 +614,7 @@
                             id="web-search"
                             type="button"
                             class={[
-                                'ios-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
+                                'toggle-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
                                 settingsStore.webSearch && 'on',
                             ]}
                             role="switch"
@@ -652,7 +625,7 @@
                                     !settingsStore.webSearch;
                             }}
                         >
-                            <span class="ios-switch-thumb"></span>
+                            <span class="toggle-switch-thumb"></span>
                         </button>
                     </div>
                 </div>
@@ -668,7 +641,7 @@
                             id="web-fetch"
                             type="button"
                             class={[
-                                'ios-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
+                                'toggle-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
                                 settingsStore.webFetch && 'on',
                             ]}
                             role="switch"
@@ -679,7 +652,7 @@
                                     !settingsStore.webFetch;
                             }}
                         >
-                            <span class="ios-switch-thumb"></span>
+                            <span class="toggle-switch-thumb"></span>
                         </button>
                     </div>
                 </div>
@@ -695,7 +668,7 @@
                             id="code-execution"
                             type="button"
                             class={[
-                                'ios-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
+                                'toggle-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
                                 settingsStore.codeExecution && 'on',
                             ]}
                             role="switch"
@@ -706,7 +679,7 @@
                                     !settingsStore.codeExecution;
                             }}
                         >
-                            <span class="ios-switch-thumb"></span>
+                            <span class="toggle-switch-thumb"></span>
                         </button>
                     </div>
                 </div>
@@ -744,52 +717,60 @@
             {#if !appLifecycle.initialized || !currentModel || currentModel.params.knowledgeCutoff}
                 <div class={detailRowClass}>
                     <span class={detailLabelClass}>Knowledge Cutoff</span>
-                    <span class={detailValueClass}
-                        >{appLifecycle.initialized && currentModel
-                            ? currentModel.params.knowledgeCutoff
-                            : ' '}</span
-                    >
+                    <span class={detailValueClass}>
+                        {#if appLifecycle.initialized && currentModel}
+                            {currentModel.params.knowledgeCutoff}
+                        {:else}
+                            &nbsp;
+                        {/if}
+                    </span>
                 </div>
             {/if}
         </div>
     </div>
 
-    <div
-        class="py-2 text-[12px] text-fg opacity-40 text-center border-t border-border"
-    >
-        Made with &lt;3 by <a
-            href="https://x.com/blake__dev"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="text-inherit no-underline hover:underline">@blake__dev</a
-        > + AI
-    </div>
+    {#if settingsStore.showBranding}
+        <div
+            class="py-2 text-[12px] text-fg opacity-40 text-center border-t border-border"
+        >
+            Made with &lt;3 by <a
+                href="https://x.com/blake__dev"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="text-inherit no-underline hover:underline">@blake__dev</a
+            > + AI
+        </div>
 
-    <svg
-        width={mcW}
-        height={mcStripeH}
-        viewBox="0 0 {mcW} {mcStripeH}"
-        class="block shrink-0"
-        aria-hidden="true"
-    >
-        <defs>
-            <clipPath id="mc-stripe-clip">
-                <rect width={mcW} height={mcStripeH} />
-            </clipPath>
-        </defs>
-        <g clip-path="url(#mc-stripe-clip)">
-            <rect width={mcW} height={mcStripeH} fill="var(--color-canvas)" />
-            <!-- eslint-disable-next-line svelte/require-each-key -->
-            {#each mcStripes as stripe}
-                <polygon
-                    points={stripe.points}
-                    fill={stripe.red
-                        ? 'var(--color-accent-bg)'
-                        : 'var(--color-accent-2-bg)'}
+        <svg
+            width={mcW}
+            height={mcStripeH}
+            viewBox="0 0 {mcW} {mcStripeH}"
+            class="block shrink-0"
+            aria-hidden="true"
+        >
+            <defs>
+                <clipPath id="mc-stripe-clip">
+                    <rect width={mcW} height={mcStripeH} />
+                </clipPath>
+            </defs>
+            <g clip-path="url(#mc-stripe-clip)">
+                <rect
+                    width={mcW}
+                    height={mcStripeH}
+                    fill="var(--color-canvas)"
                 />
-            {/each}
-        </g>
-    </svg>
+                <!-- eslint-disable-next-line svelte/require-each-key -->
+                {#each mcStripes as stripe}
+                    <polygon
+                        points={stripe.points}
+                        fill={stripe.red
+                            ? 'var(--color-accent-bg)'
+                            : 'var(--color-accent-2-bg)'}
+                    />
+                {/each}
+            </g>
+        </svg>
+    {/if}
 </aside>
 
 <style>
@@ -831,20 +812,17 @@
         cursor: pointer;
     }
 
-    /* iOS-style switch - base + on state + thumb. Pseudo-element-free but
-     * the on-state styling and thumb slide are simpler to express here than
-     * across the markup's class array. */
-    .ios-switch {
+    .toggle-switch {
         background-color: var(--color-surface-raised);
         border: 1px solid var(--color-border);
     }
 
-    .ios-switch.on {
+    .toggle-switch.on {
         background-color: var(--color-accent-3-bg);
         border-color: var(--color-accent-3-bg);
     }
 
-    .ios-switch-thumb {
+    .toggle-switch-thumb {
         position: absolute;
         top: 1px;
         left: 1px;
@@ -856,7 +834,7 @@
         transition: transform 0.18s ease;
     }
 
-    .ios-switch.on .ios-switch-thumb {
+    .toggle-switch.on .toggle-switch-thumb {
         transform: translateX(14px);
     }
 

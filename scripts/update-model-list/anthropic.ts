@@ -97,11 +97,18 @@ function deriveAnthropic(m: Anthropic.ModelInfo): DerivedModel {
                   : (levels[1] ?? 'none');
 
             thinking = { levels, defaultLevel, adaptive };
+        } else if (cap.thinking.types?.enabled?.supported) {
+            thinking = {
+                levels: ['none', 'low', 'medium', 'high'],
+                defaultLevel: 'none',
+            };
         }
     }
 
     if (m.max_input_tokens == null) notes.push('max_input_tokens missing');
     if (m.max_tokens == null) notes.push('max_tokens missing');
+
+    const samplingParamsRemoved = thinking?.adaptive === 'required';
 
     return {
         id: m.id,
@@ -109,8 +116,9 @@ function deriveAnthropic(m: Anthropic.ModelInfo): DerivedModel {
         contextWindow: m.max_input_tokens,
         maxOutputTokens: m.max_tokens,
         thinking,
-        temperatureMax: 1,
-        defaultTemperature: 1,
+        ...(samplingParamsRemoved
+            ? {}
+            : { temperatureMax: 1, defaultTemperature: 1 }),
         notes,
     };
 }
@@ -122,6 +130,14 @@ function applyAnthropicOverrides(d: DerivedModel): DerivedModel {
     if (o.knowledgeCutoff) d.knowledgeCutoff = o.knowledgeCutoff;
     if (o.contextWindow !== undefined) d.contextWindow = o.contextWindow;
     if (o.maxOutputTokens !== undefined) d.maxOutputTokens = o.maxOutputTokens;
+    if (o.thinking) {
+        const adaptive = o.thinking.adaptive ?? d.thinking?.adaptive;
+        d.thinking = {
+            levels: sortLevels(o.thinking.levels),
+            defaultLevel: o.thinking.defaultLevel,
+            ...(adaptive ? { adaptive } : {}),
+        };
+    }
     if (o.thinkingExtraLevels && d.thinking) {
         d.thinking.levels = sortLevels([
             ...d.thinking.levels,

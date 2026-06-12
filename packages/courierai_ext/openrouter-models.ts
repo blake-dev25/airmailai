@@ -2,11 +2,7 @@ import type { OpenRouterModel } from '@courierai/shared';
 
 const LOG = '[courierai:ext]';
 
-// Stale-while-revalidate window. Within FRESH_MS we never hit the network;
-// past it we serve stale instantly and refresh in the background.
 const FRESH_MS = 24 * 60 * 60 * 1000;
-// On fetch error we set a cooldown so successive picker opens can't hammer
-// openrouter.ai. Stale cache (if any) keeps serving in the meantime.
 const ERROR_COOLDOWN_MS = 5 * 60 * 1000;
 export const CACHE_VERSION = 3;
 
@@ -84,9 +80,6 @@ async function writeCache(entry: CacheEntry): Promise<void> {
     await chrome.storage.local.set({ [CACHE_KEY]: entry });
 }
 
-// Returns the freshest models we can serve right now. Caller never blocks on
-// the network when stale cache exists - we kick off a background refresh and
-// return the stale list immediately. Without an API key, this is cache-only.
 export async function getOpenRouterModels(
     apiKey?: string
 ): Promise<OpenRouterModel[] | null> {
@@ -97,24 +90,17 @@ export async function getOpenRouterModels(
         return cache && cache.models.length > 0 ? cache.models : null;
     }
 
-    if (cache && now - cache.fetchedAt < FRESH_MS) {
-        return cache.models;
-    }
-
-    if (cache?.nextRetryAt && now < cache.nextRetryAt) {
-        // In error cooldown - keep serving stale even if past FRESH_MS.
-        return cache.models.length > 0 ? cache.models : null;
-    }
-
-    if (cache) {
-        // Stale-while-revalidate: serve stale, refresh in background.
+    if (cache && cache.models.length > 0) {
+        if (now - cache.fetchedAt < FRESH_MS) return cache.models;
+        if (cache.nextRetryAt && now < cache.nextRetryAt) return cache.models;
         refreshInBackground(apiKey);
         return cache.models;
     }
 
-    // Cold start - must wait for the first fetch. We rethrow so the web side
-    // can surface "OpenRouter unreachable" rather than silently showing an
-    // empty model picker, but we still seed the cooldown to avoid hammering.
+    if (cache?.nextRetryAt && now < cache.nextRetryAt) {
+        return null;
+    }
+
     try {
         const models = await fetchAndSlim(apiKey);
         await writeCache({ version: CACHE_VERSION, models, fetchedAt: now });

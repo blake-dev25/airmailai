@@ -52,4 +52,5 @@ export interface ProviderOption {
     name: string;
     models: ModelOption[];
     marketplace?: boolean;
+    sandboxFileAttach?: boolean;
 }

@@ -7,17 +7,29 @@ export const ANTHROPIC: ProviderOption = {
     name: 'Anthropic',
     models: [
         {
+            id: 'claude-fable-5',
+            name: 'Claude Fable 5',
+            params: {
+                contextWindow: 1000000,
+                maxOutputTokens: 128000,
+                defaultMaxTokens: 8192,
+                thinking: {
+                    levels: ['low', 'medium', 'high', 'xhigh', 'max'],
+                    defaultLevel: 'high',
+                    adaptive: 'required',
+                },
+            },
+        },
+        {
             id: 'claude-opus-4-8',
             name: 'Claude Opus 4.8',
             params: {
                 contextWindow: 1000000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 1,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Jan 2026',
                 thinking: {
-                    levels: ['none', 'low', 'medium', 'high', 'max'],
+                    levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
                     defaultLevel: 'high',
                     adaptive: 'required',
                 },
@@ -35,8 +47,6 @@ export const ANTHROPIC: ProviderOption = {
                 contextWindow: 1000000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 1,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Jan 2026',
                 thinking: {
                     levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
@@ -124,6 +134,10 @@ export const ANTHROPIC: ProviderOption = {
                 temperatureMax: 1,
                 defaultTemperature: 1,
                 knowledgeCutoff: 'Feb 2025',
+                thinking: {
+                    levels: ['none', 'low', 'medium', 'high'],
+                    defaultLevel: 'none',
+                },
             },
             tools: {
                 webSearch: 'web_search_20250305',
@@ -140,6 +154,10 @@ export const ANTHROPIC: ProviderOption = {
                 defaultMaxTokens: 8192,
                 temperatureMax: 1,
                 defaultTemperature: 1,
+                thinking: {
+                    levels: ['none', 'low', 'medium', 'high'],
+                    defaultLevel: 'none',
+                },
             },
             tools: {
                 webSearch: 'web_search_20250305',
@@ -156,6 +174,10 @@ export const ANTHROPIC: ProviderOption = {
                 defaultMaxTokens: 8192,
                 temperatureMax: 1,
                 defaultTemperature: 1,
+                thinking: {
+                    levels: ['none', 'low', 'medium', 'high'],
+                    defaultLevel: 'none',
+                },
             },
             tools: {
                 webSearch: 'web_search_20250305',
@@ -172,6 +194,10 @@ export const ANTHROPIC: ProviderOption = {
                 defaultMaxTokens: 8192,
                 temperatureMax: 1,
                 defaultTemperature: 1,
+                thinking: {
+                    levels: ['none', 'low', 'medium', 'high'],
+                    defaultLevel: 'none',
+                },
             },
             tools: {
                 webSearch: 'web_search_20250305',
@@ -188,6 +214,10 @@ export const ANTHROPIC: ProviderOption = {
                 defaultMaxTokens: 8192,
                 temperatureMax: 1,
                 defaultTemperature: 1,
+                thinking: {
+                    levels: ['none', 'low', 'medium', 'high'],
+                    defaultLevel: 'none',
+                },
             },
             tools: {
                 webSearch: 'web_search_20250305',

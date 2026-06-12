@@ -6,22 +6,21 @@ import {
     TOOL_TURN_TIMEOUT,
 } from './fixtures';
 
-// Web Fetch. One turn per provider: the model fetches a URL we name and answers
-// from it. Unlike web search there's no stateless-replay round-trip. The fetched
-// page's content isn't deterministic, so the proof is the fetched URL showing up
-// as a Source on the reply (plus a non-empty reply). Providers differ on the
-// tool wiring - Anthropic emits a web_fetch tool part, OpenAI folds fetch into
-// web_search, Google/OpenRouter emit neither - but all four expose the fetched
-// page as a source-url, so the Sources expando is the portable proof.
-//
-// Seed only the Web Fetch master toggle so ModelConfig renders the per-model Web
-// Fetch control. For OpenAI (search + fetch fold into one server tool) seeding
-// fetch alone keeps the standalone "Web Fetch" toggle rather than the linked one.
 test.use({ seedWebFetchEnabled: true });
 
-// The page the model is told to fetch; the proof is this URL appearing as a
-// Source on the reply.
 const FETCH_URL = 'https://www.formula1.com/en/racing/2026';
+
+function urlKey(url: string): string {
+    try {
+        const u = new URL(url);
+        return (u.host + u.pathname)
+            .replace(/^www\./, '')
+            .replace(/\/+$/, '')
+            .toLowerCase();
+    } catch {
+        return url.trim().toLowerCase();
+    }
+}
 
 const PROVIDERS: ProviderKey[] = [
     'anthropic',
@@ -33,32 +32,64 @@ const PROVIDERS: ProviderKey[] = [
 for (const key of PROVIDERS) {
     const { label, tools } = PROVIDER_MODELS[key];
 
-    test(`${label} web fetch invokes the tool and answers from the page`, async ({
+    test(`${label} web fetch cites the page and re-injects it after edit`, async ({
         courierai,
     }) => {
-        // A fetch turn makes an extra provider round trip (up to
-        // TOOL_TURN_TIMEOUT), so it needs headroom past the default 60s per-test
-        // cap and the 120s tool-turn ceiling.
-        test.setTimeout(180_000);
+        test.setTimeout(240_000);
         await courierai.goto();
         await courierai.setProvider(label);
         if (key === 'openrouter') await courierai.waitForOpenRouterCatalog();
         await courierai.setModelById(tools);
         await courierai.setChatWebFetch(true);
 
-        // Same prompt as provider-test.ts DEFAULT_PROMPTS.web_fetch.
-        await courierai.send(
-            `Fetch ${FETCH_URL} and tell me when the next race is.`,
-            { turnTimeout: TOOL_TURN_TIMEOUT }
-        );
+        let turn1Sources: string[] = [];
+        let turn1Titles: string[] = [];
 
-        // The reply rendered (DOM) and isn't empty.
-        expect((await courierai.lastAssistantText()).length).toBeGreaterThan(0);
+        await test.step('fetch runs and cites the page as a source', async () => {
+            await courierai.send(
+                `Fetch ${FETCH_URL} and tell me when the next race is.`,
+                { turnTimeout: TOOL_TURN_TIMEOUT }
+            );
+            expect(
+                (await courierai.lastAssistantText()).length
+            ).toBeGreaterThan(0);
+            const hrefs = await courierai.assistantSourceHrefs();
+            expect(hrefs.some((h) => h.includes(FETCH_URL))).toBe(true);
 
-        // PASS = the page we asked for shows up as a Source on the reply, which
-        // only happens if the server tool actually fetched it (the page content
-        // itself isn't stable enough to assert on).
-        const hrefs = await courierai.assistantSourceHrefs();
-        expect(hrefs.some((h) => h.includes(FETCH_URL))).toBe(true);
+            await expect
+                .poll(async () => courierai.persistedSourceUrls())
+                .toEqual(expect.arrayContaining(hrefs));
+            turn1Sources = await courierai.persistedSourceUrls();
+            turn1Titles = await courierai.persistedSourceTitles();
+        });
+
+        await test.step('strip the URL from both the prompt and the response', async () => {
+            await courierai.editUser(
+                "Fetch a page and don't tell me anything about it."
+            );
+            await courierai.editAssistant('I fetched the page.');
+            expect(await courierai.lastAssistantText()).toContain(
+                'I fetched the page.'
+            );
+            expect(await courierai.persistedSourceUrls()).toEqual(turn1Sources);
+        });
+
+        await test.step('disable fetch, then recall the URL from context', async () => {
+            await courierai.setChatWebFetch(false);
+            await courierai.send(
+                'Great. Without fetching again, please print the previously returned URL verbatim.'
+            );
+            const reply = (await courierai.lastAssistantText()).toLowerCase();
+            const keys = [
+                ...turn1Sources.map(urlKey),
+                ...turn1Titles
+                    .map((t) => t.trim().toLowerCase())
+                    .filter((t) => t.length > 0),
+            ];
+            expect(
+                keys.some((k) => reply.includes(k)),
+                `recalled reply ${JSON.stringify(reply)} should contain one of ${JSON.stringify(keys)}`
+            ).toBe(true);
+        });
     });
 }

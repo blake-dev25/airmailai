@@ -1,4 +1,4 @@
-// Fetches each first-party provider's official model list and emits the
+// *** Fetches each first-party provider's official model list and emits the
 // matching packages/courierai_web/src/lib/models/<provider>.ts file.
 //
 // OpenRouter is metadata enrichment only. It never decides first-party
@@ -62,11 +62,6 @@ import {
 import { sortLevels } from './update-model-list/shared';
 import { updateTiersFile } from './update-model-list/tiers';
 
-// Snapshots are output-side state - they capture what the provider+overrides
-// pipeline emitted at one point in time. On --write-from-file replay we
-// re-overlay overrides.ts so editing it and rerunning picks the changes up
-// without burning API calls. Stomp semantics: any field set on the override
-// wins over what the snapshot stored.
 function overridesForProvider(provider: string): Record<string, ModelOverride> {
     if (provider === 'anthropic') return ANTHROPIC_OVERRIDES;
     if (provider === 'openai') return OPENAI_OVERRIDES;
@@ -76,9 +71,6 @@ function overridesForProvider(provider: string): Record<string, ModelOverride> {
 
 function reapplyOverrides(provider: string, models: DerivedModel[]): void {
     const overrides = overridesForProvider(provider);
-    // Build a reverse lookup so models stored under their aliased id (e.g.
-    // 'claude-haiku-4-5') still find the override entry keyed by the
-    // provider's canonical id ('claude-haiku-4-5-20251001' with idAlias).
     const byAliasOrId = new Map<string, ModelOverride>();
     for (const [key, entry] of Object.entries(overrides)) {
         byAliasOrId.set(key, entry);
@@ -98,12 +90,11 @@ function reapplyOverrides(provider: string, models: DerivedModel[]): void {
         if (o.knowledgeCutoff !== undefined)
             m.knowledgeCutoff = o.knowledgeCutoff;
         if (o.thinking) {
+            const adaptive = o.thinking.adaptive ?? m.thinking?.adaptive;
             m.thinking = {
                 levels: sortLevels(o.thinking.levels),
                 defaultLevel: o.thinking.defaultLevel,
-                ...(m.thinking?.adaptive
-                    ? { adaptive: m.thinking.adaptive }
-                    : {}),
+                ...(adaptive ? { adaptive } : {}),
             };
         }
         if (o.thinkingExtraLevels && m.thinking) {
@@ -172,9 +163,6 @@ async function writeFromFiles(paths: string[]): Promise<void> {
     }
 
     for (const { provider, providerName, models } of loaded) {
-        // Re-apply overrides on top of the snapshot so edits to overrides.ts
-        // (e.g. adding tools or pinning a knowledgeCutoff for a freshly
-        // released model) land without re-running the full API pipeline.
         reapplyOverrides(provider, models);
         const content = emitProviderFile(provider, providerName, models);
         const path = resolve(MODELS_DIR, `${provider}.ts`);
@@ -228,8 +216,6 @@ async function writeFromFiles(paths: string[]): Promise<void> {
     await Bun.write(tiersPath, tiersText);
     console.log(`✓ wrote ${tiersPath}`);
 }
-
-// ---------- one-off test commands ----------
 
 type ModelTestProvider = 'anthropic' | 'openai' | 'google';
 
@@ -352,8 +338,6 @@ async function retrieveTest(): Promise<void> {
     const gModel = await g.models.get({ model: 'gemini-2.5-flash' });
     console.log(JSON.stringify(gModel, null, 2));
 }
-
-// ---------- main ----------
 
 async function main(): Promise<void> {
     if (RETRIEVE_TEST) {

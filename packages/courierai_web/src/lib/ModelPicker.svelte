@@ -1,5 +1,14 @@
-<script lang="ts">
+<script module lang="ts">
     import type { ModelOption } from './constants';
+
+    export interface ModelGroup {
+        label: string;
+        pinned?: boolean;
+        models: ModelOption[];
+    }
+</script>
+
+<script lang="ts">
     import Icon from './Icon.svelte';
 
     let {
@@ -9,7 +18,7 @@
         disabled = false,
         emptyLabel = 'Loading models...',
     }: {
-        groups: Array<{ label: string; models: ModelOption[] }>;
+        groups: ModelGroup[];
         value: string;
         onchange?: (id: string) => void;
         disabled?: boolean;
@@ -35,10 +44,8 @@
         return totalCount === 0 ? emptyLabel : value;
     });
 
-    // Filtered view used for rendering. Each entry is either a group header
-    // (no model) or a model item.
     type Row =
-        | { kind: 'header'; label: string }
+        | { kind: 'header'; label: string; pinned: boolean }
         | {
               kind: 'item';
               model: ModelOption;
@@ -57,9 +64,12 @@
                   )
                 : g.models;
             if (matches.length === 0) continue;
-            // Hide group headers when there's a single group - the trigger
-            // already implies the source. Keep them for multi-group views.
-            if (groups.length > 1) out.push({ kind: 'header', label: g.label });
+            if (groups.length > 1)
+                out.push({
+                    kind: 'header',
+                    label: g.label,
+                    pinned: !!g.pinned,
+                });
             for (const m of matches) {
                 out.push({
                     kind: 'item',
@@ -161,11 +171,14 @@
                         No models found
                     </div>
                 {:else}
-                    {#each rows as row (row.kind === 'item' ? row.model.id : `header:${row.label}`)}
+                    {#each rows as row (row.kind === 'item' ? row.model.id : `header:${row.pinned ? '~' : ''}${row.label}`)}
                         {#if row.kind === 'header'}
                             <div
-                                class="px-2.5 pt-2 pb-1 text-[0.6875rem] font-bold text-fg-muted uppercase tracking-wider"
+                                class="flex items-center gap-1 px-2.5 pt-2 pb-1 text-[0.6875rem] font-bold text-fg-muted uppercase tracking-wider"
                             >
+                                {#if row.pinned}
+                                    <Icon name="star" fill="currentColor" />
+                                {/if}
                                 {row.label}
                             </div>
                         {:else}

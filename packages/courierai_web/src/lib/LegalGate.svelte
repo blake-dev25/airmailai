@@ -1,4 +1,6 @@
 <script lang="ts">
+    import Icon from './Icon.svelte';
+
     let { onagree }: { onagree: () => void } = $props();
 </script>
 
@@ -22,16 +24,16 @@
             href="/legal/terms.md"
             target="_blank"
             rel="noopener"
-            class="text-accent-fg no-underline hover:underline"
-            >Terms of Service ↗</a
+            class="inline-flex items-center gap-0.5 text-accent-fg no-underline hover:underline"
+            >Terms of Service<Icon name="external-link" /></a
         >
         and
         <a
             href="/legal/privacy.md"
             target="_blank"
             rel="noopener"
-            class="text-accent-fg no-underline hover:underline"
-            >Privacy Policy ↗</a
+            class="inline-flex items-center gap-0.5 text-accent-fg no-underline hover:underline"
+            >Privacy Policy<Icon name="external-link" /></a
         >.
     </p>
 

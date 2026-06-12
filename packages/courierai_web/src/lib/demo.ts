@@ -50,14 +50,14 @@ const moduloExplanation =
     'Sure! `%` is the modulo (remainder) operator - `a % b` gives the remainder when `a` is divided by `b`.\n\n' +
     'A few examples:\n' +
     '- `15 % 5` -> 0 (15 divides evenly by 5)\n' +
-    '- `7 % 3` -> 1 (7 ÷ 3 is 2 remainder 1)\n' +
+    '- `7 % 3` -> 1 (7 / 3 is 2 remainder 1)\n' +
     '- `10 % 3` -> 1\n\n' +
     'So `i % 15 == 0` is true exactly when `i` is a multiple of 15 - i.e. divisible by *both* 3 and 5. That\'s why we check it **first**: otherwise multiples of 15 would match the `% 3` branch and print "Fizz", and we\'d never reach the FizzBuzz case.\n\n' +
     'Rule of thumb: check the most specific condition first, then fall back to the more general ones.';
 
 const skyBlue =
     'Short answer: **Rayleigh scattering**.\n\n' +
-    'Sunlight is a mix of all visible wavelengths. When it hits the atmosphere, it bumps into nitrogen and oxygen molecules - but shorter wavelengths (blue, violet) scatter much more than longer ones (red, orange). Scattering goes as 1/λ⁴, so blue light (~450 nm) scatters about 5–6× more than red light (~700 nm).\n\n' +
+    'Sunlight is a mix of all visible wavelengths. When it hits the atmosphere, it bumps into nitrogen and oxygen molecules - but shorter wavelengths (blue, violet) scatter much more than longer ones (red, orange). Scattering goes as 1/wavelength^4^, so blue light (~450 nm) scatters about 5-6x more than red light (~700 nm).\n\n' +
     "When you look up at the daytime sky, you're seeing that scattered blue light coming at your eyes from every direction.\n\n" +
     'A few related things that fall out of this:\n' +
     '- **Sunsets are red** because at low sun angles the light travels through far more atmosphere, so most of the blue scatters away before it reaches you, leaving the longer reds and oranges.\n' +

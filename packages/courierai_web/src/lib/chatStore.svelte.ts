@@ -1,8 +1,8 @@
 import type {
-    Attachment,
     ChatMeta,
     CourierAIChunk,
     CourierAIMessage,
+    DraftAttachment,
     HydratedStoredMessage,
     MessageAssemblerState,
     StoredChat,
@@ -14,6 +14,7 @@ import { SvelteSet } from 'svelte/reactivity';
 import { buildDemoChats } from './demo';
 import { reportAppError } from './errorStore.svelte';
 import {
+    clearDraftAttachments,
     deleteChat,
     deleteMessage,
     deleteMessagesAfter,
@@ -21,8 +22,10 @@ import {
     loadChatMetas,
     loadChatsByIds,
     putMessage,
+    removeDraftAttachment as reqRemoveDraftAttachment,
     saveMeta,
     sendToExtension,
+    stageDraftAttachment,
     type StreamHandle,
     tabId,
 } from './extension';
@@ -44,14 +47,11 @@ function formatStreamError(message: string, source: StreamErrorSource): string {
     return `${source === 'extension' ? 'Ext' : 'API'} Error: ${message}`;
 }
 
-// Build a fresh user CourierAIMessage from raw text + attachments. Text
-// part comes first so it reads top-to-bottom; attachments hang off as
-// `data-attachment` parts referencing bytes via hash.
 function buildUserMessage(
     id: string,
     createdAt: number,
     content: string,
-    attachments?: Attachment[]
+    attachments?: DraftAttachment[]
 ): CourierAIMessage {
     const parts: CourierAIMessage['parts'] = [];
     if (content) {
@@ -59,13 +59,11 @@ function buildUserMessage(
     }
     for (const att of attachments ?? []) {
         parts.push({
-            type: 'data-attachment',
-            data: {
-                hash: att.hash,
-                name: att.name,
-                mediaType: att.mediaType,
-                sizeBytes: att.sizeBytes,
-            },
+            type: 'file',
+            filename: att.name,
+            mediaType: att.mediaType,
+            sizeBytes: att.sizeBytes,
+            hash: att.hash,
         });
     }
     return {
@@ -88,33 +86,11 @@ function buildAssistantPlaceholder(
     };
 }
 
-// Wraps a CourierAIMessage as the put_message payload. `pendingBlobs` is
-// the chat's in-flight upload bytes map - we only inline bytes for hashes
-// referenced by THIS message, keyed by hash.
 function messageToHydrated(
     chatId: string,
-    msg: CourierAIMessage,
-    pendingBlobs?: Map<string, Attachment>
+    msg: CourierAIMessage
 ): HydratedStoredMessage {
-    const freshBlobs: HydratedStoredMessage['freshBlobs'] = {};
-    let anyFresh = false;
-    if (pendingBlobs?.size) {
-        for (const part of msg.parts) {
-            if (part.type !== 'data-attachment') continue;
-            const att = pendingBlobs.get(part.data.hash);
-            if (!att) continue;
-            freshBlobs[att.hash] = {
-                mediaType: att.mediaType,
-                base64: att.data,
-            };
-            anyFresh = true;
-        }
-    }
-    return {
-        chatId,
-        message: msg,
-        ...(anyFresh ? { freshBlobs } : {}),
-    };
+    return { chatId, message: msg };
 }
 
 function chatToMeta(chat: Chat): ChatMeta {
@@ -143,13 +119,9 @@ interface RemoteStreamPipeline {
 
 class ChatStore {
     chats = $state<Chat[]>([]);
-    // Metas for chats not yet loaded into `chats` (older pages). Sorted newest-first.
     unloadedMetas = $state<ChatMeta[]>([]);
     activeChatId = $state<string | null>(null);
     streamingChatIds = new SvelteSet<string>();
-    // Chats currently streaming in *other* tabs. Populated from broadcast
-    // turn-start events; subsequent chunks/done/error/aborted only apply if
-    // the chatId is in this set.
     remoteStreamingChatIds = new SvelteSet<string>();
     chatErrors = $state<Record<string, string>>({});
     searchResults = $state<SearchResult[] | null>(null);
@@ -157,18 +129,9 @@ class ChatStore {
     highlightMessageIndex = $state<number | null>(null);
     chatLoading = $state(false);
     isLoadingMore = $state(false);
-
-    // Demo mode is owned here because it gates chat persistence. Set by
-    // appLifecycle when the user picks "look around" without an extension.
     demoMode = $state(false);
-
-    // Handles for active local streams.
     private streamHandles = new Map<string, StreamHandle>();
-    // Per-chat message assembler for cross-tab broadcast chunks. Same fold
-    // used for local streams - incoming chunks mutate the placeholder
-    // assistant message's parts in place.
     private remotePipelines = new Map<string, RemoteStreamPipeline>();
-
     hasMoreChats = $derived(this.unloadedMetas.length > 0);
     isActiveLocalStreaming = $derived(
         this.streamingChatIds.has(this.activeChatId ?? '')
@@ -179,9 +142,6 @@ class ChatStore {
     isActiveStreaming = $derived(
         this.isActiveLocalStreaming || this.isActiveRemoteStreaming
     );
-    // Sidebar gets the union - any chat being streamed by any tab gets the
-    // spinner. Plain Set keeps the per-row .has() check O(1) without the
-    // reactive bookkeeping of SvelteSet (derived is read-only).
     allStreamingChatIds = $derived(
         new Set([...this.streamingChatIds, ...this.remoteStreamingChatIds])
     );
@@ -191,16 +151,14 @@ class ChatStore {
     activeMessages = $derived(
         this.chats.find((c) => c.id === this.activeChatId)?.messages ?? []
     );
-    // Maintained by streamForChat/applyRemoteTurnChunk as an O(1) text
-    // mirror of the streaming message. ChatPanel reads this in preference to
-    // messageText(last) so the per-chunk path is O(delta) instead of
-    // re-joining all parts. Falls to null when no stream is in flight.
+    activeDraftAttachments = $derived(
+        this.chats.find((c) => c.id === this.activeChatId)?.draftAttachments ??
+            []
+    );
     activeStreamingText = $derived(
         this.chats.find((c) => c.id === this.activeChatId)?.streamingText ??
             null
     );
-    // Tokens live in the assistant message metadata that produced them.
-    // Surface the most recent assistant turn's usage for the indicators.
     activeTokens = $derived.by(() => {
         const msgs =
             this.chats.find((c) => c.id === this.activeChatId)?.messages ?? [];
@@ -212,8 +170,6 @@ class ChatStore {
         }
         return null;
     });
-
-    // --- Initial load + pagination ---
 
     private storedToMessages(stored: StoredMessage[]): Message[] {
         return stored.map((s) => s.message);
@@ -316,8 +272,6 @@ class ChatStore {
         console.log(LOG, 'entered demo mode');
     }
 
-    // --- Search ---
-
     search(query: string): void {
         this.searchQuery = query;
         this.highlightMessageIndex = null;
@@ -373,7 +327,59 @@ class ChatStore {
         this.highlightMessageIndex = null;
     }
 
-    // --- Error helpers ---
+    searchingAll = $state(false);
+
+    async searchAllChats(): Promise<void> {
+        if (this.searchingAll || this.unloadedMetas.length === 0) return;
+        this.searchingAll = true;
+        try {
+            const metas = this.unloadedMetas;
+            const fullChats = await loadChatsByIds(metas.map((m) => m.id));
+            const byId = new Map(fullChats.map((c) => [c.id, c]));
+            const newChats = metas
+                .map((meta) => {
+                    const stored = byId.get(meta.id);
+                    if (!stored) return null;
+                    return {
+                        ...meta,
+                        messages: this.storedToMessages(stored.messages),
+                    };
+                })
+                .filter((c): c is Chat => c !== null);
+            this.chats.push(...newChats);
+            this.unloadedMetas = [];
+            console.log(
+                LOG,
+                'loaded all chats for search',
+                `${newChats.length} chats`
+            );
+            if (this.searchQuery) this.search(this.searchQuery);
+        } catch (err) {
+            reportAppError(
+                'searchAllChats failed',
+                "Couldn't load all chats for search",
+                err
+            );
+        } finally {
+            this.searchingAll = false;
+        }
+    }
+
+    resetLocal(): void {
+        console.log(LOG, 'resetting local chat state');
+        for (const handle of this.streamHandles.values()) handle.abort();
+        this.streamHandles.clear();
+        this.remotePipelines.clear();
+        this.chats = [];
+        this.unloadedMetas = [];
+        this.activeChatId = null;
+        this.streamingChatIds.clear();
+        this.remoteStreamingChatIds.clear();
+        this.chatErrors = {};
+        this.clearSearch();
+        settingsStore.systemPrompt = '';
+        settingsStore.applyToolDefaults(providersStore.selectedModel);
+    }
 
     clearChatError(id: string): void {
         if (!this.chatErrors[id]) return;
@@ -386,12 +392,11 @@ class ChatStore {
         this.clearChatError(this.activeChatId);
     }
 
-    // --- Chat CRUD ---
-
     newChat(): void {
         const id = crypto.randomUUID();
         const now = Date.now();
         console.log(LOG, 'new chat', id);
+        settingsStore.applyToolDefaults(providersStore.selectedModel);
         this.chats.unshift({
             id,
             title: 'New Chat',
@@ -407,7 +412,6 @@ class ChatStore {
         console.log(LOG, 'select chat', id);
         this.activeChatId = id;
 
-        // Restore model config + system prompt from whichever side has the meta.
         const loaded = this.chats.find((c) => c.id === id);
         if (loaded) {
             settingsStore.applyChatConfig(loaded);
@@ -434,12 +438,19 @@ class ChatStore {
         this.chatLoading = false;
 
         if (full && this.activeChatId === id) {
-            this.chats.push({
-                ...meta,
-                messages: this.storedToMessages(full.messages),
-            });
             const metaIdx = this.unloadedMetas.findIndex((m) => m.id === id);
             if (metaIdx >= 0) this.unloadedMetas.splice(metaIdx, 1);
+            if (!this.chats.some((c) => c.id === id)) {
+                const chat: Chat = {
+                    ...meta,
+                    messages: this.storedToMessages(full.messages),
+                };
+                const insertIdx = this.chats.findIndex(
+                    (c) => c.createdAt < chat.createdAt
+                );
+                if (insertIdx === -1) this.chats.push(chat);
+                else this.chats.splice(insertIdx, 0, chat);
+            }
         }
     }
 
@@ -457,8 +468,11 @@ class ChatStore {
         if (this.activeChatId === id) {
             this.activeChatId = null;
             settingsStore.systemPrompt = '';
+            settingsStore.applyToolDefaults(providersStore.selectedModel);
         }
         this.streamingChatIds.delete(id);
+        this.remoteStreamingChatIds.delete(id);
+        this.closeRemotePipeline(id);
         this.clearChatError(id);
         if (!this.demoMode)
             deleteChat(id).catch((err) => {
@@ -513,8 +527,8 @@ class ChatStore {
             md += `\n### ${msg.role === 'user' ? 'User' : 'Assistant'}\n`;
             const attachments: string[] = [];
             for (const part of msg.parts) {
-                if (part.type !== 'data-attachment') continue;
-                attachments.push(part.data.name);
+                if (part.type !== 'file') continue;
+                attachments.push(part.filename);
             }
             if (attachments.length) {
                 md += `Attachments: ${attachments.join(', ')}\n`;
@@ -548,8 +562,6 @@ class ChatStore {
         if (!chat) return;
         const target = chat.messages[index];
         if (!target) return;
-        // Replace text parts with a single new text part; keep non-text parts
-        // (attachments etc.) intact.
         const nonText = target.parts.filter((p) => p.type !== 'text');
         const newParts: CourierAIMessage['parts'] = [
             ...(content
@@ -566,9 +578,7 @@ class ChatStore {
         chat.messages[index] = { ...target, parts: newParts };
         const editedMsg = chat.messages[index];
         if (!this.demoMode) {
-            putMessage(
-                messageToHydrated(chatId, editedMsg, chat.pendingBlobs)
-            ).catch((err) => {
+            putMessage(messageToHydrated(chatId, editedMsg)).catch((err) => {
                 reportAppError(
                     `edit save failed (chatId=${chatId})`,
                     "Couldn't save edited message",
@@ -594,84 +604,194 @@ class ChatStore {
             });
     }
 
-    // --- Streaming ---
-
-    sendMessage(content: string, attachments?: Attachment[]): void {
-        if (this.activeChatId && this.streamingChatIds.has(this.activeChatId))
+    async deleteMessageFile(index: number, key: string): Promise<void> {
+        if (!this.activeChatId) return;
+        const chatId = this.activeChatId;
+        const chat = this.chats.find((c) => c.id === chatId);
+        const target = chat?.messages[index];
+        if (!chat || !target) return;
+        if (!target.parts.some((p) => p.type === 'file' && p.hash === key))
             return;
-        console.log(LOG, 'send message', {
-            provider: settingsStore.providerId,
-            model: settingsStore.modelId,
-            contentLength: content.length,
-            attachmentCount: attachments?.length ?? 0,
-            existingChat: this.activeChatId,
-        });
+        const updated = {
+            ...target,
+            parts: target.parts.filter(
+                (p) => !(p.type === 'file' && p.hash === key)
+            ),
+        };
+        chat.messages[index] = updated;
+        if (!this.demoMode) {
+            putMessage(messageToHydrated(chatId, updated)).catch((err) => {
+                reportAppError(
+                    `delete-file save failed (chatId=${chatId})`,
+                    "Couldn't remove the file",
+                    err
+                );
+            });
+        }
+    }
 
-        // Auto-create a chat on first message
+    private chatCreationInFlight: Promise<string> | null = null;
+
+    private async ensureActiveChat(): Promise<string> {
+        if (this.chatCreationInFlight) return this.chatCreationInFlight;
+        if (this.activeChatId) return this.activeChatId;
+        this.chatCreationInFlight = this.createBlankChat();
+        try {
+            return await this.chatCreationInFlight;
+        } finally {
+            this.chatCreationInFlight = null;
+        }
+    }
+
+    private async createBlankChat(): Promise<string> {
+        const chatId = crypto.randomUUID();
+        const chat: Chat = {
+            id: chatId,
+            title: 'New Chat',
+            messages: [],
+            createdAt: Date.now(),
+            ...settingsStore.snapshotChatConfig(),
+        };
+        this.chats.unshift(chat);
+        this.activeChatId = chatId;
+        if (!this.demoMode) await saveMeta(chatToMeta(chat));
+        return chatId;
+    }
+
+    async addDraftAttachment(
+        attachment: DraftAttachment,
+        base64: string
+    ): Promise<void> {
+        if (this.demoMode) return;
+        const chatId = await this.ensureActiveChat();
+        const activeChat = this.chats.find((c) => c.id === chatId);
+        if (activeChat) await saveMeta(chatToMeta(activeChat));
+        const replicateTo = settingsStore.enableProviderFileStorage
+            ? (activeChat?.providerId ?? settingsStore.providerId)
+            : undefined;
+        const warning = await stageDraftAttachment(
+            chatId,
+            attachment,
+            base64,
+            replicateTo
+        );
+        if (warning) {
+            reportAppError(
+                `draft replica upload failed (chatId=${chatId})`,
+                `Saved ${attachment.name} on this device, but couldn't copy it to ${replicateTo} storage (will retry when you send)`,
+                new Error(warning)
+            );
+        }
+        const chat = this.chats.find((c) => c.id === chatId);
+        if (chat) {
+            chat.draftAttachments = [
+                ...(chat.draftAttachments ?? []),
+                attachment,
+            ];
+        }
+    }
+
+    async removeDraftAttachment(key: string): Promise<void> {
+        const chatId = this.activeChatId;
+        if (!chatId) return;
+        const chat = this.chats.find((c) => c.id === chatId);
+        if (chat) {
+            chat.draftAttachments = (chat.draftAttachments ?? []).filter(
+                (d) => d.hash !== key
+            );
+        }
+        if (!this.demoMode) await reqRemoveDraftAttachment(chatId, key);
+    }
+
+    async clearActiveDraftAttachments(): Promise<void> {
+        const chatId = this.activeChatId;
+        if (!chatId) return;
+        const chat = this.chats.find((c) => c.id === chatId);
+        if (chat) chat.draftAttachments = [];
+        if (!this.demoMode) await clearDraftAttachments(chatId);
+    }
+
+    sendMessage(content: string): void {
+        if (
+            this.activeChatId &&
+            (this.streamingChatIds.has(this.activeChatId) ||
+                this.remoteStreamingChatIds.has(this.activeChatId))
+        )
+            return;
+
         let chatId = this.activeChatId;
         let createdNewChat = false;
         if (!chatId) {
             chatId = crypto.randomUUID();
             createdNewChat = true;
-            const now = Date.now();
-            const title = content.slice(0, 40);
             this.chats.unshift({
                 id: chatId,
-                title,
+                title: content.slice(0, 40),
                 messages: [],
-                createdAt: now,
+                createdAt: Date.now(),
                 ...settingsStore.snapshotChatConfig(),
             });
             this.activeChatId = chatId;
         } else {
-            // Update config and rename if this is the first message
             const existing = this.chats.find((c) => c.id === chatId);
-            const isFirst = (existing?.messages.length ?? 0) === 0;
-            if (existing) {
-                Object.assign(existing, settingsStore.snapshotChatConfig());
-                if (isFirst) existing.title = content.slice(0, 40);
+            if (!existing) {
+                reportAppError(
+                    `sendMessage: chat not loaded (id=${chatId})`,
+                    'This chat is still loading, try again in a moment',
+                    new Error('active chat missing from memory')
+                );
+                return;
             }
+            const isFirst = existing.messages.length === 0;
+            Object.assign(existing, settingsStore.snapshotChatConfig());
+            if (isFirst) existing.title = content.slice(0, 40);
         }
 
-        const userId = crypto.randomUUID();
-        const now = Date.now();
-        const userMsg = buildUserMessage(userId, now, content, attachments);
-        // Pre-allocate the assistant message id so the ext's terminal save
-        // uses the same id as our placeholder.
+        const sendChat = this.chats.find((c) => c.id === chatId);
+        const draftAttachments = sendChat?.draftAttachments ?? [];
+        console.log(LOG, 'send message', {
+            provider: settingsStore.providerId,
+            model: settingsStore.modelId,
+            contentLength: content.length,
+            attachmentCount: draftAttachments.length,
+            existingChat: chatId,
+        });
+
+        const userMsg = buildUserMessage(
+            crypto.randomUUID(),
+            Date.now(),
+            content,
+            draftAttachments
+        );
         const assistantId = crypto.randomUUID();
         const assistantPlaceholder = buildAssistantPlaceholder(
             assistantId,
             Date.now()
         );
 
-        const sendChat = this.chats.find((c) => c.id === chatId);
         if (sendChat) {
             sendChat.messages.push(userMsg, assistantPlaceholder);
-            if (attachments?.length) {
-                const nextPending = new Map(sendChat.pendingBlobs ?? []);
-                for (const att of attachments) nextPending.set(att.hash, att);
-                sendChat.pendingBlobs = nextPending;
-            }
+            sendChat.draftAttachments = [];
         }
 
-        // Persist meta first if brand new chat, then the user message. Both
-        // are fire-and-forget so we don't block stream startup; the ext's
-        // put_message refuses to write a message under a missing meta row,
-        // so we await meta before the message to avoid that drop.
         if (!this.demoMode) {
             const chat = this.chats.find((c) => c.id === chatId);
             if (chat) {
                 const persistUser = () =>
-                    putMessage(
-                        messageToHydrated(chatId!, userMsg, chat.pendingBlobs)
-                    ).catch((err) => {
-                        reportAppError(
-                            'persist user msg failed',
-                            "Couldn't save your message",
-                            err
-                        );
-                    });
-                if (createdNewChat) {
+                    putMessage(messageToHydrated(chatId!, userMsg))
+                        .then(() =>
+                            draftAttachments.length
+                                ? clearDraftAttachments(chatId!)
+                                : undefined
+                        )
+                        .catch((err) => {
+                            reportAppError(
+                                'persist user msg failed',
+                                "Couldn't save your message",
+                                err
+                            );
+                        });
+                if (createdNewChat || draftAttachments.length) {
                     saveMeta(chatToMeta(chat))
                         .then(persistUser)
                         .catch((err) => {
@@ -704,13 +824,9 @@ class ChatStore {
         const chatId = this.activeChatId;
         const chat = this.chats.find((c) => c.id === chatId);
         if (!chat) return;
-
-        // Abort any in-progress stream for this chat
         this.streamHandles.get(chatId)?.abort();
         this.streamHandles.delete(chatId);
         this.streamingChatIds.delete(chatId);
-
-        // If assistant message, treat as retrying the user message above it
         const msg = chat.messages[index];
         if (!msg) return;
         const keepUpTo = msg.role === 'user' ? index : index - 1;
@@ -730,9 +846,6 @@ class ChatStore {
             assistantPlaceholder
         );
 
-        // Truncate IDB to match: drop every persisted message after the one
-        // we're retrying. Config changes also get persisted so the next
-        // turn uses the freshly-selected provider/model on reload.
         if (!this.demoMode) {
             saveMeta(chatToMeta(chat)).catch((err) => {
                 reportAppError(
@@ -755,12 +868,6 @@ class ChatStore {
         this.streamForChat(chatId, assistantId);
     }
 
-    // Graceful stop. `visibleChars` is the smoothText display length at click
-    // time - what the user could actually read. We tell the ext to truncate
-    // its assembled message to that length before saving, and mirror the
-    // same trim locally so the UI doesn't keep draining content the user
-    // wanted to stop seeing. handle.stop runs first so the `stopped` flag
-    // gates any chunks already queued on the port before we mutate parts.
     stop(visibleChars: number): void {
         if (!this.activeChatId) return;
         const chatId = this.activeChatId;
@@ -776,29 +883,13 @@ class ChatStore {
         }
     }
 
-    // Streams an assistant response into the trailing placeholder of `chatId`.
-    // Caller is responsible for prepping the chat: messages must end with an
-    // empty assistant message (with id === assistantId), the user
-    // message and meta must already be persisted (fire-and-forget is fine),
-    // streamingChatIds must include chatId, and any prior stream for this
-    // chat must be aborted.
-    //
-    // The ext appends ONE row at end-of-turn (the assistant message); user-
-    // message and edit persistence are the web's responsibility through
-    // put_message / save_meta / delete_messages_after.
     private streamForChat(chatId: string, assistantId: string): void {
         const snap = this.chats.find((c) => c.id === chatId);
-        if (!snap) return;
-
-        // History sent to the ext: everything except the trailing assistant
-        // placeholder. Bare refs travel - the ext loads bytes from its
-        // files store by hash. Fresh uploads were inlined when persisting
-        // the user message, so by the time the stream starts the ext has
-        // every hash this history can reference.
+        if (!snap) {
+            this.streamingChatIds.delete(chatId);
+            return;
+        }
         const history: CourierAIMessage[] = snap.messages.slice(0, -1);
-
-        // Pre-turn message state included in the turn-start broadcast so
-        // mirror tabs can render the chat without an extra IDB round-trip.
         const broadcastHistory: StoredMessage[] = history.map((m) => ({
             chatId,
             message: m,
@@ -808,12 +899,6 @@ class ChatStore {
             .find((p) => p.id === snap.providerId)
             ?.models.find((m) => m.id === snap.modelId);
         const modelParams = selectedModel?.params;
-
-        // Tool wire payload - AND of (model declares support) ∧ (master toggle
-        // on) ∧ (per-chat toggle on). Value is the raw `ToolSupport` the model
-        // declared (a string for anthropic, true for everyone else), so the ext
-        // doesn't need a duplicate per-model lookup table. Missing keys mean
-        // "do not attach the tool".
         const wireTools: Record<string, string | boolean> = {};
         const modelTools = selectedModel?.tools;
         if (
@@ -837,11 +922,8 @@ class ChatStore {
         ) {
             wireTools.codeExecution = modelTools.codeExecution;
         }
-
-        // Capture the assistant placeholder's $state proxy ref from the
-        // array. Mutating the proxy (via the reducer) drives Svelte's
-        // fine-grained reactivity per text part - no per-chunk whole-
-        // message swap or messageText re-join.
+        const mayHaveContainerOutputs =
+            snap.providerId === 'openai' && !!wireTools.codeExecution;
         const cachedChat: Chat = snap;
         const assistantRef =
             cachedChat.messages[cachedChat.messages.length - 1];
@@ -869,10 +951,15 @@ class ChatStore {
                         ? { temperature: snap.temperature }
                         : {}),
                     maxTokens: snap.maxTokens,
-                    thinkingLevel: snap.thinkingLevel,
-                    adaptiveThinking: snap.adaptiveThinking,
+                    ...(modelParams?.thinking
+                        ? {
+                              thinkingLevel: snap.thinkingLevel,
+                              adaptiveThinking: snap.adaptiveThinking,
+                          }
+                        : {}),
                     tools: wireTools,
                     tagOpenRouterRequests: settingsStore.tagOpenRouterRequests,
+                    openRouterPdfEngine: settingsStore.openRouterPdfEngine,
                 },
                 meta: chatToMeta(snap),
                 history: broadcastHistory,
@@ -881,15 +968,17 @@ class ChatStore {
             {
                 onChunk: (chunk) => {
                     applyCourierAIChunk(assembler, chunk);
-                    // O(1) text mirror for the smooth-text effect: appending
-                    // text-deltas matches messageText()'s join-all because
-                    // deltas arrive in render order.
                     if (chunk.type === 'text-delta')
                         cachedChat.streamingText += chunk.delta;
                 },
                 onDone: () => {
                     finishStream();
-                    cachedChat.pendingBlobs = undefined;
+                    if (mayHaveContainerOutputs) {
+                        void this.refreshChatFromIDB(chatId, {
+                            context: 'onDone: refresh after file capture',
+                            userMessage: "Couldn't refresh chat from storage",
+                        });
+                    }
                 },
                 onError: (msg, source) => {
                     finishStream();
@@ -897,8 +986,6 @@ class ChatStore {
                         ...this.chatErrors,
                         [chatId]: formatStreamError(msg, source),
                     };
-                    // Discard the placeholder if no parts arrived; keep
-                    // partial content otherwise.
                     if (!assistantRef.parts.length) {
                         const idx = cachedChat.messages.findIndex(
                             (m) => m.id === assistantId
@@ -910,13 +997,6 @@ class ChatStore {
         );
         this.streamHandles.set(chatId, handle);
     }
-
-    // --- Remote (cross-tab) turn handlers ---
-    //
-    // When another tab streams a turn, the extension fans out lifecycle
-    // events to every connected tab. Each tab feeds incoming chunks into
-    // a per-chat message assembler so the in-progress assistant message
-    // rebuilds the same way local streams do - no bespoke chunk accumulator.
 
     applyRemoteTurnStart(
         chatId: string,
@@ -937,9 +1017,6 @@ class ChatStore {
                 ...meta,
                 messages: [...hydratedHistory, placeholder],
             });
-            // Re-fetch via find so `chat` is the $state proxy, not the raw
-            // object literal we just unshifted. Mutating the raw bypasses
-            // Svelte's proxy and silently drops reactivity notifications.
             chat = this.chats.find((c) => c.id === chatId)!;
             const metaIdx = this.unloadedMetas.findIndex(
                 (m) => m.id === chatId
@@ -949,9 +1026,6 @@ class ChatStore {
         this.remoteStreamingChatIds.add(chatId);
         this.clearChatError(chatId);
 
-        // Spin up a fresh pipeline for this remote stream. Each chunk goes
-        // straight into the assembler, which mutates the placeholder's parts
-        // in place - same path as local streamForChat.
         this.closeRemotePipeline(chatId);
         const assistantRef = chat.messages[chat.messages.length - 1];
         const assembler = createMessageAssembler(assistantRef);
@@ -976,12 +1050,6 @@ class ChatStore {
         }
     }
 
-    // Mirror-tab counterpart to source-tab stop. Source broadcasts the
-    // visible char count at click; we trim our local copy of the assistant
-    // placeholder to match, so every tab shows the same final text. Smooth's
-    // $effect.pre picks up the streamingText change and snaps target down;
-    // if its display had drained past `charLen` (mirror tabs drain
-    // independently), the next tick collapses display to target.
     applyRemoteTurnTruncate(chatId: string, charLen: number): void {
         if (!this.remoteStreamingChatIds.has(chatId)) return;
         const pipeline = this.remotePipelines.get(chatId);
@@ -1000,11 +1068,6 @@ class ChatStore {
         this.remotePipelines.delete(chatId);
     }
 
-    // Re-hydrate one chat's messages from IDB. `userMessage: null` suppresses
-    // the app-wide banner on failure (used by error-path refreshes where a
-    // per-chat error is already surfaced). `onMissing: 'drop'` removes the
-    // chat from state when IDB has no row (a remote-aborted first turn that
-    // never reached the save step).
     private async refreshChatFromIDB(
         chatId: string,
         opts: {
@@ -1038,7 +1101,6 @@ class ChatStore {
         if (!this.remoteStreamingChatIds.has(chatId)) return;
         this.remoteStreamingChatIds.delete(chatId);
         this.closeRemotePipeline(chatId);
-        // Refresh from IDB for canonical state - the extension just saved.
         await this.refreshChatFromIDB(chatId, {
             context: 'applyRemoteTurnDone: loadChat failed',
             userMessage: "Couldn't refresh chat from storage",
@@ -1049,8 +1111,6 @@ class ChatStore {
         if (!this.remoteStreamingChatIds.has(chatId)) return;
         this.remoteStreamingChatIds.delete(chatId);
         this.closeRemotePipeline(chatId);
-        // Source tab bailed without saving. IDB has the pre-turn state (or
-        // nothing if this was the chat's very first turn).
         await this.refreshChatFromIDB(chatId, {
             context: 'applyRemoteTurnAborted: loadChat failed',
             userMessage: "Couldn't refresh chat from storage",
@@ -1066,8 +1126,6 @@ class ChatStore {
             ...this.chatErrors,
             [chatId]: formatStreamError(message, 'api'),
         };
-        // Per-chat error already set; suppress the app-wide banner if this
-        // secondary refresh also fails.
         await this.refreshChatFromIDB(chatId, {
             context: 'applyRemoteTurnError: loadChat failed',
             userMessage: null,
@@ -1080,6 +1138,16 @@ class ChatStore {
             context: 'refreshActiveFromIDB failed',
             userMessage: "Couldn't refresh active chat",
         });
+    }
+
+    async refreshLoadedChats(chatIds: string[]): Promise<void> {
+        for (const id of chatIds) {
+            if (!this.chats.some((c) => c.id === id)) continue;
+            await this.refreshChatFromIDB(id, {
+                context: 'refreshLoadedChats: loadChat failed',
+                userMessage: "Couldn't refresh chat after deleting a file",
+            });
+        }
     }
 }
 

@@ -8,11 +8,6 @@ import type {
     CourierAIToolPart,
 } from './messages';
 
-// Folds a CourierAIChunk stream into a CourierAIMessage's ordered parts. Pure
-// in-place mutation: the ext assembles into a plain object to persist; the web
-// drives the same fold over a $state proxy so fine-grained
-// reactivity updates only the touched leaf. Maps track the open part per id so
-// deltas land on the right segment and interleaving is preserved.
 export interface MessageAssemblerState {
     message: CourierAIMessage;
     textById: Map<string, CourierAITextPart>;
@@ -31,9 +26,6 @@ export function createMessageAssembler(
     };
 }
 
-// Push a part and return the array's stored entry. When parts is a $state
-// proxy the pushed literal is copied into a proxy, so returning the array slot
-// (not the literal) keeps later in-place mutation reactive on the web.
 function pushPart<T extends CourierAIPart>(
     state: MessageAssemblerState,
     part: T
@@ -90,17 +82,11 @@ export function applyCourierAIChunk(
         }
         case 'reasoning-end': {
             const part = state.reasoningById.get(chunk.id);
-            if (part) {
-                part.state = 'done';
-                if (chunk.providerMetadata)
-                    part.providerMetadata = chunk.providerMetadata;
-            }
+            if (part) part.state = 'done';
             state.reasoningById.delete(chunk.id);
             break;
         }
         case 'tool-call': {
-            // chunk.name and chunk.input correlate (same chunk), but TS can't
-            // track that across the union, so assert the part shape once here.
             const part = pushPart(state, {
                 type: 'tool',
                 toolCallId: chunk.toolCallId,
@@ -128,9 +114,6 @@ export function applyCourierAIChunk(
                 sourceId: chunk.sourceId,
                 url: chunk.url,
                 ...(chunk.title ? { title: chunk.title } : {}),
-                ...(chunk.providerMetadata
-                    ? { providerMetadata: chunk.providerMetadata }
-                    : {}),
             });
             break;
         }
@@ -142,21 +125,16 @@ export function applyCourierAIChunk(
                 ...(chunk.mediaType ? { mediaType: chunk.mediaType } : {}),
                 ...(chunk.citedText ? { citedText: chunk.citedText } : {}),
                 ...(chunk.location ? { location: chunk.location } : {}),
-                ...(chunk.providerMetadata
-                    ? { providerMetadata: chunk.providerMetadata }
-                    : {}),
             });
             break;
         }
         case 'file': {
             pushPart(state, {
                 type: 'file',
+                filename: chunk.filename,
                 mediaType: chunk.mediaType,
-                url: chunk.url,
-                ...(chunk.filename ? { filename: chunk.filename } : {}),
-                ...(chunk.providerMetadata
-                    ? { providerMetadata: chunk.providerMetadata }
-                    : {}),
+                sizeBytes: chunk.sizeBytes,
+                hash: chunk.hash,
             });
             break;
         }

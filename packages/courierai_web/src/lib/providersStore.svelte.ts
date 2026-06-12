@@ -10,9 +10,6 @@ import { settingsStore } from './settingsStore.svelte';
 const LOG = '[courierai:web]';
 
 class ProvidersStore {
-    // OpenRouter's catalog hydrates async; the rest are static. The local
-    // state lets us swap the OpenRouter entry once it's ready without
-    // re-rendering the world.
     providers = $state<ProviderOption[]>(PROVIDERS);
 
     selectedModel = $derived(
@@ -50,7 +47,6 @@ class ProvidersStore {
         }
     }
 
-    // Keep any downloaded OpenRouter catalog available; only the key goes away.
     onApiKeyCleared(_providerId: string): void {}
 }
 

@@ -17,9 +17,15 @@ export const GOOGLE: ProviderOption = {
                 defaultTemperature: 1,
                 knowledgeCutoff: 'Jan 2025',
                 thinking: {
-                    levels: ['none', 'low', 'high'],
-                    defaultLevel: 'none',
+                    levels: ['none', 'low', 'medium', 'high', 'max'],
+                    defaultLevel: 'medium',
+                    adaptive: 'optional',
                 },
+            },
+            tools: {
+                webSearch: true,
+                webFetch: true,
+                codeExecution: true,
             },
         },
         {
@@ -35,31 +41,13 @@ export const GOOGLE: ProviderOption = {
                 thinking: {
                     levels: ['low', 'medium', 'high', 'max'],
                     defaultLevel: 'medium',
+                    adaptive: 'optional',
                 },
             },
-        },
-        {
-            id: 'gemini-2.0-flash',
-            name: 'Gemini 2.0 Flash',
-            params: {
-                contextWindow: 1048576,
-                maxOutputTokens: 8192,
-                defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
-                knowledgeCutoff: 'Aug 2024',
-            },
-        },
-        {
-            id: 'gemini-2.0-flash-lite',
-            name: 'Gemini 2.0 Flash-Lite',
-            params: {
-                contextWindow: 1048576,
-                maxOutputTokens: 8192,
-                defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
-                knowledgeCutoff: 'Aug 2024',
+            tools: {
+                webSearch: true,
+                webFetch: true,
+                codeExecution: true,
             },
         },
         {
@@ -73,24 +61,9 @@ export const GOOGLE: ProviderOption = {
                 defaultTemperature: 1,
                 knowledgeCutoff: 'Jan 2025',
                 thinking: {
-                    levels: ['none', 'low', 'high'],
+                    levels: ['none', 'low', 'medium', 'high', 'max'],
                     defaultLevel: 'none',
-                },
-            },
-        },
-        {
-            id: 'gemini-3-pro-preview',
-            name: 'Gemini 3 Pro Preview',
-            params: {
-                contextWindow: 1048576,
-                maxOutputTokens: 65536,
-                defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
-                knowledgeCutoff: 'Jan 2025',
-                thinking: {
-                    levels: ['none', 'low', 'high'],
-                    defaultLevel: 'none',
+                    adaptive: 'optional',
                 },
             },
         },
@@ -105,9 +78,14 @@ export const GOOGLE: ProviderOption = {
                 defaultTemperature: 1,
                 knowledgeCutoff: 'Jan 2025',
                 thinking: {
-                    levels: ['none', 'low', 'medium', 'high'],
+                    levels: ['minimal', 'low', 'medium', 'high'],
                     defaultLevel: 'high',
                 },
+            },
+            tools: {
+                webSearch: true,
+                webFetch: true,
+                codeExecution: true,
             },
         },
         {
@@ -121,9 +99,14 @@ export const GOOGLE: ProviderOption = {
                 defaultTemperature: 1,
                 knowledgeCutoff: 'Jan 2025',
                 thinking: {
-                    levels: ['none', 'low', 'high'],
+                    levels: ['low', 'medium', 'high'],
                     defaultLevel: 'high',
                 },
+            },
+            tools: {
+                webSearch: true,
+                webFetch: true,
+                codeExecution: true,
             },
         },
         {
@@ -137,8 +120,8 @@ export const GOOGLE: ProviderOption = {
                 defaultTemperature: 1,
                 knowledgeCutoff: 'Jan 2025',
                 thinking: {
-                    levels: ['none', 'low', 'high'],
-                    defaultLevel: 'none',
+                    levels: ['minimal', 'low', 'medium', 'high'],
+                    defaultLevel: 'minimal',
                 },
             },
         },
@@ -153,8 +136,8 @@ export const GOOGLE: ProviderOption = {
                 defaultTemperature: 1,
                 knowledgeCutoff: 'Jan 2025',
                 thinking: {
-                    levels: ['none', 'low', 'high'],
-                    defaultLevel: 'none',
+                    levels: ['minimal', 'low', 'medium', 'high'],
+                    defaultLevel: 'minimal',
                 },
             },
         },
@@ -169,8 +152,8 @@ export const GOOGLE: ProviderOption = {
                 defaultTemperature: 1,
                 knowledgeCutoff: 'Jan 2025',
                 thinking: {
-                    levels: ['none', 'low', 'high'],
-                    defaultLevel: 'none',
+                    levels: ['minimal', 'low', 'medium', 'high'],
+                    defaultLevel: 'medium',
                 },
             },
         },
@@ -199,6 +182,15 @@ export const GOOGLE: ProviderOption = {
                 defaultMaxTokens: 8192,
                 temperatureMax: 2,
                 defaultTemperature: 1,
+            },
+        },
+        {
+            id: 'antigravity-preview-05-2026',
+            name: 'Antigravity Agent Preview',
+            params: {
+                contextWindow: 131072,
+                maxOutputTokens: 65536,
+                defaultMaxTokens: 8192,
             },
         },
         {

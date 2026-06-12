@@ -1,4 +1,4 @@
-import type { Attachment } from '@courierai/shared';
+import type { DraftAttachment } from '@courierai/shared';
 
 const MB = 1024 * 1024;
 
@@ -12,6 +12,8 @@ export interface FilePolicy {
     mimeTypes: ReadonlySet<string>;
     maxAudioAttachments?: number;
     maxVideoAttachments?: number;
+    storageMaxFileBytes?: number;
+    storageMaxRequestBytes?: number;
 }
 
 export interface FilePolicyModel {
@@ -197,7 +199,7 @@ const GOOGLE_MIME_TYPES = new Set([
 const OPENROUTER_MIME_TYPES_BY_MODALITY: Record<string, readonly string[]> = {
     image: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'],
     file: ['application/pdf', 'text/plain'],
-    audio: ['audio/wav', 'audio/mp3', 'audio/aac'],
+    audio: ['audio/wav', 'audio/mp3'],
     video: ['video/mp4', 'video/mpeg', 'video/mov', 'video/webm'],
 };
 
@@ -291,11 +293,14 @@ const OPENROUTER_ACCEPT_EXTENSIONS_BY_MODALITY: Record<
     string,
     readonly string[]
 > = {
-    audio: ['.aac', '.mp3', '.wav'],
+    audio: ['.mp3', '.wav'],
     file: ['.md', '.pdf', '.txt'],
     image: ['.gif', '.jpeg', '.jpg', '.png', '.webp'],
     video: ['.mov', '.mp4', '.mpeg', '.webm'],
 };
+
+const STORAGE_MAX_FILE_BYTES = 200 * MB;
+const STORAGE_MAX_REQUEST_BYTES = 200 * MB;
 
 export const FILE_POLICIES: Record<FileProviderId, FilePolicy> = {
     anthropic: {
@@ -304,6 +309,8 @@ export const FILE_POLICIES: Record<FileProviderId, FilePolicy> = {
         maxFileBytes: 32 * MB,
         maxRequestBytes: 32 * MB,
         mimeTypes: ANTHROPIC_MIME_TYPES,
+        storageMaxFileBytes: STORAGE_MAX_FILE_BYTES,
+        storageMaxRequestBytes: STORAGE_MAX_REQUEST_BYTES,
     },
     google: {
         providerId: 'google',
@@ -313,6 +320,8 @@ export const FILE_POLICIES: Record<FileProviderId, FilePolicy> = {
         mimeTypes: GOOGLE_MIME_TYPES,
         maxAudioAttachments: 1,
         maxVideoAttachments: 10,
+        storageMaxFileBytes: STORAGE_MAX_FILE_BYTES,
+        storageMaxRequestBytes: STORAGE_MAX_REQUEST_BYTES,
     },
     openai: {
         providerId: 'openai',
@@ -320,9 +329,9 @@ export const FILE_POLICIES: Record<FileProviderId, FilePolicy> = {
         maxFileBytes: 50 * MB,
         maxRequestBytes: 50 * MB,
         mimeTypes: OPENAI_MIME_TYPES,
+        storageMaxFileBytes: STORAGE_MAX_FILE_BYTES,
+        storageMaxRequestBytes: STORAGE_MAX_REQUEST_BYTES,
     },
-    // OpenRouter MIME support is model-specific. This starts empty and is
-    // populated from the selected model's input modalities at runtime.
     openrouter: {
         providerId: 'openrouter',
         maxAttachments: 8,
@@ -507,27 +516,59 @@ function toProviderId(providerId: string): FileProviderId {
         : 'anthropic';
 }
 
-function getOpenRouterMimeTypes(model?: FilePolicyModel | null): Set<string> {
-    const mimeTypes = new Set<string>();
+export interface FilePolicyOptions {
+    providerStorageEnabled?: boolean;
+    openRouterPdfEngine?: string;
+}
+
+function getOpenRouterMimeTypes(
+    model: FilePolicyModel | null | undefined,
+    pdfEngine: string | undefined
+): Set<string> {
+    const mimeTypes = new Set<string>(['text/plain']);
     for (const modality of model?.inputModalities ?? []) {
         const supported = OPENROUTER_MIME_TYPES_BY_MODALITY[modality];
         if (!supported) continue;
         for (const mimeType of supported) mimeTypes.add(mimeType);
     }
+    if (pdfEngine && pdfEngine !== 'native') {
+        mimeTypes.add('application/pdf');
+    }
     return mimeTypes;
+}
+
+function applyStorageCaps(policy: FilePolicy): FilePolicy {
+    if (
+        policy.storageMaxFileBytes === undefined &&
+        policy.storageMaxRequestBytes === undefined
+    ) {
+        return policy;
+    }
+    return {
+        ...policy,
+        maxFileBytes: policy.storageMaxFileBytes ?? policy.maxFileBytes,
+        maxRequestBytes:
+            policy.storageMaxRequestBytes ?? policy.maxRequestBytes,
+    };
 }
 
 export function getFilePolicy(
     providerId: string,
-    model?: FilePolicyModel | null
+    model?: FilePolicyModel | null,
+    opts: FilePolicyOptions = {}
 ): FilePolicy {
     const id = toProviderId(providerId);
-    if (id !== 'openrouter') return FILE_POLICIES[id];
-
-    return {
-        ...FILE_POLICIES.openrouter,
-        mimeTypes: getOpenRouterMimeTypes(model),
-    };
+    const base =
+        id !== 'openrouter'
+            ? FILE_POLICIES[id]
+            : {
+                  ...FILE_POLICIES.openrouter,
+                  mimeTypes: getOpenRouterMimeTypes(
+                      model,
+                      opts.openRouterPdfEngine
+                  ),
+              };
+    return opts.providerStorageEnabled ? applyStorageCaps(base) : base;
 }
 
 export function getMimeTypeFromFilename(filename: string): string | null {
@@ -542,13 +583,17 @@ function getExtensionFromFilename(filename: string): string | null {
 }
 
 function getAcceptForOpenRouterModel(
-    model?: FilePolicyModel | null
+    model: FilePolicyModel | null | undefined,
+    pdfEngine: string | undefined
 ): readonly string[] {
-    const extensions = new Set<string>();
+    const extensions = new Set<string>(['.md', '.txt']);
     for (const modality of model?.inputModalities ?? []) {
         const supported = OPENROUTER_ACCEPT_EXTENSIONS_BY_MODALITY[modality];
         if (!supported) continue;
         for (const extension of supported) extensions.add(extension);
+    }
+    if (pdfEngine && pdfEngine !== 'native') {
+        extensions.add('.pdf');
     }
     return Array.from(extensions);
 }
@@ -559,11 +604,14 @@ function toAcceptString(extensions: readonly string[]): string {
 
 export function getAcceptForProvider(
     providerId: string,
-    model?: FilePolicyModel | null
+    model?: FilePolicyModel | null,
+    opts: FilePolicyOptions = {}
 ): string {
     const id = toProviderId(providerId);
     if (id === 'openrouter') {
-        return toAcceptString(getAcceptForOpenRouterModel(model));
+        return toAcceptString(
+            getAcceptForOpenRouterModel(model, opts.openRouterPdfEngine)
+        );
     }
 
     const cached = ACCEPT_BY_PROVIDER.get(id);
@@ -582,9 +630,10 @@ function normalizeBrowserMimeType(mimeType: string): string | null {
 export function resolveFileMediaType(
     file: Pick<File, 'name' | 'type'>,
     providerId: string,
-    model?: FilePolicyModel | null
+    model?: FilePolicyModel | null,
+    opts: FilePolicyOptions = {}
 ): string | null {
-    const policy = getFilePolicy(providerId, model);
+    const policy = getFilePolicy(providerId, model, opts);
     const extensionMimeType = getMimeTypeFromFilename(file.name);
     if (extensionMimeType && policy.mimeTypes.has(extensionMimeType)) {
         return extensionMimeType;
@@ -608,6 +657,22 @@ export async function hashBytes(bytes: ArrayBuffer): Promise<string> {
     return hex;
 }
 
+export function triggerBlobDownload(
+    filename: string,
+    mediaType: string,
+    base64: string
+): void {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([bytes], { type: mediaType }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
 export function formatFileSize(bytes: number): string {
     if (bytes < 1024) return `${bytes} B`;
     const kb = bytes / 1024;
@@ -616,12 +681,35 @@ export function formatFileSize(bytes: number): string {
     return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
 }
 
-export function validateReadyAttachments(
-    attachments: Attachment[],
-    providerId: string,
-    model?: FilePolicyModel | null
+const FORBIDDEN_FILENAME_CHARS = '<>:"|?*\\/';
+
+export function validateFilename(
+    name: string
 ): { ok: true } | { ok: false; message: string } {
-    const policy = getFilePolicy(providerId, model);
+    if (name.length < 1 || name.length > 255) {
+        return { ok: false, message: 'File names must be 1-255 characters.' };
+    }
+    for (let i = 0; i < name.length; i++) {
+        if (
+            name.charCodeAt(i) < 32 ||
+            FORBIDDEN_FILENAME_CHARS.includes(name.charAt(i))
+        ) {
+            return {
+                ok: false,
+                message: `${name} contains characters that aren't allowed in a file name (< > : " | ? * \\ / or control characters).`,
+            };
+        }
+    }
+    return { ok: true };
+}
+
+export function validateReadyAttachments(
+    attachments: DraftAttachment[],
+    providerId: string,
+    model?: FilePolicyModel | null,
+    opts: FilePolicyOptions = {}
+): { ok: true } | { ok: false; message: string } {
+    const policy = getFilePolicy(providerId, model, opts);
     if (attachments.length > policy.maxAttachments) {
         return {
             ok: false,
@@ -634,6 +722,8 @@ export function validateReadyAttachments(
     let videoCount = 0;
 
     for (const attachment of attachments) {
+        const nameCheck = validateFilename(attachment.name);
+        if (!nameCheck.ok) return nameCheck;
         if (!policy.mimeTypes.has(attachment.mediaType)) {
             return {
                 ok: false,

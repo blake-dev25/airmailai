@@ -1,6 +1,12 @@
 import { SETTINGS_KEYS, type UserSettings } from '@courierai/shared';
 import { untrack } from 'svelte';
-import { FONT_SIZES, type ModelTier, PROVIDERS } from './constants';
+import {
+    defaultModelForProvider,
+    FONT_SIZES,
+    type ModelTier,
+    PROVIDERS,
+} from './constants';
+import type { ModelOption } from './models';
 import { reportAppError } from './errorStore.svelte';
 import {
     loadSettings as loadFromExt,
@@ -17,15 +23,14 @@ function saveToExt(snapshot: Partial<UserSettings>): void {
 
 function getDefaultFontSizeIndex(): number {
     const w = window.screen.width;
-    if (w <= 1366) return 1; // 16px - small laptop
-    if (w <= 1920) return 2; // 18px - standard
-    return 2; // 18px - large/4K
+    if (w <= 1366) return 1;
+    return 2;
 }
 
-const defaultModel = PROVIDERS[0].models[1]; // Sonnet as default
+const defaultModel =
+    defaultModelForProvider(PROVIDERS[0]) ?? PROVIDERS[0].models[0];
 
 class SettingsStore {
-    // UI
     theme = $state('airmail-warm');
     fontSizeIndex = $state(getDefaultFontSizeIndex());
     chatWidth = $state(0);
@@ -33,23 +38,28 @@ class SettingsStore {
         'smooth' | 'boost-on-complete' | 'dump-on-complete' | 'raw'
     >('smooth');
     submitKeystroke = $state<'enter' | 'ctrl+enter'>('enter');
-
-    // Behavior
     modelTier = $state<ModelTier>('latest');
     autoscrollMode = $state<'pin-user-message' | 'pin-bottom' | 'off'>(
         'pin-user-message'
     );
-    // Master per-tool toggles (Advanced settings). Each gates whether the
-    // matching per-chat toggle is rendered in ModelConfig.
     enableWebSearch = $state(false);
     enableWebFetch = $state(false);
     enableCodeExecution = $state(false);
+    enableFileUploads = $state(false);
+    enableProviderFileStorage = $state(false);
     tagOpenRouterRequests = $state(false);
+    openRouterPdfEngine = $state<
+        'native' | 'auto' | 'cloudflare-ai' | 'mistral-ocr'
+    >('native');
+    showBranding = $state(
+        localStorage.getItem('courierai-show-branding') !== 'false'
+    );
+    messageFont = $state<'serif' | 'sans'>(
+        localStorage.getItem('courierai-message-font') === 'sans'
+            ? 'sans'
+            : 'serif'
+    );
     legalAcceptedVersion = $state('');
-
-    // Active chat config - these mirror the current chat's settings and act
-    // as defaults for new chats. They're persisted (mostly) as user settings
-    // so a fresh session opens with the same picks.
     providerId = $state(PROVIDERS[0].id);
     modelId = $state(defaultModel.id);
     temperature = $state<number>(defaultModel.params.defaultTemperature ?? 1);
@@ -64,10 +74,7 @@ class SettingsStore {
     webFetch = $state(false);
     codeExecution = $state(false);
     systemPrompt = $state('');
-
     settingsLoaded = $state(false);
-    // appLifecycle pauses persistence while in demo mode so demo edits don't
-    // overwrite real saved settings.
     paused = $state(false);
 
     constructor() {
@@ -77,10 +84,22 @@ class SettingsStore {
                 localStorage.setItem('courierai-theme', this.theme);
             });
             $effect(() => {
+                localStorage.setItem(
+                    'courierai-show-branding',
+                    String(this.showBranding)
+                );
+            });
+            $effect(() => {
+                document.documentElement.dataset.messageFont = this.messageFont;
+                localStorage.setItem(
+                    'courierai-message-font',
+                    this.messageFont
+                );
+            });
+            $effect(() => {
                 document.documentElement.style.fontSize = `${FONT_SIZES[this.fontSizeIndex]}px`;
             });
 
-            // Immediate save for discrete controls.
             $effect(() => {
                 const snapshot: Partial<UserSettings> = {
                     theme: this.theme,
@@ -91,20 +110,21 @@ class SettingsStore {
                     enableWebSearch: this.enableWebSearch,
                     enableWebFetch: this.enableWebFetch,
                     enableCodeExecution: this.enableCodeExecution,
+                    enableFileUploads: this.enableFileUploads,
+                    enableProviderFileStorage: this.enableProviderFileStorage,
                     providerId: this.providerId,
                     modelId: this.modelId,
                     adaptiveThinking: this.adaptiveThinking,
-                    webSearch: this.webSearch,
-                    webFetch: this.webFetch,
-                    codeExecution: this.codeExecution,
                     tagOpenRouterRequests: this.tagOpenRouterRequests,
+                    openRouterPdfEngine: this.openRouterPdfEngine,
+                    showBranding: this.showBranding,
+                    messageFont: this.messageFont,
                 };
                 if (!this.shouldSave()) return;
                 console.log(LOG, 'settings save', snapshot);
                 saveToExt(snapshot);
             });
 
-            // Debounced save for range-backed controls.
             $effect(() => {
                 const snapshot: Partial<UserSettings> = {
                     fontSizeIndex: this.fontSizeIndex,
@@ -143,15 +163,10 @@ class SettingsStore {
                 "Couldn't load settings",
                 err
             );
-            // Leave settingsLoaded=false so persist effects don't overwrite
-            // real saved settings with defaults. UI works on defaults; user
-            // sees the banner.
             return;
         }
         console.log(LOG, 'settings loaded', settings);
 
-        // Mapped type forces every UserSettings field to have a setter - adding
-        // a field to UserSettings without listing it here is a TS error.
         const setSetting: {
             [K in keyof UserSettings]: (v: UserSettings[K]) => void;
         } = {
@@ -185,6 +200,12 @@ class SettingsStore {
             enableCodeExecution: (v) => {
                 this.enableCodeExecution = v;
             },
+            enableFileUploads: (v) => {
+                this.enableFileUploads = v;
+            },
+            enableProviderFileStorage: (v) => {
+                this.enableProviderFileStorage = v;
+            },
             providerId: (v) => {
                 this.providerId = v;
             },
@@ -203,17 +224,17 @@ class SettingsStore {
             adaptiveThinking: (v) => {
                 this.adaptiveThinking = v;
             },
-            webSearch: (v) => {
-                this.webSearch = v;
-            },
-            webFetch: (v) => {
-                this.webFetch = v;
-            },
-            codeExecution: (v) => {
-                this.codeExecution = v;
-            },
             tagOpenRouterRequests: (v) => {
                 this.tagOpenRouterRequests = v;
+            },
+            openRouterPdfEngine: (v) => {
+                this.openRouterPdfEngine = v;
+            },
+            showBranding: (v) => {
+                this.showBranding = v;
+            },
+            messageFont: (v) => {
+                this.messageFont = v;
             },
             legalAcceptedVersion: (v) => {
                 this.legalAcceptedVersion = v;
@@ -226,7 +247,6 @@ class SettingsStore {
         this.settingsLoaded = true;
     }
 
-    // Restore per-chat config when selecting/loading a chat.
     applyChatConfig(meta: {
         providerId: string;
         modelId: string;
@@ -251,10 +271,6 @@ class SettingsStore {
         this.systemPrompt = meta.systemPrompt;
     }
 
-    // Snapshot current settings as a per-chat config object. Mirror of
-    // `applyChatConfig` - adding a field to one means adding to the other.
-    // The snapshot↔apply round-trip is what restores config when switching
-    // between chats.
     snapshotChatConfig(): {
         systemPrompt: string;
         providerId: string;
@@ -281,9 +297,22 @@ class SettingsStore {
         };
     }
 
+    applyToolDefaults(model: ModelOption | null): void {
+        this.webSearch = this.enableWebSearch && !!model?.tools?.webSearch;
+        this.webFetch = this.enableWebFetch && !!model?.tools?.webFetch;
+        this.codeExecution =
+            this.enableCodeExecution && !!model?.tools?.codeExecution;
+    }
+
     persistLegalVersion(version: string): void {
         this.legalAcceptedVersion = version;
         saveToExt({ legalAcceptedVersion: version });
+    }
+
+    setFileUploadsEnabled(on: boolean): void {
+        this.enableFileUploads = on;
+        this.enableProviderFileStorage = on;
+        if (on) this.enableCodeExecution = true;
     }
 }
 

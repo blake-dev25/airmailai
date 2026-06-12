@@ -5,9 +5,6 @@ import { subscribeToBroadcast, tabId } from './extension';
 function handleBroadcastEvent(event: BroadcastEvent): void {
     switch (event.type) {
         case 'turn-start':
-            // The extension already skips the source tab when fanning
-            // turn-* events. This is a belt-and-suspenders guard against
-            // ever applying a remote-turn over our own in-flight local one.
             if (event.sourceTabId === tabId) return;
             chatStore.applyRemoteTurnStart(
                 event.chatId,
@@ -30,6 +27,12 @@ function handleBroadcastEvent(event: BroadcastEvent): void {
             return;
         case 'turn-truncate':
             chatStore.applyRemoteTurnTruncate(event.chatId, event.charLen);
+            return;
+        case 'files-changed':
+            void chatStore.refreshLoadedChats(event.chatIds);
+            return;
+        case 'chats-cleared':
+            chatStore.resetLocal();
             return;
     }
 }

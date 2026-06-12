@@ -1,4 +1,4 @@
-// DO NOT replace these explicit imports with the auto-bundle (`from 'shiki'`).
+// *** DO NOT replace these explicit imports with the auto-bundle (`from 'shiki'`).
 // The auto-bundle dynamic-imports every theme + language Shiki ships, which
 // Vite emits as 300+ chunks (~11 MB) into dist/assets even though we only use
 // github-dark + 19 langs. Stay on shiki/core + explicit subpath imports.
@@ -6,7 +6,6 @@
 // for all users), so prefer not to touch unless the lang/theme change is
 // worth that cost.
 import { createHighlighterCore, type HighlighterCore } from 'shiki/core';
-// JS regex engine over Oniguruma (wasm): smaller, no wasm fetch, sufficient.
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
 import bash from 'shiki/langs/bash.mjs';
 import c from 'shiki/langs/c.mjs';

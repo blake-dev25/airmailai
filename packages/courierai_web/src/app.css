@@ -1,7 +1,7 @@
 @import 'tailwindcss';
 @plugin "@tailwindcss/typography";
 
-/* Default theme tokens live in @theme so each --color-* generates the matching
+/* ***Default theme tokens live in @theme so each --color-* generates the matching
  * Tailwind utility (bg-*, text-*, border-*, etc.). Other themes override the
  * values via [data-theme="..."] selectors below.
  *
@@ -15,12 +15,13 @@
  * Default theme is Airmail Warm - #F0E1C3 (beige), #26214D (navy), #C14227 (red). */
 @theme {
     --font-sans: system-ui, sans-serif;
-    --font-mono: ui-monospace, monospace;
+    --font-serif: Georgia, Gelasio, serif;
+    --font-mono: 'Cascadia Mono', ui-monospace, monospace;
 
-    /* Override Tailwind's default --spacing (0.25rem) so spacing utilities are
+    /* ***Override Tailwind's default --spacing (0.25rem) so spacing utilities are
      * px-based and DON'T scale with the runtime root font-size set by the
      * text-size setting. Text utilities are still rem-based, so text scales
-     * but spacing stays fixed - matches the codebase's pre-migration behavior. */
+     * but spacing stays fixed. */
     --spacing: 4px;
 
     --color-canvas: #f0e1c3;
@@ -56,7 +57,6 @@
     --color-on-accent-3-bg: #f0e1c3;
     --color-on-accent-3-bg-hover: #f0e1c3;
 
-    /* Animations - @keyframes inside @theme generates animate-* utilities */
     --animate-search-flash: searchFlash 1.5s ease-out;
     --animate-actions-appear: actionsAppear 0.1s ease both;
     --animate-fade-up: fadeUp 0.15s ease;
@@ -86,17 +86,23 @@
     @keyframes fadeUp {
         from {
             opacity: 0;
-            transform: translateX(-50%) translateY(6px);
+            transform: translateY(6px);
         }
         to {
             opacity: 1;
-            transform: translateX(-50%) translateY(0);
+            transform: translateY(0);
         }
     }
 }
 
-/* Runtime-applied via classList (ChatPanel scrolls a search hit into view and
- * flashes this class for 1.5s). Lives globally because it's added imperatively. */
+:root {
+    --font-message: var(--font-serif);
+}
+
+:root[data-message-font='sans'] {
+    --font-message: var(--font-sans);
+}
+
 .search-highlight {
     animation: var(--animate-search-flash);
 }
@@ -206,33 +212,26 @@
     --color-on-accent-3-bg-hover: #ffffff;
 }
 
-/* Solarized Light - Base3 canvas, Base01 fg (emphasized variant for stronger
- * readability); bubbles use Solarized base bg tones (Base2/Base3) per spec,
- * accents are Red / Blue / Red with Base03 dark text for AA contrast on
- * mid-luminance accent surfaces. Accent hover variants are the only
- * non-palette values - Solarized has no Red/Blue tints. */
 [data-theme='solarized-light'] {
-    --color-canvas: #fdf6e3; /* Base3 */
-    --color-surface-raised: #eee8d5; /* Base2 */
-    --color-surface-sunken: #eee8d5; /* Base2 - palette has no third light bg tone */
-    --color-border: #93a1a1; /* Base1 */
-    --color-fg: #586e75; /* Base01 */
-    --color-fg-muted: #93a1a1; /* Base1 */
+    --color-canvas: #fdf6e3;
+    --color-surface-raised: #eee8d5;
+    --color-surface-sunken: #eee8d5;
+    --color-border: #93a1a1;
+    --color-fg: #586e75;
+    --color-fg-muted: #93a1a1;
 
-    --color-bubble-user: #eee8d5; /* Base2 */
-    --color-on-bubble-user: #586e75; /* Base01 */
-    --color-bubble-assistant: #fdf6e3; /* Base3 - bubbleless */
-    --color-on-bubble-assistant: #586e75; /* Base01 */
+    --color-bubble-user: #eee8d5;
+    --color-on-bubble-user: #586e75;
+    --color-bubble-assistant: #fdf6e3;
+    --color-on-bubble-assistant: #586e75;
 
-    /* Red */
     --color-accent-fg: #dc322f;
     --color-accent-fg-hover: #b8271f;
     --color-accent-bg: #dc322f;
     --color-accent-bg-hover: #b8271f;
-    --color-on-accent-bg: #002b36; /* Base03 */
+    --color-on-accent-bg: #002b36;
     --color-on-accent-bg-hover: #002b36;
 
-    /* Blue */
     --color-accent-2-fg: #268bd2;
     --color-accent-2-fg-hover: #1f6f9f;
     --color-accent-2-bg: #268bd2;
@@ -240,7 +239,6 @@
     --color-on-accent-2-bg: #002b36;
     --color-on-accent-2-bg-hover: #002b36;
 
-    /* Red */
     --color-accent-3-fg: #dc322f;
     --color-accent-3-fg-hover: #b8271f;
     --color-accent-3-bg: #dc322f;
@@ -249,24 +247,19 @@
     --color-on-accent-3-bg-hover: #002b36;
 }
 
-/* Solarized Dark - Base03 canvas, Base1 fg (emphasized variant for stronger
- * readability); bubbles use Solarized base bg tones (Base02/Base03), accents
- * are Red / Blue / Red with Base03 dark text. Accent hover variants are the
- * only non-palette values. */
 [data-theme='solarized-dark'] {
-    --color-canvas: #002b36; /* Base03 */
-    --color-surface-raised: #073642; /* Base02 */
-    --color-surface-sunken: #073642; /* Base02 - palette has no third dark bg tone */
-    --color-border: #586e75; /* Base01 */
-    --color-fg: #93a1a1; /* Base1 */
-    --color-fg-muted: #586e75; /* Base01 */
+    --color-canvas: #002b36;
+    --color-surface-raised: #073642;
+    --color-surface-sunken: #073642;
+    --color-border: #586e75;
+    --color-fg: #93a1a1;
+    --color-fg-muted: #586e75;
 
-    --color-bubble-user: #073642; /* Base02 */
-    --color-on-bubble-user: #93a1a1; /* Base1 */
-    --color-bubble-assistant: #002b36; /* Base03 - bubbleless */
-    --color-on-bubble-assistant: #93a1a1; /* Base1 */
+    --color-bubble-user: #073642;
+    --color-on-bubble-user: #93a1a1;
+    --color-bubble-assistant: #002b36;
+    --color-on-bubble-assistant: #93a1a1;
 
-    /* Red */
     --color-accent-fg: #dc322f;
     --color-accent-fg-hover: #e85e5b;
     --color-accent-bg: #dc322f;
@@ -274,7 +267,6 @@
     --color-on-accent-bg: #002b36;
     --color-on-accent-bg-hover: #002b36;
 
-    /* Blue */
     --color-accent-2-fg: #268bd2;
     --color-accent-2-fg-hover: #4ea4dd;
     --color-accent-2-bg: #268bd2;
@@ -282,7 +274,6 @@
     --color-on-accent-2-bg: #002b36;
     --color-on-accent-2-bg-hover: #002b36;
 
-    /* Red */
     --color-accent-3-fg: #dc322f;
     --color-accent-3-fg-hover: #e85e5b;
     --color-accent-3-bg: #dc322f;
@@ -396,9 +387,8 @@
     --color-on-accent-3-bg-hover: #000000;
 }
 
-/* Map prose colors to our theme tokens so all color themes work */
 .prose {
-    white-space: normal; /* reset: parent .bubble has white-space: pre-wrap which would break rendering */
+    white-space: normal;
     --tw-prose-body: var(--color-on-bubble-assistant);
     --tw-prose-headings: var(--color-on-bubble-assistant);
     --tw-prose-bold: var(--color-on-bubble-assistant);

@@ -3,18 +3,20 @@ import type {
     CourierAIChunk,
     CourierAIMessage,
     CourierAIMessageMetadata,
-    CourierAISourceUrlPart,
     CourierAIToolName,
     ProviderStreamArgs,
 } from '@courierai/shared';
+import { bytesToBase64, hashBytes } from '../storage/encoding';
+import { FILES_BETA } from './anthropic-files';
+import { type ProviderReplicas, resolveAttachments } from './attachments';
 import { makeDebugFetch } from './debug-fetch';
+import { foldReplayIntoText } from './fold-replay';
 
-// Manual-mode budget_tokens (only used when adaptiveThinking is false). `effort`
-// drives depth on Opus 4.7+; older models take depth from the budget itself.
 const BUDGET_TOKENS: Record<string, number> = {
     low: 2048,
     medium: 8192,
     high: 16000,
+    xhigh: 24000,
     max: 32000,
 };
 
@@ -28,9 +30,6 @@ function mapStopReason(
     return 'stop';
 }
 
-// code_execution_20260120 reports code execution as bash_/text_editor_ sub-tools;
-// collapse them (and the legacy code_execution name) onto our single
-// code_execution tool. Returns undefined for server tools we don't surface.
 function serverToolName(name: string): CourierAIToolName | undefined {
     if (name === 'web_search' || name === 'web_fetch') return name;
     if (
@@ -43,8 +42,6 @@ function serverToolName(name: string): CourierAIToolName | undefined {
     return undefined;
 }
 
-// web_fetch / code_execution result blocks nest any failure in `content` as a
-// *_tool_result_error carrying an error_code. Surface it instead of dropping it.
 function toolResultError(content: unknown): string | undefined {
     if (
         content &&
@@ -59,7 +56,6 @@ function toolResultError(content: unknown): string | undefined {
     return undefined;
 }
 
-// web_fetch_tool_result content: { type:'web_fetch_result', url, content:{ title? } }.
 function readWebFetchResult(
     content: unknown
 ): { url: string; title?: string } | undefined {
@@ -80,8 +76,6 @@ function readWebFetchResult(
     };
 }
 
-// *_code_execution_result content carries stdout/stderr; surface both (stderr
-// matters for the never-silence-errors rule).
 function readCodeExecOutput(
     content: unknown
 ): { stdout?: string; stderr?: string } | undefined {
@@ -93,7 +87,23 @@ function readCodeExecOutput(
     return out.stdout || out.stderr ? out : undefined;
 }
 
-// Server-tool input arrives as streamed JSON; pull the bash command / code body.
+function readCodeExecFileIds(content: unknown): string[] {
+    if (!content || typeof content !== 'object') return [];
+    const inner = (content as { content?: unknown }).content;
+    if (!Array.isArray(inner)) return [];
+    const ids: string[] = [];
+    for (const o of inner) {
+        if (
+            o &&
+            typeof o === 'object' &&
+            typeof (o as { file_id?: unknown }).file_id === 'string'
+        ) {
+            ids.push((o as { file_id: string }).file_id);
+        }
+    }
+    return ids;
+}
+
 function parseCodeCommand(json: string): string | undefined {
     if (!json) return undefined;
     let raw: unknown;
@@ -110,84 +120,135 @@ function parseCodeCommand(json: string): string | undefined {
     return undefined;
 }
 
-// Replay token Anthropic stashes on a source-url part so the result round-trips
-// natively (no text fold). Set when this provider produced the part.
-function readAnthropicMeta(part: CourierAISourceUrlPart): {
-    toolUseId?: string;
-    encryptedContent?: string;
-} {
-    const a = part.providerMetadata?.anthropic;
-    return {
-        toolUseId: typeof a?.toolUseId === 'string' ? a.toolUseId : undefined,
-        encryptedContent:
-            typeof a?.encryptedContent === 'string'
-                ? a.encryptedContent
-                : undefined,
-    };
+function decodeBase64Text(base64: string): string {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
 }
 
-// Anthropic round-trips web search NATIVELY: rebuild the server_tool_use +
-// web_search_tool_result blocks from the source-url parts we captured (grouped
-// by tool_use_id), then the assistant text. No Sources text-fold. Parts from a
-// different provider (no anthropic metadata) are skipped here.
-function toContent(
-    msg: CourierAIMessage
-): string | Anthropic.Messages.ContentBlockParam[] {
-    let text = '';
-    const byToolUse = new Map<string, CourierAISourceUrlPart[]>();
-    for (const part of msg.parts) {
-        if (part.type === 'text') {
-            text += part.text;
-        } else if (part.type === 'source-url') {
-            const { toolUseId } = readAnthropicMeta(part);
-            if (toolUseId) {
-                const arr = byToolUse.get(toolUseId) ?? [];
-                arr.push(part);
-                byToolUse.set(toolUseId, arr);
-            }
-        }
+function attachmentBlock(
+    mediaType: string,
+    base64: string
+): Anthropic.Messages.ContentBlockParam {
+    if (
+        mediaType === 'image/jpeg' ||
+        mediaType === 'image/png' ||
+        mediaType === 'image/gif' ||
+        mediaType === 'image/webp'
+    ) {
+        return {
+            type: 'image',
+            source: { type: 'base64', media_type: mediaType, data: base64 },
+        };
     }
-    // TODO: hydrate data-attachment parts into document/image blocks.
-    if (byToolUse.size === 0) return text;
+    if (mediaType === 'application/pdf') {
+        return {
+            type: 'document',
+            source: {
+                type: 'base64',
+                media_type: 'application/pdf',
+                data: base64,
+            },
+            citations: { enabled: true },
+        };
+    }
+    if (mediaType.startsWith('text/')) {
+        return {
+            type: 'document',
+            source: {
+                type: 'text',
+                media_type: 'text/plain',
+                data: decodeBase64Text(base64),
+            },
+            citations: { enabled: true },
+        };
+    }
+    throw new Error(`Anthropic does not support ${mediaType} attachments.`);
+}
 
-    const blocks: Anthropic.Messages.ContentBlockParam[] = [];
-    for (const [toolUseId, sources] of byToolUse) {
-        blocks.push({
-            type: 'server_tool_use',
-            id: toolUseId,
-            name: 'web_search',
-            input: { query: '' },
-        });
-        blocks.push({
-            type: 'web_search_tool_result',
-            tool_use_id: toolUseId,
-            content: sources.map((s) => ({
-                type: 'web_search_result' as const,
-                url: s.url,
-                title: s.title ?? s.url,
-                encrypted_content: readAnthropicMeta(s).encryptedContent ?? '',
-            })),
-        });
+function isImageMedia(mediaType: string): boolean {
+    return (
+        mediaType === 'image/jpeg' ||
+        mediaType === 'image/png' ||
+        mediaType === 'image/gif' ||
+        mediaType === 'image/webp'
+    );
+}
+
+function providerFileBlock(
+    mediaType: string,
+    fileId: string,
+    isUser: boolean,
+    codeExecEnabled: boolean
+): Anthropic.Messages.ContentBlockParam {
+    if (!isImageMedia(mediaType) && isUser && codeExecEnabled) {
+        return { type: 'container_upload', file_id: fileId };
     }
-    if (text) blocks.push({ type: 'text', text });
+    const block:
+        | Anthropic.Beta.Messages.BetaImageBlockParam
+        | Anthropic.Beta.Messages.BetaRequestDocumentBlock = isImageMedia(
+        mediaType
+    )
+        ? { type: 'image', source: { type: 'file', file_id: fileId } }
+        : {
+              type: 'document',
+              source: { type: 'file', file_id: fileId },
+              citations: { enabled: true },
+          };
+    return block as Anthropic.Messages.ContentBlockParam;
+}
+
+function buildAttachmentBlocks(
+    msg: CourierAIMessage,
+    blobs: Record<string, { mediaType: string; base64: string }>,
+    codeExecEnabled: boolean,
+    replicas: ProviderReplicas | undefined
+): Anthropic.Messages.ContentBlockParam[] {
+    const blocks: Anthropic.Messages.ContentBlockParam[] = [];
+    for (const att of resolveAttachments(msg, blobs, replicas)) {
+        if (att.kind === 'provider') {
+            if (att.providerId !== 'anthropic') continue;
+            blocks.push(
+                providerFileBlock(
+                    att.mediaType,
+                    att.fileId,
+                    msg.role === 'user',
+                    codeExecEnabled
+                )
+            );
+            continue;
+        }
+        blocks.push(attachmentBlock(att.mediaType, att.base64));
+    }
     return blocks;
 }
 
 function toAnthropicMessages(
-    messages: CourierAIMessage[]
+    messages: CourierAIMessage[],
+    blobs: Record<string, { mediaType: string; base64: string }>,
+    codeExecEnabled: boolean,
+    replicas: ProviderReplicas | undefined
 ): Anthropic.Messages.MessageParam[] {
-    return messages.map((msg) => ({ role: msg.role, content: toContent(msg) }));
+    return messages.map((msg) => {
+        const text = foldReplayIntoText(msg);
+        const blocks = buildAttachmentBlocks(
+            msg,
+            blobs,
+            codeExecEnabled,
+            replicas
+        );
+        if (!blocks.length) return { role: msg.role, content: text };
+        const content: Anthropic.Messages.ContentBlockParam[] = [];
+        if (text) content.push({ type: 'text', text });
+        content.push(...blocks);
+        return { role: msg.role, content };
+    });
 }
 
-// Hand-rolled Anthropic Messages provider. Maps the content-block SSE to our
-// chunk vocabulary. Web search round-trips natively via toContent (no fold);
-// thinking signatures are captured into reasoning-end providerMetadata so
-// extended thinking can replay. See ai_sdk_removal_plan.txt D4.
 export async function* streamAnthropic(
     args: ProviderStreamArgs
 ): AsyncGenerator<CourierAIChunk> {
-    // dangerouslyAllowBrowser sets `anthropic-dangerous-direct-browser-access`,
-    // required to skip the CORS preflight from an MV3 service worker.
     const client = new Anthropic({
         apiKey: args.apiKey,
         dangerouslyAllowBrowser: true,
@@ -200,13 +261,18 @@ export async function* streamAnthropic(
         (args.params.adaptiveThinking as boolean | undefined) ?? true;
     const maxTokens = (args.params.maxTokens as number | undefined) ?? 8192;
 
+    if (thinkingEnabled && !adaptiveThinking && maxTokens < 2048) {
+        throw new Error(
+            'Thinking needs a 1024+ token budget plus room for the response. Raise max output tokens to at least 2048 or disable thinking.'
+        );
+    }
+
     const thinking: Anthropic.Messages.ThinkingConfigParam | undefined =
         thinkingEnabled
             ? adaptiveThinking
-                ? { type: 'adaptive' }
+                ? { type: 'adaptive', display: 'summarized' }
                 : {
                       type: 'enabled',
-                      // budget_tokens must be >=1024 and < max_tokens.
                       budget_tokens: Math.min(
                           BUDGET_TOKENS[thinkingLevel] ?? BUDGET_TOKENS.high,
                           Math.max(1024, maxTokens - 1024)
@@ -214,8 +280,6 @@ export async function* streamAnthropic(
                   }
             : undefined;
 
-    // effort is an Opus 4.7+ knob; older models ignore it. 'max' is valid in
-    // OutputConfig.effort, so no clamping (unlike OpenAI).
     const effort: Effort | undefined =
         thinkingEnabled &&
         (thinkingLevel === 'low' ||
@@ -226,19 +290,11 @@ export async function* streamAnthropic(
             ? thinkingLevel
             : undefined;
 
-    // The web sends the versioned tool TYPE per model (e.g. web_search_20260209)
-    // so the version map stays in the website. The dynamic string can't satisfy
-    // a specific literal tool type, so cast at this trusted-wire boundary.
     const wireTools = (args.params.tools ?? {}) as Record<
         string,
         string | boolean | undefined
     >;
     const tools: Anthropic.Messages.ToolUnion[] = [];
-    // allowed_callers: ['direct'] forces the model to call web tools directly
-    // rather than through programmatic tool calling (the _20260209 default),
-    // which otherwise wraps each fetch/search in a code-execution REPL. Direct
-    // is cheaper, faster, and keeps web results out of the Code surface (they
-    // show as Sources). Accepted on every tool version.
     if (typeof wireTools.webSearch === 'string') {
         tools.push({
             type: wireTools.webSearch,
@@ -255,18 +311,30 @@ export async function* streamAnthropic(
             allowed_callers: ['direct'],
         } as Anthropic.Messages.ToolUnion);
     }
-    if (typeof wireTools.codeExecution === 'string') {
+    const codeExecEnabled = typeof wireTools.codeExecution === 'string';
+    if (codeExecEnabled) {
         tools.push({
             type: wireTools.codeExecution,
             name: 'code_execution',
         } as Anthropic.Messages.ToolUnion);
     }
 
+    const replicas: ProviderReplicas | undefined =
+        args.providerFiles && Object.keys(args.providerFiles).length
+            ? { providerId: 'anthropic', files: args.providerFiles }
+            : undefined;
+    const needsFilesBeta = codeExecEnabled || !!replicas;
+
     const stream = await client.messages.create(
         {
             model: args.model,
             max_tokens: maxTokens,
-            messages: toAnthropicMessages(args.messages),
+            messages: toAnthropicMessages(
+                args.messages,
+                args.blobs ?? {},
+                codeExecEnabled,
+                replicas
+            ),
             ...(args.system ? { system: args.system } : {}),
             ...(args.params.temperature !== undefined
                 ? { temperature: args.params.temperature as number }
@@ -274,21 +342,21 @@ export async function* streamAnthropic(
             ...(thinking ? { thinking } : {}),
             ...(effort ? { output_config: { effort } } : {}),
             ...(tools.length ? { tools } : {}),
+            ...(typeof args.params.container === 'string'
+                ? { container: args.params.container }
+                : {}),
             stream: true,
         },
-        { signal: args.signal }
+        {
+            signal: args.signal,
+            ...(needsFilesBeta
+                ? { headers: { 'anthropic-beta': FILES_BETA } }
+                : {}),
+        }
     );
 
-    // Anthropic indexes content blocks (0,1,2...). Use the index as the part id
-    // to bracket text/reasoning; signatures arrive as their own delta and land
-    // on reasoning-end.
     const openText = new Set<number>();
     const openReasoning = new Set<number>();
-    const signatureByIndex = new Map<number, string>();
-    // Server-tool input streams as input_json_delta; accumulate it per block
-    // index and emit the tool-call at content_block_stop with the parsed input.
-    // (Web tools run direct - allowed_callers above - so there's no programmatic
-    // code-execution wrapper to untangle; every code_execution block is genuine.)
     const serverToolByIndex = new Map<
         number,
         { id: string; name: CourierAIToolName; json: string }
@@ -296,12 +364,18 @@ export async function* streamAnthropic(
     let inputTokens = 0;
     let outputTokens = 0;
     let stopReason: CourierAIMessageMetadata['stopReason'];
+    let containerId: string | undefined;
+    let containerExpiresAt: string | undefined;
 
     try {
         for await (const event of stream) {
             switch (event.type) {
                 case 'message_start': {
                     inputTokens = event.message.usage.input_tokens;
+                    if (event.message.container) {
+                        containerId = event.message.container.id;
+                        containerExpiresAt = event.message.container.expires_at;
+                    }
                     break;
                 }
                 case 'content_block_start': {
@@ -314,8 +388,6 @@ export async function* streamAnthropic(
                         openReasoning.add(event.index);
                         yield { type: 'reasoning-start', id };
                     } else if (block.type === 'server_tool_use') {
-                        // Record for input accumulation; the tool-call is emitted
-                        // at content_block_stop once the input JSON is complete.
                         const name = serverToolName(block.name);
                         if (name) {
                             serverToolByIndex.set(event.index, {
@@ -335,13 +407,6 @@ export async function* streamAnthropic(
                                     sourceId: `${block.tool_use_id}:${i}`,
                                     url: r.url,
                                     ...(r.title ? { title: r.title } : {}),
-                                    providerMetadata: {
-                                        anthropic: {
-                                            toolUseId: block.tool_use_id,
-                                            encryptedContent:
-                                                r.encrypted_content,
-                                        },
-                                    },
                                 };
                             }
                         }
@@ -350,9 +415,6 @@ export async function* streamAnthropic(
                             toolCallId: block.tool_use_id,
                         };
                     } else if (block.type === 'web_fetch_tool_result') {
-                        // Surface the fetched page as a source so it shows in the
-                        // Sources block (no providerMetadata: display-only, not
-                        // replayed natively like web_search).
                         const fetched = readWebFetchResult(block.content);
                         if (fetched) {
                             yield {
@@ -383,6 +445,32 @@ export async function* streamAnthropic(
                             ...(output ? { output } : {}),
                             ...(errorText ? { errorText } : {}),
                         };
+                        for (const fileId of readCodeExecFileIds(
+                            block.content
+                        )) {
+                            const meta =
+                                await client.beta.files.retrieveMetadata(
+                                    fileId,
+                                    { betas: [FILES_BETA] }
+                                );
+                            const resp = await client.beta.files.download(
+                                fileId,
+                                { betas: [FILES_BETA] }
+                            );
+                            const bytes = new Uint8Array(
+                                await resp.arrayBuffer()
+                            );
+                            const hash = await hashBytes(bytes.buffer);
+                            yield {
+                                type: 'file',
+                                filename: meta.filename,
+                                mediaType: meta.mime_type,
+                                sizeBytes: bytes.byteLength,
+                                hash,
+                                base64: bytesToBase64(bytes),
+                                replicaFileId: fileId,
+                            };
+                        }
                     }
                     break;
                 }
@@ -397,8 +485,6 @@ export async function* streamAnthropic(
                             id,
                             delta: delta.thinking,
                         };
-                    } else if (delta.type === 'signature_delta') {
-                        signatureByIndex.set(event.index, delta.signature);
                     } else if (delta.type === 'input_json_delta') {
                         const pending = serverToolByIndex.get(event.index);
                         if (pending) pending.json += delta.partial_json;
@@ -441,18 +527,7 @@ export async function* streamAnthropic(
                     if (openText.delete(event.index)) {
                         yield { type: 'text-end', id };
                     } else if (openReasoning.delete(event.index)) {
-                        const signature = signatureByIndex.get(event.index);
-                        yield {
-                            type: 'reasoning-end',
-                            id,
-                            ...(signature
-                                ? {
-                                      providerMetadata: {
-                                          anthropic: { signature },
-                                      },
-                                  }
-                                : {}),
-                        };
+                        yield { type: 'reasoning-end', id };
                     } else {
                         const pending = serverToolByIndex.get(event.index);
                         if (pending) {
@@ -483,6 +558,10 @@ export async function* streamAnthropic(
                     if (event.delta.stop_reason) {
                         stopReason = mapStopReason(event.delta.stop_reason);
                     }
+                    if (event.delta.container) {
+                        containerId = event.delta.container.id;
+                        containerExpiresAt = event.delta.container.expires_at;
+                    }
                     break;
                 }
                 case 'message_stop': {
@@ -495,6 +574,8 @@ export async function* streamAnthropic(
                             },
                             ...(stopReason ? { stopReason } : {}),
                         },
+                        ...(containerId ? { containerId } : {}),
+                        ...(containerExpiresAt ? { containerExpiresAt } : {}),
                     };
                     break;
                 }

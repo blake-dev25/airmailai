@@ -13,13 +13,6 @@ export function isHighlighterReady(): boolean {
     return ready;
 }
 
-// Loaded lazily - Vite splits markdown-highlighter into its own chunk so
-// the main bundle stays light (~169 KB). MarkdownMessage triggers this only
-// when a triple-backtick fence appears. DO NOT reintroduce an idle preload
-// (e.g. requestIdleCallback in App.svelte): Lighthouse counted the ~2 MB
-// toward "Reduce unused JavaScript" even though it didn't block paint. If
-// first-fence latency becomes a real complaint, fix the weight (trim langs,
-// finer-grained chunking) rather than re-adding the preload.
 export function initMarkdown(): Promise<void> {
     if (highlighter) return Promise.resolve();
     if (!initPromise) {
@@ -83,14 +76,12 @@ marked.use({
                 const copyBtn = `<button type="button" class="code-copy" aria-label="Copy code">Copy</button>`;
                 return `<div class="code-block"><div class="code-header">${langLabel}${copyBtn}</div>${highlighted}</div>`;
             }
-            // Fallback while highlighter is still loading
             const escaped = text
                 .replace(/&/g, '&amp;')
                 .replace(/</g, '&lt;')
                 .replace(/>/g, '&gt;');
             return `<pre><code>${escaped}</code></pre>`;
         },
-        // Escape raw HTML from the LLM - show it as text, not rendered DOM
         html({ text }) {
             return text
                 .replace(/&/g, '&amp;')

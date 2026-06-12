@@ -1,9 +1,5 @@
 const LOG = '[courierai:web]';
 
-// App-wide error surface. Non-stream failures (storage CRUD, settings save,
-// OpenRouter hydrate, key save/clear, etc.) flow through this and render as
-// a banner in App.svelte. Stream errors stay per-chat in chatStore.chatErrors
-// so they're visible alongside the chat they refer to.
 class ErrorStore {
     appError = $state<string | null>(null);
 
@@ -24,10 +20,6 @@ export function formatErr(err: unknown): string {
     return String(err);
 }
 
-// One-stop reporter for non-stream failures: tagged console log + user-
-// facing banner. `context` is the operator-facing breadcrumb (component +
-// what failed); `userMessage` is the human-readable "Couldn't X" lead-in
-// that gets ": <err>" appended.
 export function reportAppError(
     context: string,
     userMessage: string,

@@ -24,6 +24,7 @@ export interface DerivedModel {
     maxOutputTokens: number | null;
     knowledgeCutoff?: string;
     thinking?: DerivedThinking;
+    thinkingPinned?: boolean;
     temperatureMax?: number;
     defaultTemperature?: number;
     tools?: ModelTools;
@@ -139,8 +140,6 @@ export function formatKnowledgeCutoff(
     return month ? `${month} ${m[1]}` : raw;
 }
 
-// ---------- shared printing helpers ----------
-
 export function formatThinking(
     m: DerivedModel,
     kind: 'anthropic' | 'default'
@@ -179,8 +178,6 @@ export function printIdList(header: string, ids: string[]): void {
     console.log(`\n   ${header}`);
     for (const id of ids) console.log(`   - ${id}`);
 }
-
-// ---------- shared file emission ----------
 
 export function emitProviderFile(
     providerId: string,
@@ -284,7 +281,6 @@ export async function emitAndMaybeWrite(
 }
 
 function snapshotTimestamp(): string {
-    // 2026-05-19T14-30-22 - colon-free for Windows filesystems.
     return new Date().toISOString().slice(0, 19).replace(/:/g, '-');
 }
 
@@ -358,13 +354,12 @@ export function probeErrorCode(e: unknown): string {
     return msg.match(/\b(\d{3})\b/)?.[1] ?? 'error';
 }
 
-// ---------- targeted docs scraping ----------
-
 const turndown = new TurndownService({
     headingStyle: 'atx',
     codeBlockStyle: 'fenced',
 });
-turndown.remove(['style', 'script', 'noscript', 'svg', 'iframe']);
+turndown.remove(['style', 'script', 'noscript', 'iframe']);
+turndown.remove((node) => node.nodeName.toLowerCase() === 'svg');
 
 export async function scrapeDocsRaw(
     url: string
@@ -398,8 +393,6 @@ export async function runScrapeTest<T>(
         console.log(markdown);
     }
 }
-
-// ---------- OpenRouter metadata ----------
 
 export async function fetchOpenRouterIndex(): Promise<OpenRouterIndex> {
     console.log('starting OpenRouter polling');

@@ -1,7 +1,7 @@
 import type { Reporter, TestCase, TestResult } from '@playwright/test/reporter';
 import { readFileSync, writeFileSync } from 'node:fs';
 
-// On failure Playwright writes an `error-context.md` (a "error-context"
+// *** On failure Playwright writes an `error-context.md` (a "error-context"
 // attachment) next to the trace, led by a hardcoded LLM prompt block
 // ("# Instructions ... Following Playwright test failed ...") that has no
 // opt-out (see playwright/lib/errorContext.js). The rest of the file - page
@@ -16,8 +16,6 @@ export default class StripErrorContextPrompt implements Reporter {
                 continue;
             const content = readFileSync(attachment.path, 'utf8');
             const idx = content.indexOf('# Test info');
-            // idx === 0 -> already stripped (idempotent); idx < 0 -> unexpected
-            // shape, leave it untouched rather than mangle it.
             if (idx > 0) writeFileSync(attachment.path, content.slice(idx));
         }
     }

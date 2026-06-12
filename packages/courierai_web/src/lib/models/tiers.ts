@@ -4,6 +4,7 @@ import type { ModelTier } from './types';
 // never auto-surface in 'latest' or 'previous' without explicit promotion.
 export const MODEL_TIERS: Record<string, ModelTier> = {
     // anthropic
+    'claude-fable-5': 'latest',
     'claude-haiku-4-5': 'latest',
     'claude-opus-4-1-20250805': 'legacy',
     'claude-opus-4-5-20251101': 'legacy',
@@ -16,7 +17,6 @@ export const MODEL_TIERS: Record<string, ModelTier> = {
     'claude-sonnet-4-20250514': 'legacy',
     // openai
     'gpt-3.5-turbo': 'legacy',
-    'gpt-3.5-turbo-instruct': 'legacy',
     'gpt-4': 'legacy',
     'gpt-4-turbo': 'legacy',
     'gpt-4.1': 'previous',
@@ -56,17 +56,15 @@ export const MODEL_TIERS: Record<string, ModelTier> = {
     'o4-mini': 'legacy',
     'o4-mini-deep-research': 'legacy',
     // google
+    'antigravity-preview-05-2026': 'previous',
     'deep-research-max-preview-04-2026': 'legacy',
     'deep-research-preview-04-2026': 'legacy',
     'deep-research-pro-preview-12-2025': 'legacy',
-    'gemini-2.0-flash': 'legacy',
-    'gemini-2.0-flash-lite': 'legacy',
     'gemini-2.5-computer-use-preview-10-2025': 'legacy',
     'gemini-2.5-flash': 'legacy',
     'gemini-2.5-flash-lite': 'legacy',
     'gemini-2.5-pro': 'legacy',
     'gemini-3-flash-preview': 'previous',
-    'gemini-3-pro-preview': 'previous',
     'gemini-3.1-flash-lite': 'latest',
     'gemini-3.1-flash-lite-preview': 'previous',
     'gemini-3.1-pro-preview': 'latest',

@@ -1,7 +1,7 @@
-// Generates THIRD_PARTY_LICENSES at the repo root from the runtime
+// *** Generates THIRD_PARTY_LICENSES at the repo root from the runtime
 // dependencies actually bundled into the shipped web app + extension. Walks
 // the `dependencies` (not devDependencies) of courierai_web + courierai_ext,
-// drops the workspace package (@courierai/shared - that's us), reads each
+// drops the workspace package (@courierai/shared), reads each
 // installed package's license + copyright from its package.json + LICENSE
 // file, and emits one attribution block per package followed by the full text
 // of every distinct license referenced.
@@ -20,10 +20,9 @@ const ROOT = resolve(import.meta.dir, '..');
 const OUT = resolve(ROOT, 'THIRD_PARTY_LICENSES');
 const WRITE = process.argv.includes('--write');
 
-// Packages whose `dependencies` get bundled into a shipped artifact.
 const BUNDLED_PACKAGES = ['courierai_web', 'courierai_ext'];
 
-// For dual/multi-licensed packages (SPDX "X OR Y"), the licensee picks which
+// *** For dual/multi-licensed packages (SPDX "X OR Y"), the licensee picks which
 // terms to comply with. We record our choice here so the attribution states a
 // single, unambiguous license instead of the raw disjunction. Keyed by the
 // exact SPDX string from package.json.
@@ -53,8 +52,6 @@ async function readJson<T>(path: string): Promise<T | null> {
     return JSON.parse(await file.text()) as T;
 }
 
-// Collect the union of runtime dependency names across the bundled packages,
-// excluding our own workspace package.
 async function collectDepNames(): Promise<string[]> {
     const names = new Set<string>();
     for (const pkg of BUNDLED_PACKAGES) {
@@ -69,8 +66,6 @@ async function collectDepNames(): Promise<string[]> {
     return [...names].sort();
 }
 
-// Resolve a package's installed directory. Workspaces hoist to the root
-// node_modules; fall back to the package-local one.
 async function findPackageDir(name: string): Promise<string | null> {
     for (const base of [
         resolve(ROOT, 'node_modules'),
@@ -99,9 +94,6 @@ async function readLicenseText(dir: string): Promise<string | null> {
     return null;
 }
 
-// Apache-2.0 Section 4(d) requires reproducing a shipped NOTICE file's
-// attribution text. We read it for every package (harmless when absent or
-// under another license) and surface it in that package's block.
 async function readNoticeText(dir: string): Promise<string | null> {
     for (const candidate of ['NOTICE', 'NOTICE.txt', 'NOTICE.md', 'notice']) {
         const file = Bun.file(resolve(dir, candidate));
@@ -118,10 +110,6 @@ function authorName(author: PkgJson['author']): string | undefined {
     return typeof author === 'string' ? author : author.name;
 }
 
-// Best-effort copyright line: prefer a real "Copyright (c) YYYY ..." line
-// lifted from the license file, else synthesize one from the package author.
-// The year/(c) guard avoids matching prose lines in a bare license body (e.g.
-// Apache's "...copyright notice that is included in or attached to the work").
 function deriveCopyright(licenseText: string | null, author?: string): string {
     if (licenseText) {
         const line = licenseText
@@ -188,8 +176,6 @@ function render(attributions: Attribution[]): string {
         }
     }
 
-    // One copy of each distinct license's full text, listed by the packages
-    // that use it.
     const byLicense = new Map<string, Attribution[]>();
     for (const a of attributions) {
         const arr = byLicense.get(a.licenseText) ?? [];

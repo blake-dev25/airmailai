@@ -19,6 +19,12 @@ export const OPENAI: ProviderOption = {
                     defaultLevel: 'medium',
                 },
             },
+            tools: {
+                webSearch: true,
+                webFetch: true,
+                codeExecution: true,
+                searchFetchLinked: true,
+            },
         },
         {
             id: 'gpt-5.5',
@@ -32,6 +38,12 @@ export const OPENAI: ProviderOption = {
                     levels: ['none', 'low', 'medium', 'high', 'xhigh'],
                     defaultLevel: 'medium',
                 },
+            },
+            tools: {
+                webSearch: true,
+                webFetch: true,
+                codeExecution: true,
+                searchFetchLinked: true,
             },
         },
         {
@@ -47,6 +59,12 @@ export const OPENAI: ProviderOption = {
                     defaultLevel: 'none',
                 },
             },
+            tools: {
+                webSearch: true,
+                webFetch: true,
+                codeExecution: true,
+                searchFetchLinked: true,
+            },
         },
         {
             id: 'gpt-5.4-nano',
@@ -60,6 +78,12 @@ export const OPENAI: ProviderOption = {
                     levels: ['none', 'low', 'medium', 'high', 'xhigh'],
                     defaultLevel: 'none',
                 },
+            },
+            tools: {
+                webSearch: true,
+                webFetch: true,
+                codeExecution: true,
+                searchFetchLinked: true,
             },
         },
         {
@@ -175,7 +199,7 @@ export const OPENAI: ProviderOption = {
                 defaultMaxTokens: 8192,
                 knowledgeCutoff: 'Sep 2024',
                 thinking: {
-                    levels: ['none', 'low', 'medium', 'high'],
+                    levels: ['none', 'low', 'medium', 'high', 'xhigh'],
                     defaultLevel: 'none',
                 },
             },
@@ -221,6 +245,12 @@ export const OPENAI: ProviderOption = {
                     defaultLevel: 'none',
                 },
             },
+            tools: {
+                webSearch: true,
+                webFetch: true,
+                codeExecution: true,
+                searchFetchLinked: true,
+            },
         },
         {
             id: 'gpt-5.1-chat-latest',
@@ -241,8 +271,8 @@ export const OPENAI: ProviderOption = {
                 defaultMaxTokens: 8192,
                 knowledgeCutoff: 'Sep 2024',
                 thinking: {
-                    levels: ['medium', 'high', 'xhigh'],
-                    defaultLevel: 'medium',
+                    levels: ['high'],
+                    defaultLevel: 'high',
                 },
             },
         },
@@ -273,6 +303,12 @@ export const OPENAI: ProviderOption = {
                     defaultLevel: 'minimal',
                 },
             },
+            tools: {
+                webSearch: true,
+                webFetch: true,
+                codeExecution: true,
+                searchFetchLinked: true,
+            },
         },
         {
             id: 'gpt-5-mini',
@@ -287,6 +323,12 @@ export const OPENAI: ProviderOption = {
                     defaultLevel: 'minimal',
                 },
             },
+            tools: {
+                webSearch: true,
+                webFetch: true,
+                codeExecution: true,
+                searchFetchLinked: true,
+            },
         },
         {
             id: 'gpt-5',
@@ -300,6 +342,12 @@ export const OPENAI: ProviderOption = {
                     levels: ['minimal', 'low', 'medium', 'high'],
                     defaultLevel: 'minimal',
                 },
+            },
+            tools: {
+                webSearch: true,
+                webFetch: true,
+                codeExecution: true,
+                searchFetchLinked: true,
             },
         },
         {
@@ -319,12 +367,10 @@ export const OPENAI: ProviderOption = {
                 contextWindow: 200000,
                 maxOutputTokens: 100000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Jun 2024',
                 thinking: {
-                    levels: ['none', 'low', 'high'],
-                    defaultLevel: 'none',
+                    levels: ['low', 'medium', 'high'],
+                    defaultLevel: 'medium',
                 },
             },
         },
@@ -335,12 +381,10 @@ export const OPENAI: ProviderOption = {
                 contextWindow: 200000,
                 maxOutputTokens: 100000,
                 defaultMaxTokens: 8192,
-                temperatureMax: 2,
-                defaultTemperature: 1,
                 knowledgeCutoff: 'Jun 2024',
                 thinking: {
-                    levels: ['none', 'low', 'high'],
-                    defaultLevel: 'none',
+                    levels: ['low', 'medium', 'high'],
+                    defaultLevel: 'medium',
                 },
             },
         },
@@ -353,8 +397,8 @@ export const OPENAI: ProviderOption = {
                 defaultMaxTokens: 8192,
                 knowledgeCutoff: 'Jun 2024',
                 thinking: {
-                    levels: ['none', 'low', 'high'],
-                    defaultLevel: 'none',
+                    levels: ['low', 'medium', 'high'],
+                    defaultLevel: 'medium',
                 },
             },
         },
@@ -403,8 +447,8 @@ export const OPENAI: ProviderOption = {
                 defaultMaxTokens: 8192,
                 knowledgeCutoff: 'Jun 2024',
                 thinking: {
-                    levels: ['none', 'low', 'high'],
-                    defaultLevel: 'none',
+                    levels: ['low', 'medium', 'high'],
+                    defaultLevel: 'medium',
                 },
             },
         },
@@ -417,8 +461,8 @@ export const OPENAI: ProviderOption = {
                 defaultMaxTokens: 8192,
                 knowledgeCutoff: 'Jun 2024',
                 thinking: {
-                    levels: ['none', 'low', 'high'],
-                    defaultLevel: 'none',
+                    levels: ['low', 'medium', 'high'],
+                    defaultLevel: 'medium',
                 },
             },
         },
@@ -431,8 +475,8 @@ export const OPENAI: ProviderOption = {
                 defaultMaxTokens: 8192,
                 knowledgeCutoff: 'Oct 2023',
                 thinking: {
-                    levels: ['none', 'low', 'high'],
-                    defaultLevel: 'none',
+                    levels: ['low', 'medium', 'high'],
+                    defaultLevel: 'medium',
                 },
             },
         },
@@ -457,8 +501,8 @@ export const OPENAI: ProviderOption = {
                 defaultMaxTokens: 8192,
                 knowledgeCutoff: 'Oct 2023',
                 thinking: {
-                    levels: ['none', 'low', 'high'],
-                    defaultLevel: 'none',
+                    levels: ['low', 'medium', 'high'],
+                    defaultLevel: 'medium',
                 },
             },
         },
@@ -471,8 +515,8 @@ export const OPENAI: ProviderOption = {
                 defaultMaxTokens: 8192,
                 knowledgeCutoff: 'Oct 2023',
                 thinking: {
-                    levels: ['none', 'low', 'high'],
-                    defaultLevel: 'none',
+                    levels: ['low', 'medium', 'high'],
+                    defaultLevel: 'medium',
                 },
             },
         },
@@ -498,18 +542,6 @@ export const OPENAI: ProviderOption = {
                 temperatureMax: 2,
                 defaultTemperature: 1,
                 knowledgeCutoff: 'Dec 2023',
-            },
-        },
-        {
-            id: 'gpt-3.5-turbo-instruct',
-            name: 'GPT-3.5 Turbo Instruct',
-            params: {
-                contextWindow: 4096,
-                maxOutputTokens: 4096,
-                defaultMaxTokens: 4096,
-                temperatureMax: 2,
-                defaultTemperature: 1,
-                knowledgeCutoff: 'Sep 2021',
             },
         },
         {

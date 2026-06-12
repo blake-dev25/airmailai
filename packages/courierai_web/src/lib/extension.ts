@@ -3,9 +3,14 @@ import type {
     BroadcastRequest,
     ChatMeta,
     CourierAIChunk,
+    DraftAttachment,
     ExtensionStreamEvent,
+    FileAvailability,
+    FileDeleteTarget,
     HydratedStoredMessage,
+    LocalFileInfo,
     OpenRouterModel,
+    ProviderFileInfo,
     StorageRequest,
     StorageResponse,
     StorageUsage,
@@ -16,51 +21,25 @@ import type {
 } from '@courierai/shared';
 
 export interface StreamHandlers {
-    // Fires for each chunk arriving from the ext. Caller is responsible for
-    // feeding the chunk into its reducer - we keep the reducer out of this
-    // transport layer so it can be reused symmetrically by the cross-tab
-    // broadcast pipeline.
     onChunk: (chunk: CourierAIChunk) => void;
-    // Terminal success - the ext has saved the row. No usage payload here
-    // because tokens land via message-metadata chunks, surfaced through
-    // onChunk.
     onDone: () => void;
     onError: (message: string, source: StreamErrorSource) => void;
 }
 
 export interface StreamHandle {
-    // Hard cancel: disconnect immediately, no save.
     abort: () => void;
-    // Graceful stop: ext aborts the underlying stream, truncates the
-    // assembled assistant message's text parts to `truncateTo` chars (in
-    // render order), and saves that. `truncateTo` is the visible character
-    // count at click time so the saved row matches what the user saw.
     stop: (truncateTo: number) => void;
 }
 
-// Stable per-tab identifier. Generated once per page load; broadcasted in
-// turn-start so the originating tab can ignore its own echo.
 export const tabId = crypto.randomUUID();
 
 const LOG = '[courierai:web]';
-// Cadence for the broadcast-port heartbeat. Comfortably inside Chrome's 30s
-// SW idle timer so any tab being open keeps the worker warm - no separate
-// per-stream keepalive needed.
 const KEEPALIVE_MS = 20_000;
 
-// The content script runs at document_start and writes
-// `document.documentElement.dataset.courieraiExtId` before any page script
-// runs. Reading it synchronously at module load gives us a CPU-throttle-proof
-// presence check - no message round-trip required.
-//
-// TODO: once the extension is published with a static ID, verify the dataset
-// value matches the expected ID before trusting it - defends against another
-// installed extension impersonating ours by writing the same dataset key.
 let extensionId: string | null =
     document.documentElement.dataset.courieraiExtId ?? null;
 if (extensionId) console.log(LOG, 'extension ID from DOM marker', extensionId);
 
-// Still listen for postMessage as a fallback (e.g. content script re-announces).
 window.addEventListener('message', (e: MessageEvent) => {
     if (
         e.data?.type === 'COURIERAI_EXT_READY' &&
@@ -71,20 +50,35 @@ window.addEventListener('message', (e: MessageEvent) => {
     }
 });
 
-export function isExtensionReady(): boolean {
-    return extensionId !== null;
-}
+const DETECT_TIMEOUT_MS = 1500;
+const DETECT_PING_INTERVAL_MS = 150;
 
-// Synchronous because the document_start content script guarantees the DOM
-// marker is set before this module ever runs. If it's not there, the
-// extension isn't installed.
+// *** TODO(static-id): once the extension is published to the Chrome Web Store its
+// ID is static. Replace this READY/PING handshake with a hardcoded extension
+// ID + direct chrome.runtime.sendMessage probe (which also wakes the service
+// worker), and delete the extension's content script.
 export function waitForExtension(): Promise<boolean> {
-    return Promise.resolve(extensionId !== null);
+    if (extensionId) return Promise.resolve(true);
+    return new Promise((resolve) => {
+        const deadline = Date.now() + DETECT_TIMEOUT_MS;
+        const tick = () => {
+            const marker = document.documentElement.dataset.courieraiExtId;
+            if (marker) extensionId = marker;
+            if (extensionId) {
+                resolve(true);
+                return;
+            }
+            if (Date.now() >= deadline) {
+                resolve(false);
+                return;
+            }
+            window.postMessage({ type: 'COURIERAI_EXT_PING' }, '*');
+            setTimeout(tick, DETECT_PING_INTERVAL_MS);
+        };
+        tick();
+    });
 }
 
-// Throws if the extension isn't reachable or returns an error response. Every
-// caller is expected to either await + .catch, or rely on the storage helpers
-// below - which all surface errors loudly rather than swallowing them.
 async function sendStorageMessage(
     request: StorageRequest
 ): Promise<StorageResponse> {
@@ -161,6 +155,34 @@ export async function putMessage(
     await sendStorageMessage({ type: 'put_message', message });
 }
 
+export async function stageDraftAttachment(
+    chatId: string,
+    attachment: DraftAttachment,
+    base64: string,
+    replicateTo?: string
+): Promise<string | undefined> {
+    const response = await sendStorageMessage({
+        type: 'stage_draft_attachment',
+        chatId,
+        attachment,
+        base64,
+        ...(replicateTo ? { replicateTo } : {}),
+    });
+    if (response.type === 'saved') return response.warning;
+    throw new Error(`Unexpected response: ${response.type}`);
+}
+
+export async function removeDraftAttachment(
+    chatId: string,
+    key: string
+): Promise<void> {
+    await sendStorageMessage({ type: 'remove_draft_attachment', chatId, key });
+}
+
+export async function clearDraftAttachments(chatId: string): Promise<void> {
+    await sendStorageMessage({ type: 'clear_draft_attachments', chatId });
+}
+
 export async function deleteMessage(
     chatId: string,
     messageId: string
@@ -204,8 +226,6 @@ export async function loadChat(chatId: string): Promise<StoredChat | null> {
     throw new Error(`Unexpected response: ${response.type}`);
 }
 
-// Returns null when there's no API key + no cache (legitimate empty state).
-// Throws on fetch failure - caller surfaces via setAppError.
 export async function loadOpenRouterModels(): Promise<
     OpenRouterModel[] | null
 > {
@@ -213,6 +233,56 @@ export async function loadOpenRouterModels(): Promise<
         type: 'load_openrouter_models',
     });
     if (response.type === 'openrouter_models') return response.models;
+    throw new Error(`Unexpected response: ${response.type}`);
+}
+
+export async function getFileBlob(
+    hash: string
+): Promise<{ mediaType: string; base64: string } | null> {
+    const response = await sendStorageMessage({ type: 'get_file_blob', hash });
+    if (response.type === 'file_blob') return response.blob;
+    throw new Error(`Unexpected response: ${response.type}`);
+}
+
+export async function getFileStatuses(
+    hashes: string[],
+    provider: string
+): Promise<Record<string, FileAvailability>> {
+    const response = await sendStorageMessage({
+        type: 'file_status',
+        hashes,
+        provider,
+    });
+    if (response.type === 'file_status') return response.statuses;
+    throw new Error(`Unexpected response: ${response.type}`);
+}
+
+export async function listLocalFiles(): Promise<LocalFileInfo[]> {
+    const response = await sendStorageMessage({ type: 'list_local_files' });
+    if (response.type === 'local_files') return response.files;
+    throw new Error(`Unexpected response: ${response.type}`);
+}
+
+export async function listProviderFiles(
+    provider: string
+): Promise<ProviderFileInfo[]> {
+    const response = await sendStorageMessage({
+        type: 'list_provider_files',
+        provider,
+    });
+    if (response.type === 'provider_files') return response.files;
+    throw new Error(`Unexpected response: ${response.type}`);
+}
+
+export async function deleteStoredFile(
+    target: FileDeleteTarget
+): Promise<string[]> {
+    const response = await sendStorageMessage({
+        type: 'delete_stored_file',
+        target,
+        sourceTabId: tabId,
+    });
+    if (response.type === 'stored_file_deleted') return response.chatIds;
     throw new Error(`Unexpected response: ${response.type}`);
 }
 
@@ -226,18 +296,13 @@ export async function getStorageUsage(): Promise<StorageUsage> {
 }
 
 export async function clearAllChats(): Promise<void> {
-    await sendStorageMessage({ type: 'clear_chats' });
+    await sendStorageMessage({ type: 'clear_chats', sourceTabId: tabId });
 }
 
 export async function clearAllStorage(): Promise<void> {
-    await sendStorageMessage({ type: 'clear_all' });
+    await sendStorageMessage({ type: 'clear_all', sourceTabId: tabId });
 }
 
-// Wraps a port-based turn stream. Chunks from the ext are forwarded one-by-
-// one to the caller via `onChunk`; the caller feeds them into its own
-// message assembler which mutates the assistant placeholder's parts in
-// place. Keeping the assembler out of the transport layer lets the cross-tab
-// broadcast pipeline reuse the same fold symmetrically.
 export function sendToExtension(
     request: Omit<TurnStartRequest, 'type'>,
     handlers: StreamHandlers
@@ -296,7 +361,7 @@ export function sendToExtension(
             const msg =
                 chrome.runtime.lastError?.message ??
                 'Extension disconnected unexpectedly.';
-            console.error(LOG, '✗ unexpected port disconnect', msg);
+            console.error(LOG, 'X unexpected port disconnect', msg);
             handlers.onError(msg, 'extension');
         }
     });
@@ -318,11 +383,6 @@ export function sendToExtension(
     };
 }
 
-// Long-lived subscription to cross-tab turn lifecycle events. The extension
-// broadcasts turn-start/chunk/done/error/aborted to every tab; subscribers
-// route them into local state. The port auto-reconnects after disconnects
-// (e.g. service worker eviction); on reconnect, onReconnect fires so callers
-// can resync the active chat from IDB.
 export interface BroadcastSubscription {
     unsubscribe: () => void;
 }
@@ -353,7 +413,6 @@ export function subscribeToBroadcast(handlers: {
         if (unsubscribed) return;
         clearReconnect();
         if (!extensionId) {
-            // Extension not detected yet - try again shortly.
             reconnectTimer = setTimeout(connect, 1000);
             return;
         }
@@ -366,9 +425,6 @@ export function subscribeToBroadcast(handlers: {
         }
         console.log(LOG, 'broadcast: connected');
 
-        // Tag this port's sourceTabId in the ext so it can skip us when
-        // fanning out turn-* events for turns we initiated. Sent before any
-        // other traffic so single-tab broadcasts become true no-ops.
         try {
             const msg: BroadcastRequest = {
                 type: 'register',
@@ -387,9 +443,6 @@ export function subscribeToBroadcast(handlers: {
         });
 
         port.onDisconnect.addListener(() => {
-            // Read lastError to consume any close reason Chrome attached
-            // (e.g. bfcache eviction). Without this, Chrome surfaces it as
-            // "Unchecked runtime.lastError".
             const reason = chrome.runtime.lastError?.message;
             console.log(
                 LOG,
@@ -401,8 +454,6 @@ export function subscribeToBroadcast(handlers: {
             if (!unsubscribed) reconnectTimer = setTimeout(connect, 1000);
         });
 
-        // Heartbeat: keeps the SW's 30s idle timer reset for as long as this
-        // tab is open, so storage ops and new turns hit a warm worker.
         keepaliveTimer = setInterval(() => {
             if (!port) return;
             try {
@@ -415,11 +466,6 @@ export function subscribeToBroadcast(handlers: {
         }, KEEPALIVE_MS);
     }
 
-    // BFCache handling: Chrome closes the port channel when the page enters
-    // bfcache (Chrome 123+). pagehide+persisted means we're freezing - drop
-    // the dead reference so the post-restore keepalive can't fire on it.
-    // pageshow+persisted means we just thawed; reconnect immediately rather
-    // than waiting for the disconnect-driven 1s backoff.
     const onPageHide = (event: PageTransitionEvent) => {
         if (!event.persisted) return;
         console.log(LOG, 'broadcast: page entering bfcache, releasing port');

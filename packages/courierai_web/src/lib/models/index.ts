@@ -3,7 +3,12 @@ import { GOOGLE } from './google';
 import { OPENAI } from './openai';
 import { OPENROUTER } from './openrouter';
 import { MODEL_TIERS } from './tiers';
-import type { ModelTier, ModelTools, ProviderOption } from './types';
+import type {
+    ModelOption,
+    ModelTier,
+    ModelTools,
+    ProviderOption,
+} from './types';
 
 export { buildOpenRouterProvider } from './openrouter';
 export { MODEL_TIERS } from './tiers';
@@ -46,9 +51,9 @@ function withDefaultTools(
 // OpenRouter ships with an empty model list and is hydrated at runtime by the
 // extension. Until that resolves, the Models config shows a loading state.
 export const PROVIDERS: ProviderOption[] = [
-    ANTHROPIC,
-    withDefaultTools(OPENAI, OPENAI_TOOLS),
-    withDefaultTools(GOOGLE, GOOGLE_TOOLS),
+    { ...ANTHROPIC, sandboxFileAttach: true },
+    { ...withDefaultTools(OPENAI, OPENAI_TOOLS), sandboxFileAttach: true },
+    { ...withDefaultTools(GOOGLE, GOOGLE_TOOLS), sandboxFileAttach: false },
     OPENROUTER,
 ].sort((a, b) => a.name.localeCompare(b.name));
 
@@ -64,6 +69,21 @@ export function modelMatchesTier(
 ): boolean {
     const modelTier = MODEL_TIERS[modelId] ?? 'legacy';
     return TIER_RANK[modelTier] <= TIER_RANK[selected];
+}
+
+// The model picker displays models grouped by tier (latest -> previous ->
+// legacy), so "the top of the list" is the first model of the best tier
+// present, not models[0] of the raw catalog order.
+export function defaultModelForProvider(
+    provider: ProviderOption
+): ModelOption | undefined {
+    if (provider.marketplace) return provider.models[0];
+    let best: { model: ModelOption; rank: number } | undefined;
+    for (const m of provider.models) {
+        const rank = TIER_RANK[MODEL_TIERS[m.id] ?? 'legacy'];
+        if (!best || rank < best.rank) best = { model: m, rank };
+    }
+    return best?.model;
 }
 
 export function filterProvidersByTier(

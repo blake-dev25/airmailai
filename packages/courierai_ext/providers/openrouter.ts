@@ -1,15 +1,26 @@
 import { HTTPClient, OpenRouter } from '@openrouter/sdk';
-import type { CourierAIChunk, ProviderStreamArgs } from '@courierai/shared';
+import type {
+    EasyInputMessageContentUnion1,
+    FileParserPlugin,
+} from '@openrouter/sdk/models';
+import type {
+    CourierAIChunk,
+    CourierAIMessage,
+    CourierAIMessageMetadata,
+    ProviderStreamArgs,
+} from '@courierai/shared';
+import { resolveAttachments } from './attachments';
 import { makeDebugFetch } from './debug-fetch';
-import { foldSourcesIntoText } from './fold-sources';
+import { foldReplayIntoText } from './fold-replay';
 
 type Effort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 
-// Our thinkingLevel vocabulary -> OpenRouter's reasoning.effort enum. 'max'
-// clamps to 'xhigh'; 'none'/unset returns undefined to skip the field.
-function toEffort(level: string | undefined): Effort | undefined {
-    if (!level || level === 'none') return undefined;
-    if (level === 'max') return 'xhigh';
+type ReasoningConfig = { effort: Effort; summary: 'auto' } | { enabled: false };
+
+function toReasoning(level: string | undefined): ReasoningConfig | undefined {
+    if (!level) return undefined;
+    if (level === 'none') return { enabled: false };
+    if (level === 'max') return { effort: 'xhigh', summary: 'auto' };
     if (
         level === 'minimal' ||
         level === 'low' ||
@@ -17,14 +28,75 @@ function toEffort(level: string | undefined): Effort | undefined {
         level === 'high' ||
         level === 'xhigh'
     ) {
-        return level;
+        return { effort: level, summary: 'auto' };
     }
     return undefined;
 }
 
-// OpenRouter strips upstream encrypted search state, so web search replays via
-// the Sources text-fold (foldSourcesIntoText), and sources arrive in the final
-// `completed` response (not as streaming annotations). Sweep them out there.
+function decodeBase64Text(base64: string): string {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+}
+
+function audioFormat(mediaType: string): 'mp3' | 'wav' | undefined {
+    if (mediaType === 'audio/mp3' || mediaType === 'audio/mpeg') return 'mp3';
+    if (mediaType === 'audio/wav') return 'wav';
+    return undefined;
+}
+
+function buildContent(
+    msg: CourierAIMessage,
+    blobs: Record<string, { mediaType: string; base64: string }>
+): string | EasyInputMessageContentUnion1[] {
+    const text = foldReplayIntoText(msg);
+    if (msg.role !== 'user') return text;
+    const content: EasyInputMessageContentUnion1[] = [];
+    for (const att of resolveAttachments(msg, blobs)) {
+        if (att.kind === 'provider') continue;
+        const dataUrl = `data:${att.mediaType};base64,${att.base64}`;
+        if (att.mediaType.startsWith('image/')) {
+            content.push({
+                type: 'input_image',
+                imageUrl: dataUrl,
+                detail: 'auto',
+            });
+        } else if (att.mediaType === 'application/pdf') {
+            content.push({
+                type: 'input_file',
+                filename: att.filename,
+                fileData: dataUrl,
+            });
+        } else if (att.mediaType.startsWith('text/')) {
+            content.push({
+                type: 'input_text',
+                text: decodeBase64Text(att.base64),
+            });
+        } else if (att.mediaType.startsWith('audio/')) {
+            const format = audioFormat(att.mediaType);
+            if (!format) {
+                throw new Error(
+                    `OpenRouter only accepts mp3 and wav audio, got ${att.mediaType}.`
+                );
+            }
+            content.push({
+                type: 'input_audio',
+                inputAudio: { data: att.base64, format },
+            });
+        } else if (att.mediaType.startsWith('video/')) {
+            content.push({ type: 'input_video', videoUrl: dataUrl });
+        } else {
+            throw new Error(
+                `OpenRouter does not support ${att.mediaType} attachments.`
+            );
+        }
+    }
+    if (!content.length) return text;
+    if (text) content.unshift({ type: 'input_text', text });
+    return content;
+}
+
 function collectUrlCitations(
     response: unknown
 ): Array<{ url: string; title?: string }> {
@@ -64,11 +136,6 @@ function collectUrlCitations(
     return out;
 }
 
-// web_fetch results don't arrive as url_citation annotations - the fetched page
-// surfaces as an `openrouter:web_fetch` output item carrying its url (and the
-// page text we don't keep). Sweep those urls so the fetched page shows in the
-// Sources block, same as citations (display-only: OpenRouter can't round-trip
-// native tool results, so replay is the Sources text-fold).
 function collectFetchedUrls(response: unknown): string[] {
     const out: string[] = [];
     const seen = new Set<string>();
@@ -88,9 +155,6 @@ function collectFetchedUrls(response: unknown): string[] {
     return out;
 }
 
-// Hand-rolled OpenRouter provider (Responses API passthrough). Mirrors OpenAI's
-// event shapes; synthesizes text/reasoning brackets on mode switches (no
-// content-part boundary events guaranteed) and sweeps citations at completion.
 export async function* streamOpenRouter(
     args: ProviderStreamArgs
 ): AsyncGenerator<CourierAIChunk> {
@@ -105,7 +169,9 @@ export async function* streamOpenRouter(
             : {}),
     });
 
-    const effort = toEffort(args.params.thinkingLevel as string | undefined);
+    const reasoning = toReasoning(
+        args.params.thinkingLevel as string | undefined
+    );
     const maxTokens = (args.params.maxTokens as number | undefined) ?? 8192;
 
     const wireTools = (args.params.tools ?? {}) as Record<
@@ -118,22 +184,36 @@ export async function* streamOpenRouter(
     if (wireTools.webSearch) tools.push({ type: 'openrouter:web_search' });
     if (wireTools.webFetch) tools.push({ type: 'openrouter:web_fetch' });
 
+    const input = args.messages.map((msg) => ({
+        role: msg.role,
+        content: buildContent(msg, args.blobs ?? {}),
+    }));
+    const pdfAttached = input.some(
+        (m) =>
+            Array.isArray(m.content) &&
+            m.content.some((p) => p.type === 'input_file')
+    );
+    const pdfEngine = args.params.openRouterPdfEngine;
+    const plugins: FileParserPlugin[] | undefined =
+        pdfAttached &&
+        (pdfEngine === 'native' ||
+            pdfEngine === 'cloudflare-ai' ||
+            pdfEngine === 'mistral-ocr')
+            ? [{ id: 'file-parser', pdf: { engine: pdfEngine } }]
+            : undefined;
+
     const requestBody = {
         responsesRequest: {
             model: args.model,
-            input: args.messages.map((msg) => ({
-                role: msg.role,
-                content: foldSourcesIntoText(msg),
-            })),
+            input,
             ...(args.system ? { instructions: args.system } : {}),
             maxOutputTokens: maxTokens,
             ...(args.params.temperature !== undefined
                 ? { temperature: args.params.temperature as number }
                 : {}),
-            ...(effort
-                ? { reasoning: { effort, summary: 'auto' as const } }
-                : {}),
+            ...(reasoning ? { reasoning } : {}),
             ...(tools.length ? { tools } : {}),
+            ...(plugins ? { plugins } : {}),
             stream: true as const,
         },
     };
@@ -142,6 +222,7 @@ export async function* streamOpenRouter(
     let currentId = '';
     let counter = 0;
     let completedResponse: unknown;
+    let stopReason: CourierAIMessageMetadata['stopReason'];
 
     try {
         const stream = await client.beta.responses.send(requestBody, {
@@ -172,6 +253,20 @@ export async function* streamOpenRouter(
                 };
             } else if (event.type === 'response.completed') {
                 completedResponse = event.response;
+            } else if (event.type === 'response.incomplete') {
+                completedResponse = event.response;
+                stopReason =
+                    event.response.incompleteDetails?.reason ===
+                    'content_filter'
+                        ? 'content-filter'
+                        : 'length';
+            } else if (event.type === 'response.failed') {
+                throw new Error(
+                    event.response.error?.message ??
+                        'OpenRouter response failed'
+                );
+            } else if (event.type === 'error') {
+                throw new Error(event.message);
             }
         }
 
@@ -196,16 +291,16 @@ export async function* streamOpenRouter(
 
         const usage = (completedResponse as { usage?: Record<string, unknown> })
             ?.usage;
-        // OpenRouter's Responses passthrough has flip-flopped between camelCase
-        // and snake_case across versions; accept either.
         const input = Number(usage?.inputTokens ?? usage?.input_tokens);
         const output = Number(usage?.outputTokens ?? usage?.output_tokens);
         yield {
             type: 'finish',
-            metadata:
-                Number.isFinite(input) && Number.isFinite(output)
+            metadata: {
+                ...(Number.isFinite(input) && Number.isFinite(output)
                     ? { tokens: { input, output } }
-                    : {},
+                    : {}),
+                ...(stopReason ? { stopReason } : {}),
+            },
         };
     } catch (e) {
         if (args.signal?.aborted) return;

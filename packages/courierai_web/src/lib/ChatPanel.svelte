@@ -1,16 +1,19 @@
 <script lang="ts">
-    import type { Attachment } from '@courierai/shared';
+    import type { DraftAttachment, FileAvailability } from '@courierai/shared';
     import { tick, untrack } from 'svelte';
     import { SvelteSet } from 'svelte/reactivity';
     import { appLifecycle } from './appLifecycle.svelte';
     import { chatStore } from './chatStore.svelte';
-    import { errorStore } from './errorStore.svelte';
+    import { errorStore, reportAppError } from './errorStore.svelte';
+    import { getFileStatuses } from './extension';
     import {
+        type FilePolicyOptions,
         formatFileSize,
         getAcceptForProvider,
         getFilePolicy,
         hashBytes,
         resolveFileMediaType,
+        validateFilename,
         validateReadyAttachments,
     } from './files';
     import Icon from './Icon.svelte';
@@ -23,8 +26,6 @@
     import { messageText } from './types';
 
     let systemExpanded = $state(false);
-    // Per-message UI state keyed by Message.id so it survives mid-chat deletes
-    // (an index-keyed Set/index would shift onto the wrong message).
     const expandedThinking = new SvelteSet<string>();
     const expandedSources = new SvelteSet<string>();
     const expandedCode = new SvelteSet<string>();
@@ -33,8 +34,9 @@
     let messagesContentEl = $state<HTMLElement | null>(null);
     let textareaEl = $state<HTMLTextAreaElement | null>(null);
     let fileInputEl = $state<HTMLInputElement | null>(null);
+    let dragDepth = $state(0);
     let isAtTop = $state(true);
-    let pendingAttachments = $state<Attachment[]>([]);
+    let pendingAttachments = $derived(chatStore.activeDraftAttachments);
     let processingAttachments = $state<
         Array<{ id: string; name: string; progress: number }>
     >([]);
@@ -45,8 +47,6 @@
     let editingMessageId = $state<string | null>(null);
     let editingText = $state('');
     let editingDims = $state<{ h: number } | null>(null);
-    // When the message being edited disappears (e.g. deleted from another tab),
-    // this derived goes null and the edit UI stops rendering automatically.
     let editingMessage = $derived(
         editingMessageId === null
             ? null
@@ -55,9 +55,54 @@
               ) ?? null)
     );
 
+    let fileStatuses = $state<Record<string, FileAvailability>>({});
+    const activeFileHashesKey = $derived.by(() => {
+        const hashes = new Set<string>();
+        for (const m of chatStore.activeMessages) {
+            for (const p of m.parts) {
+                if (p.type === 'file') hashes.add(p.hash);
+            }
+        }
+        return [...hashes].sort().join(',');
+    });
+
+    $effect(() => {
+        chatStore.activeMessages;
+        const key = activeFileHashesKey;
+        const provider = settingsStore.providerId;
+        settingsStore.enableProviderFileStorage;
+        if (chatStore.demoMode || !key) {
+            fileStatuses = {};
+            return;
+        }
+        let cancelled = false;
+        getFileStatuses(key.split(','), provider)
+            .then((statuses) => {
+                if (!cancelled) fileStatuses = statuses;
+            })
+            .catch((err) => {
+                reportAppError(
+                    'file status check failed',
+                    "Couldn't check file availability",
+                    err
+                );
+            });
+        return () => {
+            cancelled = true;
+        };
+    });
+
     let uploadGeneration = 0;
+    let filePolicyOpts = $derived({
+        providerStorageEnabled: settingsStore.enableProviderFileStorage,
+        openRouterPdfEngine: settingsStore.openRouterPdfEngine,
+    });
     let filePolicy = $derived(
-        getFilePolicy(settingsStore.providerId, providersStore.selectedModel)
+        getFilePolicy(
+            settingsStore.providerId,
+            providersStore.selectedModel,
+            filePolicyOpts
+        )
     );
     let filePolicyKey = $derived(
         [
@@ -73,7 +118,8 @@
     let fileAccept = $derived(
         getAcceptForProvider(
             settingsStore.providerId,
-            providersStore.selectedModel
+            providersStore.selectedModel,
+            filePolicyOpts
         )
     );
     let canAttachFiles = $derived(filePolicy.mimeTypes.size > 0);
@@ -113,25 +159,23 @@
         );
     });
 
-    // Toggle the spacer / clear it when the user switches modes.
     $effect(() => {
         settingsStore.autoscrollMode;
         chatScroll.onModeChange();
     });
 
-    // Split-path read: during streaming, chatStore maintains an incremental
-    // text mirror on chat.streamingText. The smooth-text path reads that
-    // mirror instead of rejoining all message parts on every chunk. At stream
-    // end, streamingText flips to null and we fall back to messageText(last)
-    // on the saved/loaded message; those strings should match at handoff.
-    // smoothText still receives the full accumulated target string so it can
-    // drain toward a stable prefix and detect non-prefix resets.
-    //
-    // Uses $effect.pre (not $effect) so smooth.setRaw lands BEFORE the
-    // template's {@const displayContent} re-evaluates. Without that, each
-    // chunk renders once with the new rawText but stale smooth.target (the
-    // smooth.target === rawText check fails -> falls to rawText branch ->
-    // user sees the full chunk dump instead of the smooth drain).
+    let scrolledChatId: string | null | undefined = undefined;
+
+    $effect(() => {
+        const chatId = chatStore.activeChatId;
+        if (chatStore.chatLoading) return;
+        if (chatId === scrolledChatId) return;
+        scrolledChatId = chatId;
+        untrack(() =>
+            chatScroll.onChatChange(chatStore.highlightMessageIndex == null)
+        );
+    });
+
     $effect.pre(() => {
         const streaming = chatStore.activeStreamingText;
         if (streaming !== null) {
@@ -144,7 +188,6 @@
         return () => smooth.cancel();
     });
 
-    // dump-on-complete: when the stream ends, snap any remaining un-drained text to the screen.
     $effect(() => {
         if (settingsStore.smoothTextMode !== 'dump-on-complete') return;
         if (chatStore.isActiveStreaming) return;
@@ -189,11 +232,12 @@
         const validation = validateReadyAttachments(
             attachments,
             settingsStore.providerId,
-            providersStore.selectedModel
+            providersStore.selectedModel,
+            filePolicyOpts
         );
         if (validation.ok) return;
 
-        pendingAttachments = [];
+        void chatStore.clearActiveDraftAttachments();
         fileErrors = [
             `File Error: Attached files were removed. ${validation.message}`,
             ...untrack(() => fileErrors),
@@ -221,6 +265,7 @@
         if (
             (!text && !pendingAttachments.length) ||
             chatStore.isActiveStreaming ||
+            chatStore.chatLoading ||
             processingAttachments.length
         ) {
             return;
@@ -233,7 +278,8 @@
         const fileValidation = validateReadyAttachments(
             pendingAttachments,
             settingsStore.providerId,
-            providersStore.selectedModel
+            providersStore.selectedModel,
+            filePolicyOpts
         );
         if (!fileValidation.ok) {
             fileErrors = [
@@ -243,17 +289,13 @@
             return;
         }
 
-        const atts = pendingAttachments;
-        pendingAttachments = [];
-        chatStore.sendMessage(text, atts.length ? atts : undefined);
+        chatStore.sendMessage(text);
+        scrolledChatId = chatStore.activeChatId;
         chatScroll.onSubmit();
         inputText = '';
         if (textareaEl) textareaEl.style.height = '';
     }
 
-    // Stop. Snapshot the smooth drain's current display length, freeze the
-    // drain there, and tell chatStore to trim the message + notify the ext
-    // with the same length. "What you see is what gets saved."
     function stop() {
         const visibleChars = smooth.display.length;
         smooth.snapToDisplay();
@@ -269,6 +311,11 @@
     }
 
     function openFilePicker() {
+        if (chatStore.demoMode) {
+            appLifecycle.requestExtension();
+            return;
+        }
+        if (!settingsStore.enableFileUploads) return;
         fileInputEl?.click();
     }
 
@@ -317,17 +364,26 @@
         id: string,
         uploadProviderId: string,
         uploadModel: ModelOption | null,
+        uploadOpts: FilePolicyOptions,
         generation: number
     ) {
         const isCurrent = () => generation === uploadGeneration;
-        const policy = getFilePolicy(uploadProviderId, uploadModel);
+        const policy = getFilePolicy(uploadProviderId, uploadModel, uploadOpts);
 
         try {
             setProcessingProgress(id, 12);
+            const nameCheck = validateFilename(file.name);
+            if (!nameCheck.ok) {
+                addFileError(nameCheck.message);
+                removeProcessingAttachment(id);
+                return;
+            }
+
             const mediaType = resolveFileMediaType(
                 file,
                 uploadProviderId,
-                uploadModel
+                uploadModel,
+                uploadOpts
             );
             if (!mediaType) {
                 addFileError(`${file.name} is not supported by this provider.`);
@@ -374,22 +430,22 @@
             }
 
             setProcessingProgress(id, 86);
-            const attachment: Attachment = {
-                hash,
+            const draftAtt: DraftAttachment = {
                 name: file.name,
                 mediaType,
                 sizeBytes: file.size,
                 encodedSizeBytes,
-                data,
+                hash,
             };
             const nextAttachments = [
                 ...untrack(() => pendingAttachments),
-                attachment,
+                draftAtt,
             ];
             const validation = validateReadyAttachments(
                 nextAttachments,
                 uploadProviderId,
-                uploadModel
+                uploadModel,
+                uploadOpts
             );
             if (!validation.ok) {
                 addFileError(validation.message);
@@ -398,7 +454,7 @@
             }
 
             setProcessingProgress(id, 100);
-            pendingAttachments = nextAttachments;
+            await chatStore.addDraftAttachment(draftAtt, data);
             removeProcessingAttachment(id);
         } catch (error) {
             if (!isCurrent()) return;
@@ -415,12 +471,21 @@
         const files = Array.from((e.target as HTMLInputElement).files ?? []);
         if (!fileInputEl) return;
         fileInputEl.value = '';
+        addFiles(files);
+    }
+
+    function addFiles(files: File[]) {
         if (!files.length) return;
 
         fileErrors = [];
         const uploadProviderId = settingsStore.providerId;
         const uploadModel = providersStore.selectedModel;
-        const uploadPolicy = getFilePolicy(uploadProviderId, uploadModel);
+        const uploadOpts = filePolicyOpts;
+        const uploadPolicy = getFilePolicy(
+            uploadProviderId,
+            uploadModel,
+            uploadOpts
+        );
         const generation = uploadGeneration;
         const slots = Math.max(
             0,
@@ -447,9 +512,54 @@
                 id,
                 uploadProviderId,
                 uploadModel,
+                uploadOpts,
                 generation
             );
         }
+    }
+
+    let canAcceptFileDrops = $derived(
+        settingsStore.enableFileUploads &&
+            !chatStore.demoMode &&
+            canAttachFiles &&
+            !chatStore.isActiveStreaming
+    );
+
+    function dragHasFiles(e: DragEvent): boolean {
+        return !!e.dataTransfer?.types.includes('Files');
+    }
+
+    function handleDragEnter(e: DragEvent) {
+        if (!canAcceptFileDrops || !dragHasFiles(e)) return;
+        e.preventDefault();
+        dragDepth++;
+    }
+
+    function handleDragOver(e: DragEvent) {
+        if (!canAcceptFileDrops || !dragHasFiles(e)) return;
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    }
+
+    function handleDragLeave(e: DragEvent) {
+        if (!canAcceptFileDrops || !dragHasFiles(e)) return;
+        dragDepth = Math.max(0, dragDepth - 1);
+    }
+
+    function handleDrop(e: DragEvent) {
+        dragDepth = 0;
+        if (!canAcceptFileDrops || !dragHasFiles(e)) return;
+        e.preventDefault();
+        addFiles(Array.from(e.dataTransfer?.files ?? []));
+    }
+
+    function handlePaste(e: ClipboardEvent) {
+        if (!canAcceptFileDrops) return;
+        if (document.querySelector('[role="dialog"]')) return;
+        const files = Array.from(e.clipboardData?.files ?? []);
+        if (!files.length) return;
+        e.preventDefault();
+        addFiles(files);
     }
 
     function autoResize(e: Event) {
@@ -511,7 +621,27 @@
         'w-[calc(22px+0.875rem*1.5)] h-[calc(22px+0.875rem*1.5)] flex items-center justify-center rounded-lg border-0 cursor-pointer shrink-0 transition-[background-color,color,opacity] duration-150';
 </script>
 
-<div class="flex-1 flex flex-col overflow-hidden bg-canvas min-w-0">
+<svelte:window onpaste={handlePaste} />
+
+<div
+    role="region"
+    aria-label="Chat"
+    class="relative flex-1 flex flex-col overflow-hidden bg-canvas min-w-0"
+    ondragenter={handleDragEnter}
+    ondragover={handleDragOver}
+    ondragleave={handleDragLeave}
+    ondrop={handleDrop}
+>
+    {#if dragDepth > 0}
+        <div
+            class="absolute inset-2 z-20 flex items-center justify-center rounded-xl border-2 border-dashed border-accent-fg bg-canvas/85 pointer-events-none"
+            aria-hidden="true"
+        >
+            <span class="text-sm font-medium text-accent-fg"
+                >Drop files to attach</span
+            >
+        </div>
+    {/if}
     <div class="relative shrink-0 bg-canvas border-b border-border">
         <button
             type="button"
@@ -619,6 +749,7 @@
                             index={i}
                             {messageContent}
                             {displayContent}
+                            {fileStatuses}
                             isStreaming={chatStore.isActiveStreaming}
                             {isLastStreaming}
                             editing={editingMessage?.id === message.id}
@@ -651,6 +782,8 @@
                             }}
                             onretry={() => handleRetry(i)}
                             ondelete={() => chatStore.deleteMessage(i)}
+                            ondeletefile={(key) =>
+                                chatStore.deleteMessageFile(i, key)}
                         />
                     {/each}
                     <div
@@ -739,7 +872,7 @@
         {#if pendingAttachments.length || processingAttachments.length}
             <div class="flex items-start justify-between gap-3 px-4 pt-2">
                 <div class="flex flex-wrap gap-1 min-w-0">
-                    {#each processingAttachments as att (att.id)}
+                    {#each processingAttachments.toReversed() as att (att.id)}
                         <div
                             class="relative overflow-hidden inline-flex items-center gap-1.5 pl-2.5 pr-2 py-1.25 bg-surface-sunken border border-border rounded-lg text-xs text-fg max-w-60"
                         >
@@ -754,7 +887,7 @@
                             >
                         </div>
                     {/each}
-                    {#each pendingAttachments as att, i (att.hash)}
+                    {#each pendingAttachments.toReversed() as att (att.hash)}
                         <div
                             class="inline-flex items-center gap-1.5 pl-2.5 pr-2 py-1.25 bg-surface-sunken border border-border rounded-lg text-xs text-fg max-w-60"
                         >
@@ -767,10 +900,7 @@
                                 type="button"
                                 class="flex items-center justify-center w-4 h-4 bg-transparent border-0 p-0 text-fg opacity-50 cursor-pointer shrink-0 transition-opacity duration-150 hover:opacity-100"
                                 onclick={() =>
-                                    (pendingAttachments =
-                                        pendingAttachments.filter(
-                                            (_, j) => j !== i
-                                        ))}
+                                    chatStore.removeDraftAttachment(att.hash)}
                                 aria-label="Remove attachment"
                             >
                                 <Icon name="close" />
@@ -798,12 +928,22 @@
             />
             <button
                 type="button"
-                class="{sendStyleBase} bg-surface-sunken text-fg border! border-border! enabled:hover:bg-border disabled:opacity-[0.35] disabled:cursor-not-allowed"
+                class={[
+                    sendStyleBase,
+                    'bg-surface-sunken text-fg border! border-border! disabled:opacity-[0.35] disabled:cursor-not-allowed',
+                    settingsStore.enableFileUploads
+                        ? 'enabled:hover:bg-border'
+                        : 'opacity-[0.35] cursor-not-allowed',
+                ]}
                 onclick={openFilePicker}
                 disabled={chatStore.isActiveStreaming ||
                     !canAttachFiles ||
                     pendingAttachments.length + processingAttachments.length >=
                         filePolicy.maxAttachments}
+                aria-disabled={!settingsStore.enableFileUploads}
+                title={settingsStore.enableFileUploads
+                    ? undefined
+                    : 'Enable file upload in settings'}
                 aria-label="Attach file"
             >
                 <Icon name="plus" />
@@ -833,6 +973,7 @@
                     class="{sendStyleBase} bg-accent-3-bg text-on-accent-3-bg enabled:hover:bg-accent-3-bg-hover enabled:hover:text-on-accent-3-bg-hover disabled:opacity-[0.35] disabled:cursor-not-allowed"
                     onclick={submit}
                     disabled={chatStore.isActiveStreaming ||
+                        chatStore.chatLoading ||
                         processingAttachments.length > 0 ||
                         (!inputText.trim() && !pendingAttachments.length)}
                     aria-label="Send message"

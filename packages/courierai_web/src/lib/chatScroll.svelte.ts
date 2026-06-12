@@ -1,26 +1,4 @@
-// Chat scroll controller. Three modes, selected via Settings -> UI:
-//
-//   pin-user-message - on submit, scrolls so the last user message sits at
-//     the top of the viewport, with a dynamic bottom spacer that gives the
-//     scroll container enough room to make that always possible (even on
-//     the very first message, when nothing else has filled the chat). As
-//     the assistant response streams in, the spacer shrinks 1:1 with the
-//     response growth, so the user message stays anchored at the top until
-//     the response is tall enough to push it up on its own.
-//
-//   pin-bottom - classic sticky-to-bottom. Pins to the bottom as content
-//     grows; releases when the user explicitly scrolls up; re-engages when
-//     they reach the bottom again. Distinguishes user-initiated scroll
-//     from browser-driven scroll (scroll-anchor adjustments, sub-pixel
-//     rounding, mid-stream Shiki re-highlights) by gating sticky
-//     transitions on real input events.
-//
-//   off - no programmatic scrolling at all. The scroll-to-bottom button
-//     still works as a one-shot.
-//
-// ResizeObserver fires between layout and paint, so re-pinning never
-// paints an intermediate frame where new content has rendered but the
-// scroll position hasn't caught up - kills the streaming flash.
+import { untrack } from 'svelte';
 
 const BOTTOM_THRESHOLD_PX = 8;
 const INTERACTION_TIMEOUT_MS = 200;
@@ -29,21 +7,20 @@ const PIN_USER_TOP_PADDING_PX = 16;
 export type AutoscrollMode = 'pin-user-message' | 'pin-bottom' | 'off';
 
 export function createChatScroll() {
-    // Tracks "is the user currently at the bottom" for both the scroll-to-
-    // bottom button (visible when false) and pin-bottom mode's auto-pin.
     let atBottom = $state(true);
     let spacerHeight = $state(0);
-
     let containerEl: HTMLElement | null = null;
     let getMode: () => AutoscrollMode = () => 'pin-user-message';
     let getLastUserMessageEl: () => HTMLElement | null = () => null;
-
+    let pinned = false;
+    let snapToBottomPending = false;
     let lastScrollTop = 0;
     let userInteracting = false;
     let interactionTimer: ReturnType<typeof setTimeout> | null = null;
 
     function markInteracting() {
         userInteracting = true;
+        snapToBottomPending = false;
         if (interactionTimer !== null) clearTimeout(interactionTimer);
         interactionTimer = setTimeout(() => {
             userInteracting = false;
@@ -51,9 +28,18 @@ export function createChatScroll() {
         }, INTERACTION_TIMEOUT_MS);
     }
 
-    // Offset from the scroll container's content origin to the top of the
-    // last user message. Measured via getBoundingClientRect so it's
-    // independent of offsetParent quirks.
+    function naturalScrollHeight(): number {
+        if (!containerEl) return 0;
+        return containerEl.scrollHeight - untrack(() => spacerHeight);
+    }
+
+    function recomputeAtBottom() {
+        if (!containerEl) return;
+        atBottom =
+            containerEl.scrollTop + containerEl.clientHeight >=
+            naturalScrollHeight() - BOTTOM_THRESHOLD_PX;
+    }
+
     function userMsgOffsetFromScroll(): number | null {
         if (!containerEl) return null;
         const userMsg = getLastUserMessageEl();
@@ -63,26 +49,14 @@ export function createChatScroll() {
         return userMsgTop - containerTop + containerEl.scrollTop;
     }
 
-    // Spacer sizing: we want the user message to always be able to scroll
-    // to the top of the viewport. That requires the height of everything
-    // below (and including) the user message to be at least the container
-    // height (minus a small top padding). The spacer makes up any shortfall.
-    // Subtracting the current spacer cancels its own contribution to
-    // scrollHeight so this reads as a pure measurement of the natural
-    // content size.
     function recomputeSpacer() {
         if (!containerEl) return;
-        if (getMode() !== 'pin-user-message') {
-            spacerHeight = 0;
-            return;
-        }
         const offset = userMsgOffsetFromScroll();
         if (offset === null) {
             spacerHeight = 0;
             return;
         }
-        const naturalScrollHeight = containerEl.scrollHeight - spacerHeight;
-        const naturalHeightBelow = naturalScrollHeight - offset;
+        const naturalHeightBelow = naturalScrollHeight() - offset;
         const needed =
             containerEl.clientHeight -
             PIN_USER_TOP_PADDING_PX -
@@ -90,12 +64,27 @@ export function createChatScroll() {
         spacerHeight = Math.max(0, needed);
     }
 
+    function shrinkSpacerToViewport() {
+        if (!containerEl) return;
+        const current = untrack(() => spacerHeight);
+        if (current === 0) return;
+        const overhang =
+            containerEl.scrollTop +
+            containerEl.clientHeight -
+            naturalScrollHeight();
+        const next = Math.min(current, Math.max(0, overhang));
+        if (next !== current) spacerHeight = next;
+    }
+
+    function releasePin() {
+        if (!pinned) return;
+        pinned = false;
+        shrinkSpacerToViewport();
+    }
+
     function pinUserMessageToTop() {
         if (!containerEl) return;
         recomputeSpacer();
-        // The spacer write above queues a DOM update; wait one frame so the
-        // container's scrollHeight has actually grown before we scroll, or
-        // the target may be clamped to the pre-update max.
         requestAnimationFrame(() => {
             if (!containerEl) return;
             const offset = userMsgOffsetFromScroll();
@@ -105,8 +94,15 @@ export function createChatScroll() {
                 offset - PIN_USER_TOP_PADDING_PX
             );
             lastScrollTop = containerEl.scrollTop;
-            atBottom = false;
+            recomputeAtBottom();
         });
+    }
+
+    function snapToBottom() {
+        if (!containerEl) return;
+        containerEl.scrollTop = containerEl.scrollHeight;
+        lastScrollTop = containerEl.scrollTop;
+        atBottom = true;
     }
 
     return {
@@ -117,44 +113,46 @@ export function createChatScroll() {
             return spacerHeight;
         },
 
-        // Re-engage pin-bottom stickiness without forcing a scroll now -
-        // the next content-size change (ResizeObserver) repaints at the
-        // bottom. Cheap; safe to call from reactive callbacks. Only
-        // meaningful in pin-bottom mode.
         markAtBottom() {
             atBottom = true;
         },
 
-        // Re-engage stickiness AND scroll right now. Used by the scroll-
-        // to-bottom button and pin-bottom mode's submit handler.
         scrollToBottom() {
-            if (!containerEl) return;
-            atBottom = true;
-            containerEl.scrollTop = containerEl.scrollHeight;
-            lastScrollTop = containerEl.scrollTop;
+            pinned = false;
+            spacerHeight = 0;
+            snapToBottom();
         },
 
-        // Called from ChatPanel.submit() - dispatches based on mode. The
-        // user message DOM node may not exist yet at call time (state was
-        // just mutated), so we defer pin-user-message to the next frame.
         onSubmit() {
+            snapToBottomPending = false;
             const mode = getMode();
             if (mode === 'pin-bottom') {
                 this.scrollToBottom();
             } else if (mode === 'pin-user-message') {
+                pinned = true;
                 requestAnimationFrame(() => pinUserMessageToTop());
             }
         },
 
-        // Called from ChatPanel whenever the mode changes, so the spacer
-        // resets when leaving pin-user-message mode and recomputes when
-        // entering it.
         onModeChange() {
-            recomputeSpacer();
+            if (getMode() === 'pin-user-message') return;
+            pinned = false;
+            spacerHeight = 0;
         },
 
-        // Wire up listeners + ResizeObservers. Caller invokes inside
-        // $effect and returns the cleanup.
+        onChatChange(snap: boolean) {
+            pinned = false;
+            spacerHeight = 0;
+            snapToBottomPending = snap;
+            if (snap) {
+                requestAnimationFrame(() => {
+                    if (snapToBottomPending) snapToBottom();
+                });
+            } else {
+                recomputeAtBottom();
+            }
+        },
+
         attach(
             container: HTMLElement,
             content: HTMLElement,
@@ -165,45 +163,41 @@ export function createChatScroll() {
             getMode = mode;
             getLastUserMessageEl = lastUserMessageEl;
 
-            const onContentResize = () => {
-                const m = getMode();
-                if (m === 'pin-bottom' && atBottom) {
-                    container.scrollTop = container.scrollHeight;
-                    lastScrollTop = container.scrollTop;
-                } else if (m === 'pin-user-message') {
-                    recomputeSpacer();
-                }
-            };
-
-            // True only when there's actually room to scroll - a chat
-            // shorter than the viewport can't be "scrolled away from".
             const isScrollable = () =>
                 container.scrollHeight > container.clientHeight;
 
-            const handleScroll = () => {
-                const { scrollTop, scrollHeight, clientHeight } = container;
-                const distance = scrollHeight - scrollTop - clientHeight;
-                if (userInteracting) {
-                    if (scrollTop < lastScrollTop && isScrollable()) {
-                        // Any upward delta during a user gesture detaches -
-                        // matches the existing snappy behavior under fast
-                        // streams (no threshold fight). isScrollable guards
-                        // against layout-driven scrollTop clamps (e.g.
-                        // collapsing an expando) being read as user intent.
-                        atBottom = false;
-                    } else if (distance < BOTTOM_THRESHOLD_PX) {
-                        atBottom = true;
-                    }
+            const onContentResize = () => {
+                const m = getMode();
+                if (snapToBottomPending) {
+                    container.scrollTop = container.scrollHeight;
+                    lastScrollTop = container.scrollTop;
+                } else if (m === 'pin-bottom' && atBottom) {
+                    container.scrollTop = container.scrollHeight;
+                    lastScrollTop = container.scrollTop;
+                } else if (m === 'pin-user-message' && pinned) {
+                    recomputeSpacer();
+                } else {
+                    shrinkSpacerToViewport();
                 }
-                lastScrollTop = scrollTop;
+                recomputeAtBottom();
             };
 
-            // Pre-emptively detach on upward wheel so a chunk arriving in
-            // the gap between wheel and scroll events can't re-pin and
-            // steal the gesture.
+            const handleScroll = () => {
+                if (userInteracting) {
+                    markInteracting();
+                    if (container.scrollTop < lastScrollTop) releasePin();
+                }
+                if (!pinned) shrinkSpacerToViewport();
+                lastScrollTop = container.scrollTop;
+                recomputeAtBottom();
+            };
+
             const onWheel = (e: WheelEvent) => {
                 markInteracting();
-                if (e.deltaY < 0 && isScrollable()) atBottom = false;
+                if (e.deltaY < 0 && isScrollable()) {
+                    releasePin();
+                    atBottom = false;
+                }
             };
 
             const onTouchStart = () => markInteracting();
@@ -227,14 +221,13 @@ export function createChatScroll() {
                         e.key === 'Home') &&
                     isScrollable()
                 ) {
+                    releasePin();
                     atBottom = false;
                 }
             };
 
             const contentRo = new ResizeObserver(onContentResize);
             contentRo.observe(content);
-            // Window/sidebar resize changes clientHeight, which feeds into
-            // both the pin-bottom auto-pin and the spacer math.
             const containerRo = new ResizeObserver(onContentResize);
             containerRo.observe(container);
 
@@ -252,7 +245,7 @@ export function createChatScroll() {
             container.addEventListener('keydown', onKeyDown);
 
             lastScrollTop = container.scrollTop;
-            onContentResize();
+            untrack(() => onContentResize());
 
             return () => {
                 contentRo.disconnect();

@@ -5,9 +5,8 @@ const BASE_URL = process.env.COURIERAI_BASE_URL ?? 'http://localhost:5173';
 
 export default defineConfig({
     testDir: './tests/e2e',
-    // Builds the unpacked extension so the fixture can --load-extension it.
     globalSetup: './tests/e2e/global-setup.ts',
-    // Real provider calls against a single shared extension profile - keep serial.
+    // *** Real provider calls against a single shared extension profile - keep serial.
     fullyParallel: false,
     workers: 1,
     timeout: 60_000,

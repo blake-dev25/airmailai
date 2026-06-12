@@ -105,6 +105,7 @@ function deriveGoogle(
         thinking = {
             levels: sortLevels(o.thinking.levels),
             defaultLevel: o.thinking.defaultLevel,
+            ...(o.thinking.adaptive ? { adaptive: o.thinking.adaptive } : {}),
         };
     } else if (
         scraped.thinkingSupported ||

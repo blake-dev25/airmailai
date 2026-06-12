@@ -1,8 +1,7 @@
-// Isolation harness for the hand-rolled providers. Exercises a provider's
+// *** Isolation harness for the hand-rolled providers. Exercises a provider's
 // SSE -> CourierAIChunk mapping for a chosen server tool (web_search /
-// web_fetch / code_execution), and for web_search also the stateless replay
-// round-trip (OpenAI/Google/OpenRouter text-fold; Anthropic native) - all
-// without touching background.ts.
+// web_fetch / code_execution), and the stateless text-fold replay round-trip
+// (all tools, all providers) - without touching background.ts.
 //
 //   bun scripts/provider-test.ts --provider anthropic --model claude-haiku-4-5
 //   bun scripts/provider-test.ts --provider openai    --tool web_fetch
@@ -14,6 +13,7 @@ import type {
     CourierAIMessage,
     CourierAIPart,
     CourierAISourceUrlPart,
+    CourierAIToolPart,
     ProviderStream,
 } from '@courierai/shared';
 import {
@@ -23,6 +23,7 @@ import {
 
 type ProviderName = 'openai' | 'anthropic' | 'google' | 'openrouter';
 type ToolName = 'web_search' | 'web_fetch' | 'code_execution';
+type CodeExecPart = Extract<CourierAIToolPart, { name: 'code_execution' }>;
 
 const PROVIDER_DEFAULTS: Record<ProviderName, { env: string; model: string }> =
     {
@@ -32,9 +33,6 @@ const PROVIDER_DEFAULTS: Record<ProviderName, { env: string; model: string }> =
         openrouter: { env: 'OPENROUTER_API_KEY', model: 'openai/gpt-5.5' },
     };
 
-// The value the website would send as params.tools[wireKey]: a versioned tool
-// TYPE string for Anthropic (the website owns the version map), a bool for the
-// rest. null = that provider has no such server tool.
 const TOOL_WIRE: Record<
     ProviderName,
     Record<ToolName, string | boolean | null>
@@ -49,14 +47,13 @@ const TOOL_WIRE: Record<
     openrouter: { web_search: true, web_fetch: true, code_execution: null },
 };
 
-// Tool name -> the camelCase key the providers read off params.tools.
 const WIRE_KEY: Record<ToolName, 'webSearch' | 'webFetch' | 'codeExecution'> = {
     web_search: 'webSearch',
     web_fetch: 'webFetch',
     code_execution: 'codeExecution',
 };
 
-// SHA-256 of the exact UTF-8 bytes of 'CourierAI' (no trailing newline),
+// *** SHA-256 of the exact UTF-8 bytes of 'CourierAI' (no trailing newline),
 // precomputed via python hashlib. The code_execution test asks the model for
 // this digest: it can't produce a SHA-256 from memory, so a matching digest in
 // the output proves the sandbox actually ran AND our tool-call/result mapping
@@ -79,12 +76,6 @@ function flag(name: string): string | undefined {
     return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
-// Mirror the website (ModelConfig.svelte): a model's thinking defaults come
-// from its declared params.thinking. Models without it (e.g. claude-haiku-4-5)
-// support no effort/thinking - forcing one makes the provider enable thinking,
-// which the API rejects. OpenRouter's catalog is hydrated at runtime so its
-// models aren't in PROVIDERS here; default it to 'medium' (pass --thinking none
-// to test a non-reasoning OpenRouter model).
 function thinkingDefaults(
     provider: ProviderName,
     modelId: string
@@ -99,10 +90,6 @@ function thinkingDefaults(
     };
 }
 
-// Send the exact tool support the chosen model declares. Anthropic pins a dated
-// tool TYPE per model (haiku -> code_execution_20250825, not the latest
-// _20260120), so a flat per-provider map would hand haiku a version it can't
-// use. Unknown models (OpenRouter's runtime catalog) fall back to TOOL_WIRE.
 function toolWire(
     provider: ProviderName,
     modelId: string,
@@ -141,6 +128,7 @@ interface TurnResult {
     docs: number;
     files: number;
     toolEvents: string[];
+    codeExecutions: CodeExecPart[];
     tokens?: { input: number; output: number };
 }
 
@@ -173,6 +161,7 @@ async function runTurn(
         docs: 0,
         files: 0,
         toolEvents: [],
+        codeExecutions: [],
     };
     for await (const chunk of stream({ apiKey, model, messages, params })) {
         if (dump) dumpChunk(chunk);
@@ -184,15 +173,11 @@ async function runTurn(
                 r.reasoningChars += chunk.delta.length;
                 break;
             case 'source-url':
-                // Preserve providerMetadata - Anthropic needs it to replay.
                 r.sources.push({
                     type: 'source-url',
                     sourceId: chunk.sourceId,
                     url: chunk.url,
                     ...(chunk.title ? { title: chunk.title } : {}),
-                    ...(chunk.providerMetadata
-                        ? { providerMetadata: chunk.providerMetadata }
-                        : {}),
                 });
                 break;
             case 'source-document':
@@ -203,10 +188,28 @@ async function runTurn(
                 break;
             case 'tool-call':
                 r.toolEvents.push(`call ${chunk.name} ${chunk.toolCallId}`);
+                if (chunk.name === 'code_execution') {
+                    r.codeExecutions.push({
+                        type: 'tool',
+                        toolCallId: chunk.toolCallId,
+                        name: 'code_execution',
+                        state: 'running',
+                        ...(chunk.input ? { input: chunk.input } : {}),
+                    });
+                }
                 break;
-            case 'tool-result':
+            case 'tool-result': {
                 r.toolEvents.push(`result ${chunk.toolCallId}`);
+                const ce = r.codeExecutions.find(
+                    (p) => p.toolCallId === chunk.toolCallId
+                );
+                if (ce) {
+                    ce.state = chunk.errorText ? 'error' : 'done';
+                    if (chunk.errorText) ce.errorText = chunk.errorText;
+                    if (chunk.output) ce.output = chunk.output;
+                }
                 break;
+            }
             case 'finish':
                 if (chunk.metadata?.tokens) r.tokens = chunk.metadata.tokens;
                 break;
@@ -242,8 +245,9 @@ function printHelp(): void {
     console.log(`provider-test - isolation harness for the hand-rolled ext providers
 
 Exercises one provider's SSE -> CourierAIChunk mapping for a chosen server
-tool, without touching background.ts. For web_search it also runs the
-stateless replay round-trip (turn 2 recalls a previously returned url).
+tool, without touching background.ts. It then runs the stateless replay
+round-trip: turn 2 recalls a previously returned url (web_search / web_fetch)
+or the prior code output (code_execution).
 
 Usage:
   bun scripts/provider-test.ts --provider <name> [options]
@@ -297,8 +301,6 @@ async function main() {
 
     const stream = await loadProvider(provider);
     const input = flag('--input') ?? flag('--prompt') ?? DEFAULT_PROMPTS[tool];
-    // Thinking/adaptive default to what this model declares (none for models
-    // like haiku that have no thinking config); --thinking / --adaptive override.
     const defaultThinking = thinkingDefaults(provider, model);
     const adaptiveFlag = flag('--adaptive');
     const params = {
@@ -328,48 +330,118 @@ async function main() {
         'sources:',
         t1.sources.map((s) => s.url)
     );
-    console.log(
-        'source meta keys:',
-        t1.sources.map((s) =>
-            s.providerMetadata ? Object.keys(s.providerMetadata) : []
-        )
-    );
     console.log('docs:', t1.docs, ' files:', t1.files);
     console.log('tokens:', t1.tokens);
 
-    // web_fetch and code_execution have no stateless-replay round-trip, so each
-    // has its own PASS gate (web_search's round-trip check continues below).
     if (tool === 'web_fetch') {
-        // Proof the page was actually fetched: it surfaces as a source. Providers
-        // differ on tool-call wiring (Anthropic emits a web_fetch tool part;
-        // OpenAI folds fetch into web_search; Google/OpenRouter emit neither), so
-        // the source-url is the portable signal - matching the e2e spec. If the
-        // prompt names a URL (the default does), require that exact page.
         const requested = input
             .match(/https?:\/\/\S+/)?.[0]
             ?.replace(/[.,;]+$/, '');
-        const hit = requested
+        const fetched = requested
             ? t1.sources.find((s) => s.url.includes(requested))
             : t1.sources[0];
-        const detail = hit
-            ? ` (source ${hit.url})`
-            : ' (fetched page not in sources)';
-        console.log(`\nPASS: ${!!hit}${detail}`);
-        process.exit(hit ? 0 : 1);
+        if (!fetched) {
+            console.error(
+                `FAIL turn 1: requested page ${requested ?? '(none)'} not in sources ${JSON.stringify(t1.sources.map((s) => s.url))}`
+            );
+            process.exit(1);
+        }
+
+        console.log('\n--- TURN 2 (recall, sterile user + assistant text) ---');
+        const assistantParts: CourierAIPart[] = [
+            { type: 'text', text: 'I fetched the page.', state: 'done' },
+            ...t1.sources,
+        ];
+        const t2 = await runTurn(
+            stream,
+            apiKey,
+            model,
+            [
+                msg('user', [
+                    {
+                        type: 'text',
+                        text: "Fetch a page and don't tell me anything about it.",
+                        state: 'done',
+                    },
+                ]),
+                msg('assistant', assistantParts),
+                msg('user', [
+                    {
+                        type: 'text',
+                        text: 'Great. Without fetching again, please print the previously returned URL verbatim.',
+                        state: 'done',
+                    },
+                ]),
+            ],
+            params,
+            dump
+        );
+        console.log('reply:', JSON.stringify(t2.text));
+        console.log('tokens:', t2.tokens);
+
+        const echoed = t1.sources.find((s) => t2.text.includes(s.url));
+        const refetched = t2.toolEvents.some((e) => e.startsWith('call'));
+        const ok = !!echoed && !refetched;
+        const why =
+            (echoed ? '' : ' (url not echoed verbatim)') +
+            (refetched ? ' (re-fetched)' : '');
+        console.log(
+            `\nPASS: ${ok}`,
+            ok ? `(matched ${echoed?.url})` : `(${why.trim()})`
+        );
+        process.exit(ok ? 0 : 1);
     }
     if (tool === 'code_execution') {
-        // PASS = the tool fired AND the precomputed digest is in the output -
-        // proof the sandbox truly ran (the model can't produce a SHA-256 from
-        // memory) and our tool-call/result mapping surfaced it.
-        const fired = t1.toolEvents.length > 0;
-        const digestOk = t1.text.includes(COURIERAI_SHA256);
-        const ok = fired && digestOk;
+        const digestInTurn1 = t1.text.includes(COURIERAI_SHA256);
+        if (!t1.codeExecutions.length || !digestInTurn1) {
+            const why =
+                (t1.codeExecutions.length
+                    ? ''
+                    : ' (no code_execution tool-call)') +
+                (digestInTurn1
+                    ? ''
+                    : ` (digest ${COURIERAI_SHA256} not in turn-1 output)`);
+            console.error(`FAIL turn 1:${why}`);
+            process.exit(1);
+        }
+
+        console.log('\n--- TURN 2 (recall, sterile assistant text) ---');
+        const assistantParts: CourierAIPart[] = [
+            {
+                type: 'text',
+                text: 'I completed using the tool.',
+                state: 'done',
+            },
+            ...t1.codeExecutions,
+        ];
+        const t2 = await runTurn(
+            stream,
+            apiKey,
+            model,
+            [
+                msg('user', [{ type: 'text', text: input, state: 'done' }]),
+                msg('assistant', assistantParts),
+                msg('user', [
+                    {
+                        type: 'text',
+                        text: 'Great! Without using the code execution tool again, print the output verbatim.',
+                        state: 'done',
+                    },
+                ]),
+            ],
+            params,
+            dump
+        );
+        console.log('reply:', JSON.stringify(t2.text));
+        console.log('tokens:', t2.tokens);
+
+        const echoed = t2.text.includes(COURIERAI_SHA256);
+        const reran = t2.codeExecutions.length > 0;
+        const ok = echoed && !reran;
         const why =
-            (fired ? '' : ' (no tool-call emitted)') +
-            (digestOk
-                ? ''
-                : ` (expected digest ${COURIERAI_SHA256} not in output)`);
-        console.log(`\nPASS: ${ok}${ok ? '' : why}`);
+            (echoed ? '' : ' (digest not echoed)') +
+            (reran ? ' (re-ran code exec)' : '');
+        console.log(`\nPASS: ${ok}${ok ? '' : ` (${why.trim()})`}`);
         process.exit(ok ? 0 : 1);
     }
 
