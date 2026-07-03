@@ -9,14 +9,28 @@ function requireEnv(name: string): string {
 
 const BUCKET = requireEnv('COURIERAI_WEB_S3_BUCKET');
 const DIST_ID = requireEnv('COURIERAI_WEB_CLOUDFRONT_DISTRIBUTION_ID');
+process.env.AWS_PROFILE = requireEnv('COURIERAI_WEB_AWS_PROFILE');
 const SHORT_CACHE = 'public, max-age=300, must-revalidate';
 const LONG_CACHE = 'public, max-age=31536000, immutable';
 
 const root = join(import.meta.dirname, '..');
 const dist = join(root, 'packages/courierai_web/dist');
 
+console.log(
+    `> Verifying AWS credentials (profile ${process.env.AWS_PROFILE})...`
+);
+try {
+    await $`aws sts get-caller-identity --query Account --output text`.quiet();
+} catch {
+    throw new Error(
+        `AWS credentials expired or missing - run: aws sso login --profile ${process.env.AWS_PROFILE}`
+    );
+}
+
 console.log('> Building courierai_web (gen-version + check + build)...');
-await $`bun run build:web`.cwd(root);
+await $`bun run build:web`
+    .cwd(root)
+    .env({ ...process.env, COURIERAI_LOG_LEVEL: 'errors' });
 
 console.log('\n> S3 sync /assets/* (immutable long cache)...');
 await $`aws s3 sync ${dist}/assets/ s3://${BUCKET}/assets/ --cache-control ${LONG_CACHE} --no-progress`;

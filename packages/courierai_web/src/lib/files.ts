@@ -12,8 +12,6 @@ export interface FilePolicy {
     mimeTypes: ReadonlySet<string>;
     maxAudioAttachments?: number;
     maxVideoAttachments?: number;
-    storageMaxFileBytes?: number;
-    storageMaxRequestBytes?: number;
 }
 
 export interface FilePolicyModel {
@@ -299,8 +297,9 @@ const OPENROUTER_ACCEPT_EXTENSIONS_BY_MODALITY: Record<
     video: ['.mov', '.mp4', '.mpeg', '.webm'],
 };
 
-const STORAGE_MAX_FILE_BYTES = 200 * MB;
-const STORAGE_MAX_REQUEST_BYTES = 200 * MB;
+// *** 45MB keeps a staged file's base64 (raw * 4/3 = 60MB) under Chrome's
+// 64MiB extension message limit (extensions/renderer/messaging_util.cc).
+const GLOBAL_MAX_FILE_BYTES = 45 * MB;
 
 export const FILE_POLICIES: Record<FileProviderId, FilePolicy> = {
     anthropic: {
@@ -309,28 +308,22 @@ export const FILE_POLICIES: Record<FileProviderId, FilePolicy> = {
         maxFileBytes: 32 * MB,
         maxRequestBytes: 32 * MB,
         mimeTypes: ANTHROPIC_MIME_TYPES,
-        storageMaxFileBytes: STORAGE_MAX_FILE_BYTES,
-        storageMaxRequestBytes: STORAGE_MAX_REQUEST_BYTES,
     },
     google: {
         providerId: 'google',
         maxAttachments: 100,
-        maxFileBytes: 50 * MB,
+        maxFileBytes: GLOBAL_MAX_FILE_BYTES,
         maxRequestBytes: 100 * MB,
         mimeTypes: GOOGLE_MIME_TYPES,
         maxAudioAttachments: 1,
         maxVideoAttachments: 10,
-        storageMaxFileBytes: STORAGE_MAX_FILE_BYTES,
-        storageMaxRequestBytes: STORAGE_MAX_REQUEST_BYTES,
     },
     openai: {
         providerId: 'openai',
         maxAttachments: 20,
-        maxFileBytes: 50 * MB,
+        maxFileBytes: GLOBAL_MAX_FILE_BYTES,
         maxRequestBytes: 50 * MB,
         mimeTypes: OPENAI_MIME_TYPES,
-        storageMaxFileBytes: STORAGE_MAX_FILE_BYTES,
-        storageMaxRequestBytes: STORAGE_MAX_REQUEST_BYTES,
     },
     openrouter: {
         providerId: 'openrouter',
@@ -517,7 +510,6 @@ function toProviderId(providerId: string): FileProviderId {
 }
 
 export interface FilePolicyOptions {
-    providerStorageEnabled?: boolean;
     openRouterPdfEngine?: string;
 }
 
@@ -537,38 +529,21 @@ function getOpenRouterMimeTypes(
     return mimeTypes;
 }
 
-function applyStorageCaps(policy: FilePolicy): FilePolicy {
-    if (
-        policy.storageMaxFileBytes === undefined &&
-        policy.storageMaxRequestBytes === undefined
-    ) {
-        return policy;
-    }
-    return {
-        ...policy,
-        maxFileBytes: policy.storageMaxFileBytes ?? policy.maxFileBytes,
-        maxRequestBytes:
-            policy.storageMaxRequestBytes ?? policy.maxRequestBytes,
-    };
-}
-
 export function getFilePolicy(
     providerId: string,
     model?: FilePolicyModel | null,
     opts: FilePolicyOptions = {}
 ): FilePolicy {
     const id = toProviderId(providerId);
-    const base =
-        id !== 'openrouter'
-            ? FILE_POLICIES[id]
-            : {
-                  ...FILE_POLICIES.openrouter,
-                  mimeTypes: getOpenRouterMimeTypes(
-                      model,
-                      opts.openRouterPdfEngine
-                  ),
-              };
-    return opts.providerStorageEnabled ? applyStorageCaps(base) : base;
+    return id !== 'openrouter'
+        ? FILE_POLICIES[id]
+        : {
+              ...FILE_POLICIES.openrouter,
+              mimeTypes: getOpenRouterMimeTypes(
+                  model,
+                  opts.openRouterPdfEngine
+              ),
+          };
 }
 
 export function getMimeTypeFromFilename(filename: string): string | null {
@@ -671,6 +646,19 @@ export function triggerBlobDownload(
     a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
+}
+
+export function openBlobInNewTab(
+    mediaType: string,
+    base64: string,
+    page?: number
+): void {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([bytes], { type: mediaType }));
+    window.open(page ? `${url}#page=${page}` : url, '_blank', 'noopener');
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 export function formatFileSize(bytes: number): string {

@@ -1,12 +1,19 @@
 import type { CourierAIMessage, ProviderFileEntry } from '@courierai/shared';
 
 export type ResolvedAttachment =
-    | { kind: 'blob'; filename: string; mediaType: string; base64: string }
+    | {
+          kind: 'blob';
+          hash: string;
+          filename: string;
+          mediaType: string;
+          base64: string;
+      }
     | {
           kind: 'provider';
           providerId: string;
           fileId: string;
           uri?: string;
+          hash: string;
           filename: string;
           mediaType: string;
           base64?: string;
@@ -34,6 +41,7 @@ export function resolveAttachments(
                 providerId: replicas!.providerId,
                 fileId: replica.fileId,
                 ...(replica.uri ? { uri: replica.uri } : {}),
+                hash,
                 filename,
                 mediaType: mediaType || entry?.mediaType || '',
                 ...(entry ? { base64: entry.base64 } : {}),
@@ -43,6 +51,7 @@ export function resolveAttachments(
         if (!entry) continue;
         resolved.push({
             kind: 'blob',
+            hash,
             filename,
             mediaType: entry.mediaType,
             base64: entry.base64,

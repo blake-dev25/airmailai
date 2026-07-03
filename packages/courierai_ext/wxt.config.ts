@@ -31,8 +31,8 @@ function readBuildFlag(name: string): string | undefined {
     return process.env[name] ?? readRootEnvVar(name);
 }
 
-const debugApiLogging = readBuildFlag('WXT_DEBUG_API_LOGGING') === 'true';
-const allowLocalhost = readBuildFlag('WXT_ALLOW_LOCALHOST') !== 'false';
+const logLevel = readBuildFlag('COURIERAI_LOG_LEVEL') ?? 'errors';
+const allowLocalhost = readBuildFlag('WXT_ALLOW_LOCALHOST') === 'true';
 
 // Verbosity is driven by BUILD_VERBOSE so the default `bun run build` stays
 // quiet on warnings (only errors surface), and `bun run build:verbose` opts
@@ -43,7 +43,7 @@ export default defineConfig({
     vite: () => ({
         logLevel: verbose ? 'info' : 'error',
         define: {
-            __DEBUG_API_LOGGING__: JSON.stringify(debugApiLogging),
+            __LOG_LEVEL__: JSON.stringify(logLevel),
             __ALLOW_LOCALHOST__: JSON.stringify(allowLocalhost),
         },
         build: {
@@ -82,7 +82,7 @@ export default defineConfig({
         externally_connectable: {
             matches: [
                 ...(allowLocalhost ? ['http://localhost:*/*'] : []),
-                'https://*.courierai.net/*',
+                'https://courierai.net/*',
             ],
         },
     },

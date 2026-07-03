@@ -33,12 +33,12 @@ export interface StreamHandle {
 
 export const tabId = crypto.randomUUID();
 
-const LOG = '[courierai:web]';
+import { log } from './log';
 const KEEPALIVE_MS = 20_000;
 
 let extensionId: string | null =
     document.documentElement.dataset.courieraiExtId ?? null;
-if (extensionId) console.log(LOG, 'extension ID from DOM marker', extensionId);
+if (extensionId) log.info('extension ID from DOM marker', extensionId);
 
 window.addEventListener('message', (e: MessageEvent) => {
     if (
@@ -46,7 +46,7 @@ window.addEventListener('message', (e: MessageEvent) => {
         typeof e.data.id === 'string'
     ) {
         extensionId = e.data.id;
-        console.log(LOG, 'extension ID received', extensionId);
+        log.info('extension ID received', extensionId);
     }
 });
 
@@ -83,14 +83,10 @@ async function sendStorageMessage(
     request: StorageRequest
 ): Promise<StorageResponse> {
     if (!extensionId) {
-        console.error(
-            LOG,
-            'storage: extension not detected, cannot send',
-            request.type
-        );
+        log.error('storage: extension not detected, cannot send', request.type);
         throw new Error('Extension not detected.');
     }
-    console.log(LOG, '-> storage', request.type);
+    log.info('-> storage', request.type);
     const response = await new Promise<StorageResponse | undefined>(
         (resolve) => {
             chrome.runtime.sendMessage(
@@ -101,16 +97,16 @@ async function sendStorageMessage(
         }
     );
     if (!response) {
-        console.error(LOG, '<- storage: no response', request.type);
+        log.error('<- storage: no response', request.type);
         throw new Error(
             `Extension didn't respond to ${request.type}. It may have been disabled or updated.`
         );
     }
     if (response.type === 'error') {
-        console.error(LOG, '<- storage error', response.message);
+        log.error('<- storage error', response.message);
         throw new Error(response.message);
     }
-    console.log(LOG, '<- storage', response.type);
+    log.info('<- storage', response.type);
     return response;
 }
 
@@ -146,7 +142,7 @@ export async function loadSettings(): Promise<Partial<UserSettings>> {
 }
 
 export async function saveMeta(meta: ChatMeta): Promise<void> {
-    await sendStorageMessage({ type: 'save_meta', meta });
+    await sendStorageMessage({ type: 'save_meta', meta, sourceTabId: tabId });
 }
 
 export async function putMessage(
@@ -202,7 +198,11 @@ export async function deleteMessagesAfter(
 }
 
 export async function deleteChat(chatId: string): Promise<void> {
-    await sendStorageMessage({ type: 'delete_chat', chatId });
+    await sendStorageMessage({
+        type: 'delete_chat',
+        chatId,
+        sourceTabId: tabId,
+    });
 }
 
 export async function loadChatMetas(): Promise<ChatMeta[]> {
@@ -308,7 +308,7 @@ export function sendToExtension(
     handlers: StreamHandlers
 ): StreamHandle {
     if (!extensionId) {
-        console.error(LOG, 'chat: extension not detected');
+        log.error('chat: extension not detected');
         handlers.onError(
             'CourierAI extension not detected. Install it and refresh to start chatting.',
             'extension'
@@ -316,7 +316,7 @@ export function sendToExtension(
         return { abort: () => {}, stop: () => {} };
     }
 
-    console.log(LOG, '-> chat request', {
+    log.info('-> chat request', {
         chatId: request.chatId,
         provider: request.provider,
         model: request.model,
@@ -343,12 +343,7 @@ export function sendToExtension(
             }
             case 'error':
                 done = true;
-                console.error(
-                    LOG,
-                    '<- stream error',
-                    event.source,
-                    event.message
-                );
+                log.error('<- stream error', event.source, event.message);
                 handlers.onError(event.message, event.source);
                 port.disconnect();
                 break;
@@ -361,7 +356,7 @@ export function sendToExtension(
             const msg =
                 chrome.runtime.lastError?.message ??
                 'Extension disconnected unexpectedly.';
-            console.error(LOG, 'X unexpected port disconnect', msg);
+            log.error('X unexpected port disconnect', msg);
             handlers.onError(msg, 'extension');
         }
     });
@@ -419,11 +414,11 @@ export function subscribeToBroadcast(handlers: {
         try {
             port = chrome.runtime.connect(extensionId, { name: 'broadcast' });
         } catch (err) {
-            console.error(LOG, 'broadcast: connect failed', err);
+            log.error('broadcast: connect failed', err);
             reconnectTimer = setTimeout(connect, 1000);
             return;
         }
-        console.log(LOG, 'broadcast: connected');
+        log.info('broadcast: connected');
 
         try {
             const msg: BroadcastRequest = {
@@ -432,7 +427,7 @@ export function subscribeToBroadcast(handlers: {
             };
             port.postMessage(msg);
         } catch (err) {
-            console.warn(LOG, 'broadcast register failed', err);
+            log.warn('broadcast register failed', err);
         }
 
         if (everConnected) handlers.onReconnect?.();
@@ -444,8 +439,7 @@ export function subscribeToBroadcast(handlers: {
 
         port.onDisconnect.addListener(() => {
             const reason = chrome.runtime.lastError?.message;
-            console.log(
-                LOG,
+            log.info(
                 'broadcast: disconnected, reconnecting in 1s',
                 reason ? `(${reason})` : ''
             );
@@ -460,7 +454,7 @@ export function subscribeToBroadcast(handlers: {
                 const msg: BroadcastRequest = { type: 'keepalive' };
                 port.postMessage(msg);
             } catch (err) {
-                console.warn(LOG, 'broadcast keepalive failed', err);
+                log.warn('broadcast keepalive failed', err);
                 clearKeepalive();
             }
         }, KEEPALIVE_MS);
@@ -468,14 +462,14 @@ export function subscribeToBroadcast(handlers: {
 
     const onPageHide = (event: PageTransitionEvent) => {
         if (!event.persisted) return;
-        console.log(LOG, 'broadcast: page entering bfcache, releasing port');
+        log.info('broadcast: page entering bfcache, releasing port');
         clearKeepalive();
         clearReconnect();
         port = null;
     };
     const onPageShow = (event: PageTransitionEvent) => {
         if (!event.persisted) return;
-        console.log(LOG, 'broadcast: page restored from bfcache, reconnecting');
+        log.info('broadcast: page restored from bfcache, reconnecting');
         connect();
     };
     window.addEventListener('pagehide', onPageHide);

@@ -1,6 +1,4 @@
-import { DEBUG_API_LOGGING } from '../debug';
-
-const LOG = '[courierai:ext]';
+import { LOG_LEVEL, log } from '../debug';
 
 type FetchFn = (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>;
 
@@ -15,14 +13,14 @@ async function readRequestBody(
 
 function logRequestBody(provider: string, raw: string): void {
     try {
-        console.log(LOG, `[debug] ${provider}: -> request`, JSON.parse(raw));
+        log.debug(`${provider}: -> request`, JSON.parse(raw));
     } catch {
-        console.log(LOG, `[debug] ${provider}: -> request (raw)`, raw);
+        log.debug(`${provider}: -> request (raw)`, raw);
     }
 }
 
 export function makeDebugFetch(provider: string): FetchFn | undefined {
-    if (!DEBUG_API_LOGGING) return undefined;
+    if (LOG_LEVEL !== 'all') return undefined;
     return async (input, init) => {
         const raw = await readRequestBody(input, init);
         if (raw) logRequestBody(provider, raw);

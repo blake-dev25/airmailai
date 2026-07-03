@@ -1,6 +1,8 @@
 import {
     type Content,
     GoogleGenAI,
+    type GroundingChunk,
+    type GroundingSupport,
     Outcome,
     type Part,
     type ThinkingConfig,
@@ -14,12 +16,10 @@ import type {
     CourierAIMessageMetadata,
     ProviderStreamArgs,
 } from '@courierai/shared';
-import { DEBUG_API_LOGGING } from '../debug';
+import { log } from '../debug';
 import { base64ToBytes, hashBytes } from '../storage/encoding';
 import { type ProviderReplicas, resolveAttachments } from './attachments';
 import { foldReplayIntoText } from './fold-replay';
-
-const LOG = '[courierai:ext]';
 
 function outputFilename(index: number, mediaType: string): string {
     const subtype = mediaType.split('/')[1]?.split(';')[0] ?? '';
@@ -164,9 +164,10 @@ export async function* streamGoogle(
         },
     };
 
-    if (DEBUG_API_LOGGING) {
-        console.log(LOG, '[debug] google: -> sdk input', requestBody);
-    }
+    // *** @google/genai's GoogleGenAIOptions has no fetch override (only
+    // httpOptions: baseUrl/headers/timeout/extraBody), so unlike the other
+    // providers we can't use makeDebugFetch; we log the SDK input here instead.
+    log.debug('google: -> sdk input', requestBody);
 
     let mode: 'text' | 'reasoning' | null = null;
     let currentId = '';
@@ -176,6 +177,10 @@ export async function* streamGoogle(
     const seenUrls = new Set<string>();
     const seenSearchQueries = new Set<string>();
     const seenFetchedUrls = new Set<string>();
+    const textAccum = new Map<string, string>();
+    let latestGroundingChunks: GroundingChunk[] = [];
+    let latestGroundingSupports: GroundingSupport[] = [];
+    let searchSuggestionsHtml = '';
     let promptTokens = 0;
     let candidateTokens = 0;
     let stopReason: CourierAIMessageMetadata['stopReason'];
@@ -225,8 +230,17 @@ export async function* streamGoogle(
                 }
             }
 
-            for (const gc of candidate?.groundingMetadata?.groundingChunks ??
-                []) {
+            const gm = candidate?.groundingMetadata;
+            if (gm?.groundingChunks?.length) {
+                latestGroundingChunks = gm.groundingChunks;
+            }
+            if (gm?.groundingSupports?.length) {
+                latestGroundingSupports = gm.groundingSupports;
+            }
+            if (gm?.searchEntryPoint?.renderedContent) {
+                searchSuggestionsHtml = gm.searchEntryPoint.renderedContent;
+            }
+            for (const gc of gm?.groundingChunks ?? []) {
                 const url = gc.web?.uri;
                 if (typeof url === 'string' && !seenUrls.has(url)) {
                     seenUrls.add(url);
@@ -310,6 +324,12 @@ export async function* streamGoogle(
                         ? { type: 'text-start', id: currentId }
                         : { type: 'reasoning-start', id: currentId };
                 }
+                if (partMode === 'text') {
+                    textAccum.set(
+                        currentId,
+                        (textAccum.get(currentId) ?? '') + part.text
+                    );
+                }
                 yield partMode === 'text'
                     ? { type: 'text-delta', id: currentId, delta: part.text }
                     : {
@@ -331,6 +351,51 @@ export async function* streamGoogle(
         if (mode === 'text') yield { type: 'text-end', id: currentId };
         else if (mode === 'reasoning')
             yield { type: 'reasoning-end', id: currentId };
+
+        const cursors = new Map<string, number>();
+        for (const support of latestGroundingSupports) {
+            const segText = support.segment?.text;
+            const chunkIndices = support.groundingChunkIndices;
+            if (!segText || !chunkIndices?.length) continue;
+            let match: { textId: string; start: number } | undefined;
+            for (const [textId, accum] of textAccum) {
+                const from = cursors.get(textId) ?? 0;
+                let at = accum.indexOf(segText, from);
+                if (at === -1) at = accum.indexOf(segText);
+                if (at === -1) continue;
+                cursors.set(textId, at + segText.length);
+                match = { textId, start: at };
+                break;
+            }
+            if (!match) continue;
+            for (const idx of chunkIndices) {
+                const web = latestGroundingChunks[idx]?.web;
+                const url = web?.uri;
+                if (!web || typeof url !== 'string') continue;
+                if (!seenUrls.has(url)) {
+                    seenUrls.add(url);
+                    yield {
+                        type: 'source-url',
+                        sourceId: url,
+                        url,
+                        ...(web.title ? { title: web.title } : {}),
+                    };
+                }
+                yield {
+                    type: 'citation',
+                    sourceId: url,
+                    textId: match.textId,
+                    textStart: match.start,
+                    textEnd: match.start + segText.length,
+                };
+            }
+        }
+        if (searchSuggestionsHtml) {
+            yield {
+                type: 'google-search-suggestions',
+                html: searchSuggestionsHtml,
+            };
+        }
 
         yield {
             type: 'finish',

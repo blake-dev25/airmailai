@@ -2,6 +2,7 @@ import DOMPurify from 'dompurify';
 import { marked, type TokenizerAndRendererExtension } from 'marked';
 import markedFootnote from 'marked-footnote';
 import type { HighlighterCore } from 'shiki/core';
+import { type CitationAnchor, CITE_SENTINEL } from './citations';
 
 const THEME = 'github-dark';
 
@@ -46,12 +47,58 @@ function inlineExtension(
     };
 }
 
+let citeAnchors: CitationAnchor[] = [];
+
+function escapeAttr(s: string): string {
+    return s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+const citePattern = new RegExp(
+    `^${CITE_SENTINEL}(\\d+):[\\d,]*${CITE_SENTINEL}`
+);
+
+const citationExtension: TokenizerAndRendererExtension = {
+    name: 'citation',
+    level: 'inline',
+    start(src) {
+        return src.indexOf(CITE_SENTINEL);
+    },
+    tokenizer(src) {
+        const match = citePattern.exec(src);
+        if (match) return { type: 'citation', raw: match[0], text: match[1] };
+    },
+    renderer(token) {
+        const anchor = citeAnchors[Number(token.text)];
+        if (!anchor) return '';
+        const markers = anchor.refs
+            .map((r) => {
+                if (r.url) {
+                    return `<a class="cite-marker" href="${escapeAttr(r.url)}" target="_blank" rel="noopener noreferrer" title="${escapeAttr(r.tooltip)}">${r.num}</a>`;
+                }
+                if (r.doc) {
+                    const page = r.doc.page
+                        ? ` data-cite-page="${r.doc.page}"`
+                        : '';
+                    return `<button type="button" class="cite-marker" data-cite-hash="${escapeAttr(r.doc.hash)}"${page} title="${escapeAttr(r.tooltip)}">${r.num}</button>`;
+                }
+                return `<span class="cite-marker" title="${escapeAttr(r.tooltip)}">${r.num}</span>`;
+            })
+            .join('');
+        return `<sup class="cite-group">${markers}</sup>`;
+    },
+};
+
 marked.use(markedFootnote());
 marked.use({
     extensions: [
         inlineExtension('highlight', '==', /^==([^=]+)==/, 'mark'),
         inlineExtension('superscript', '^', /^\^([^^\s]+)\^/, 'sup'),
         inlineExtension('subscript', '~', /^~([^~\s]+)~/, 'sub'),
+        citationExtension,
     ],
 });
 marked.use({
@@ -91,7 +138,11 @@ marked.use({
     },
 });
 
-export function renderMarkdown(text: string): string {
+export function renderMarkdown(
+    text: string,
+    citations?: CitationAnchor[]
+): string {
+    citeAnchors = citations ?? [];
     const html = marked.parse(text) as string;
-    return DOMPurify.sanitize(html);
+    return DOMPurify.sanitize(html, { ADD_ATTR: ['target'] });
 }

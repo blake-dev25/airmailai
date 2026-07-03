@@ -234,6 +234,7 @@ export async function* streamOpenAI(
 
     const openText = new Set<string>();
     const openReasoning = new Set<string>();
+    const seenSourceIds = new Set<string>();
     let containerId: string | undefined;
 
     try {
@@ -260,18 +261,61 @@ export async function* streamOpenAI(
                         type?: string;
                         url?: string;
                         title?: string;
+                        file_id?: string;
+                        filename?: string;
+                        start_index?: number;
+                        end_index?: number;
                     };
+                    const textId = `${event.item_id}:${event.content_index}`;
+                    const span =
+                        typeof ann.start_index === 'number' &&
+                        typeof ann.end_index === 'number'
+                            ? {
+                                  textStart: ann.start_index,
+                                  textEnd: ann.end_index,
+                              }
+                            : {};
                     if (
                         ann.type === 'url_citation' &&
                         typeof ann.url === 'string'
                     ) {
+                        if (!seenSourceIds.has(ann.url)) {
+                            seenSourceIds.add(ann.url);
+                            yield {
+                                type: 'source-url',
+                                sourceId: ann.url,
+                                url: ann.url,
+                                ...(typeof ann.title === 'string'
+                                    ? { title: ann.title }
+                                    : {}),
+                            };
+                        }
                         yield {
-                            type: 'source-url',
-                            sourceId: `${event.item_id}:${event.annotation_index}`,
-                            url: ann.url,
-                            ...(typeof ann.title === 'string'
-                                ? { title: ann.title }
-                                : {}),
+                            type: 'citation',
+                            sourceId: ann.url,
+                            textId,
+                            ...span,
+                        };
+                    } else if (
+                        ann.type === 'container_file_citation' &&
+                        typeof ann.file_id === 'string'
+                    ) {
+                        const sourceId = `file:${ann.file_id}`;
+                        if (!seenSourceIds.has(sourceId)) {
+                            seenSourceIds.add(sourceId);
+                            yield {
+                                type: 'source-document',
+                                sourceId,
+                                ...(typeof ann.filename === 'string'
+                                    ? { title: ann.filename }
+                                    : {}),
+                            };
+                        }
+                        yield {
+                            type: 'citation',
+                            sourceId,
+                            textId,
+                            ...span,
                         };
                     }
                     break;

@@ -1,5 +1,6 @@
 import type {
     CourierAIChunk,
+    CourierAIGoogleSearchSuggestionsPart,
     CourierAIMessage,
     CourierAIMessageMetadata,
     CourierAIPart,
@@ -11,8 +12,10 @@ import type {
 export interface MessageAssemblerState {
     message: CourierAIMessage;
     textById: Map<string, CourierAITextPart>;
+    textInfoById: Map<string, { part: CourierAITextPart; textIndex: number }>;
     reasoningById: Map<string, CourierAIReasoningPart>;
     toolById: Map<string, CourierAIToolPart>;
+    sourceIds: Set<string>;
 }
 
 export function createMessageAssembler(
@@ -21,8 +24,10 @@ export function createMessageAssembler(
     return {
         message,
         textById: new Map(),
+        textInfoById: new Map(),
         reasoningById: new Map(),
         toolById: new Map(),
+        sourceIds: new Set(),
     };
 }
 
@@ -53,6 +58,10 @@ export function applyCourierAIChunk(
                 state: 'streaming',
             });
             state.textById.set(chunk.id, part);
+            state.textInfoById.set(chunk.id, {
+                part,
+                textIndex: state.textInfoById.size,
+            });
             break;
         }
         case 'text-delta': {
@@ -109,6 +118,8 @@ export function applyCourierAIChunk(
             break;
         }
         case 'source-url': {
+            if (state.sourceIds.has(chunk.sourceId)) break;
+            state.sourceIds.add(chunk.sourceId);
             pushPart(state, {
                 type: 'source-url',
                 sourceId: chunk.sourceId,
@@ -118,14 +129,45 @@ export function applyCourierAIChunk(
             break;
         }
         case 'source-document': {
+            if (state.sourceIds.has(chunk.sourceId)) break;
+            state.sourceIds.add(chunk.sourceId);
             pushPart(state, {
                 type: 'source-document',
                 sourceId: chunk.sourceId,
                 ...(chunk.title ? { title: chunk.title } : {}),
                 ...(chunk.mediaType ? { mediaType: chunk.mediaType } : {}),
+                ...(chunk.hash ? { hash: chunk.hash } : {}),
+            });
+            break;
+        }
+        case 'citation': {
+            const info = state.textInfoById.get(chunk.textId);
+            if (!info) break;
+            pushPart(state, {
+                type: 'citation',
+                sourceId: chunk.sourceId,
+                textIndex: info.textIndex,
+                textEnd: chunk.textEnd ?? -1,
+                ...(chunk.textStart !== undefined
+                    ? { textStart: chunk.textStart }
+                    : {}),
                 ...(chunk.citedText ? { citedText: chunk.citedText } : {}),
                 ...(chunk.location ? { location: chunk.location } : {}),
             });
+            break;
+        }
+        case 'google-search-suggestions': {
+            const existing = state.message.parts.find(
+                (p): p is CourierAIGoogleSearchSuggestionsPart =>
+                    p.type === 'google-search-suggestions'
+            );
+            if (existing) existing.html = chunk.html;
+            else {
+                pushPart(state, {
+                    type: 'google-search-suggestions',
+                    html: chunk.html,
+                });
+            }
             break;
         }
         case 'file': {

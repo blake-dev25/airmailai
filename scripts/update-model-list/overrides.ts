@@ -2,6 +2,7 @@ import type {
     ModelTools,
     ThinkingLevel,
 } from '../../packages/courierai_web/src/lib/models/types';
+import { type DerivedModel, sortLevels } from './shared';
 
 interface ThinkingOverride {
     levels: ThinkingLevel[];
@@ -20,20 +21,48 @@ export interface ModelOverride {
     knowledgeCutoff?: string;
     thinking?: ThinkingOverride;
     thinkingExtraLevels?: ThinkingLevel[];
-    // *** Server-side tool support. For anthropic, the string IS the Anthropic
-    // API tool `type` (versioned by date). Other providers use booleans.
-    // /v1/models returns code_execution support as a boolean but not the
-    // version string - so even when the API confirms support, we still
-    // pin the version here.
+    // *** Server-side tool support. Only anthropic pins tools here: the string
+    // IS the Anthropic API tool `type` (versioned by date), and /v1/models
+    // returns code_execution support as a boolean but not the version string.
+    // OpenAI/Google version their server tools globally, so their support is
+    // attached provider-wide in packages/courierai_web/src/lib/models/index.ts.
     tools?: ModelTools;
+}
+
+export function applyOverride(m: DerivedModel, o: ModelOverride): void {
+    if (o.idAlias) m.id = o.idAlias;
+    if (o.name !== undefined) m.name = o.name;
+    if (o.contextWindow !== undefined) m.contextWindow = o.contextWindow;
+    if (o.maxOutputTokens !== undefined) m.maxOutputTokens = o.maxOutputTokens;
+    if (o.temperatureMax !== undefined) m.temperatureMax = o.temperatureMax;
+    if (o.defaultTemperature !== undefined)
+        m.defaultTemperature = o.defaultTemperature;
+    if (o.knowledgeCutoff !== undefined) m.knowledgeCutoff = o.knowledgeCutoff;
+    if (o.thinking) {
+        const adaptive = o.thinking.adaptive ?? m.thinking?.adaptive;
+        m.thinking = {
+            levels: sortLevels(o.thinking.levels),
+            defaultLevel: o.thinking.defaultLevel,
+            ...(adaptive ? { adaptive } : {}),
+        };
+    }
+    if (o.thinkingExtraLevels && m.thinking) {
+        m.thinking.levels = sortLevels([
+            ...m.thinking.levels,
+            ...o.thinkingExtraLevels,
+        ]);
+    }
+    if (o.tools) m.tools = o.tools;
 }
 
 // *** Anthropic tool-version pinning, sourced from the per-tool docs at
 // https://platform.claude.com/docs/en/agents-and-tools/tool-use/
-// (web-search-tool, web-fetch-tool, code-execution-tool). Older models can't
-// use the newer _20260209 variants because they don't support programmatic
-// tool calling - we pin them to the direct-only legacy versions instead.
-const ANTHROPIC_TOOLS_LATEST: ModelTools = {
+// (web-search-tool, web-fetch-tool, code-execution-tool). Models without a
+// tools override default to ANTHROPIC_TOOLS_LATEST - new Anthropic models
+// support the latest variants. Older models can't use the newer _20260209
+// variants because they don't support programmatic tool calling - we pin
+// them to the direct-only legacy versions below.
+export const ANTHROPIC_TOOLS_LATEST: ModelTools = {
     webSearch: 'web_search_20260209',
     webFetch: 'web_fetch_20260209',
     codeExecution: 'code_execution_20260120',
@@ -43,21 +72,17 @@ const ANTHROPIC_TOOLS_4_5: ModelTools = {
     webFetch: 'web_fetch_20250910',
     codeExecution: 'code_execution_20260120',
 };
-const ANTHROPIC_TOOLS_HAIKU_4_5: ModelTools = {
-    webSearch: 'web_search_20250305',
-    webFetch: 'web_fetch_20250910',
-    codeExecution: 'code_execution_20250825',
-};
 const ANTHROPIC_TOOLS_LEGACY: ModelTools = {
     webSearch: 'web_search_20250305',
     webFetch: 'web_fetch_20250910',
     codeExecution: 'code_execution_20250825',
 };
 
-// *** Anthropic's /v1/models response is rich. The only routine gaps are
-// knowledgeCutoff, aliases for date-suffixed ids, rare extra effort levels,
-// and tool version strings (capabilities.code_execution gives boolean
-// support but not the version).
+// *** Anthropic's /v1/models response is rich, and knowledgeCutoff comes from
+// scraping the models overview docs page. The only routine gaps are aliases
+// for date-suffixed ids, rare extra effort levels, and non-latest tool
+// version pins (capabilities.code_execution gives boolean support but not
+// the version, and unpinned models default to ANTHROPIC_TOOLS_LATEST).
 export const ANTHROPIC_OVERRIDES: Record<string, ModelOverride> = {
     // *** Fable 5 rejects thinking: {type: "disabled"} (400) - thinking is
     // always on, so a 'none' level would silently run adaptive thinking at
@@ -69,49 +94,21 @@ export const ANTHROPIC_OVERRIDES: Record<string, ModelOverride> = {
             defaultLevel: 'high',
         },
     },
-    'claude-opus-4-8': {
-        knowledgeCutoff: 'Jan 2026',
-        thinkingExtraLevels: ['xhigh'],
-        tools: ANTHROPIC_TOOLS_LATEST,
-    },
-    'claude-opus-4-7': {
-        knowledgeCutoff: 'Jan 2026',
-        thinkingExtraLevels: ['xhigh'],
-        tools: ANTHROPIC_TOOLS_LATEST,
-    },
-    'claude-sonnet-4-6': {
-        knowledgeCutoff: 'Aug 2025',
-        tools: ANTHROPIC_TOOLS_LATEST,
-    },
-    'claude-opus-4-6': {
-        knowledgeCutoff: 'May 2025',
-        tools: ANTHROPIC_TOOLS_LATEST,
-    },
+    'claude-opus-4-8': { thinkingExtraLevels: ['xhigh'] },
+    'claude-opus-4-7': { thinkingExtraLevels: ['xhigh'] },
     'claude-opus-4-5-20251101': { tools: ANTHROPIC_TOOLS_4_5 },
     'claude-sonnet-4-5-20250929': { tools: ANTHROPIC_TOOLS_4_5 },
     'claude-haiku-4-5-20251001': {
         idAlias: 'claude-haiku-4-5',
-        knowledgeCutoff: 'Feb 2025',
-        tools: ANTHROPIC_TOOLS_HAIKU_4_5,
+        tools: ANTHROPIC_TOOLS_LEGACY,
     },
     'claude-opus-4-1-20250805': { tools: ANTHROPIC_TOOLS_LEGACY },
     'claude-opus-4-20250514': { tools: ANTHROPIC_TOOLS_LEGACY },
     'claude-sonnet-4-20250514': { tools: ANTHROPIC_TOOLS_LEGACY },
 };
 
-// *** OpenAI's web_search server tool covers both search and open_page (fetch);
-// we expose them as one combined toggle via searchFetchLinked. code_interpreter
-// is supported on the reasoning + GPT-5 family.
-const OPENAI_TOOLS_FULL: ModelTools = {
-    webSearch: true,
-    webFetch: true,
-    codeExecution: true,
-    searchFetchLinked: true,
-};
-
 // *** OpenAI's own /models endpoint is barebones, but OpenRouter fills most of the
-// CourierAI model params. Tool support comes from the OpenAI docs and is
-// hand-mapped here - the bare /models response doesn't enumerate it.
+// CourierAI model params.
 // *** Pre-gpt-5.1 reasoning models default to medium effort and reject
 // 'none' (per the openai SDK ReasoningEffort docs), so the generic
 // none/low/high fallback would mislabel them - the o-series gets explicit
@@ -123,13 +120,6 @@ const O_SERIES_THINKING: ThinkingOverride = {
 };
 
 export const OPENAI_OVERRIDES: Record<string, ModelOverride> = {
-    'gpt-5.5-pro': { tools: OPENAI_TOOLS_FULL },
-    'gpt-5.5': { tools: OPENAI_TOOLS_FULL },
-    'gpt-5.4-mini': { tools: OPENAI_TOOLS_FULL },
-    'gpt-5.4-nano': { tools: OPENAI_TOOLS_FULL },
-    'gpt-5.1': { tools: OPENAI_TOOLS_FULL },
-    'gpt-5.1-mini': { tools: OPENAI_TOOLS_FULL },
-    'gpt-5.1-nano': { tools: OPENAI_TOOLS_FULL },
     // *** xhigh shipped with gpt-5.1-codex-max; the docs scrape misses it.
     'gpt-5.1-codex-max': {
         thinking: {
@@ -137,9 +127,6 @@ export const OPENAI_OVERRIDES: Record<string, ModelOverride> = {
             defaultLevel: 'none',
         },
     },
-    'gpt-5': { tools: OPENAI_TOOLS_FULL },
-    'gpt-5-mini': { tools: OPENAI_TOOLS_FULL },
-    'gpt-5-nano': { tools: OPENAI_TOOLS_FULL },
     'gpt-5-pro': {
         thinking: { levels: ['high'], defaultLevel: 'high' },
     },
@@ -151,12 +138,6 @@ export const OPENAI_OVERRIDES: Record<string, ModelOverride> = {
     'o3-deep-research': { thinking: O_SERIES_THINKING },
     'o4-mini': { thinking: O_SERIES_THINKING },
     'o4-mini-deep-research': { thinking: O_SERIES_THINKING },
-};
-
-const GOOGLE_TOOLS_FULL: ModelTools = {
-    webSearch: true,
-    webFetch: true,
-    codeExecution: true,
 };
 
 // *** Google's API gives token limits and temperature. OpenRouter helps identify
@@ -175,7 +156,6 @@ export const GOOGLE_OVERRIDES: Record<string, ModelOverride> = {
             defaultLevel: 'medium',
             adaptive: 'optional',
         },
-        tools: GOOGLE_TOOLS_FULL,
     },
     'gemini-2.5-flash': {
         thinking: {
@@ -183,7 +163,6 @@ export const GOOGLE_OVERRIDES: Record<string, ModelOverride> = {
             defaultLevel: 'medium',
             adaptive: 'optional',
         },
-        tools: GOOGLE_TOOLS_FULL,
     },
     'gemini-2.5-flash-lite': {
         thinking: {
@@ -203,14 +182,12 @@ export const GOOGLE_OVERRIDES: Record<string, ModelOverride> = {
             levels: ['minimal', 'low', 'medium', 'high'],
             defaultLevel: 'high',
         },
-        tools: GOOGLE_TOOLS_FULL,
     },
     'gemini-3.1-pro-preview': {
         thinking: {
             levels: ['low', 'medium', 'high'],
             defaultLevel: 'high',
         },
-        tools: GOOGLE_TOOLS_FULL,
     },
     'gemini-3.1-flash-lite-preview': {
         thinking: {

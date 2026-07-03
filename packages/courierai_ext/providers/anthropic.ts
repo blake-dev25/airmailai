@@ -129,7 +129,8 @@ function decodeBase64Text(base64: string): string {
 
 function attachmentBlock(
     mediaType: string,
-    base64: string
+    base64: string,
+    filename: string
 ): Anthropic.Messages.ContentBlockParam {
     if (
         mediaType === 'image/jpeg' ||
@@ -150,6 +151,7 @@ function attachmentBlock(
                 media_type: 'application/pdf',
                 data: base64,
             },
+            title: filename,
             citations: { enabled: true },
         };
     }
@@ -161,6 +163,7 @@ function attachmentBlock(
                 media_type: 'text/plain',
                 data: decodeBase64Text(base64),
             },
+            title: filename,
             citations: { enabled: true },
         };
     }
@@ -179,6 +182,7 @@ function isImageMedia(mediaType: string): boolean {
 function providerFileBlock(
     mediaType: string,
     fileId: string,
+    filename: string,
     isUser: boolean,
     codeExecEnabled: boolean
 ): Anthropic.Messages.ContentBlockParam {
@@ -194,32 +198,48 @@ function providerFileBlock(
         : {
               type: 'document',
               source: { type: 'file', file_id: fileId },
+              title: filename,
               citations: { enabled: true },
           };
     return block as Anthropic.Messages.ContentBlockParam;
+}
+
+interface DocFile {
+    hash: string;
+    filename: string;
+    mediaType: string;
 }
 
 function buildAttachmentBlocks(
     msg: CourierAIMessage,
     blobs: Record<string, { mediaType: string; base64: string }>,
     codeExecEnabled: boolean,
-    replicas: ProviderReplicas | undefined
+    replicas: ProviderReplicas | undefined,
+    docFiles: DocFile[]
 ): Anthropic.Messages.ContentBlockParam[] {
     const blocks: Anthropic.Messages.ContentBlockParam[] = [];
     for (const att of resolveAttachments(msg, blobs, replicas)) {
-        if (att.kind === 'provider') {
-            if (att.providerId !== 'anthropic') continue;
-            blocks.push(
-                providerFileBlock(
-                    att.mediaType,
-                    att.fileId,
-                    msg.role === 'user',
-                    codeExecEnabled
-                )
-            );
+        if (att.kind === 'provider' && att.providerId !== 'anthropic') {
             continue;
         }
-        blocks.push(attachmentBlock(att.mediaType, att.base64));
+        const block =
+            att.kind === 'provider'
+                ? providerFileBlock(
+                      att.mediaType,
+                      att.fileId,
+                      att.filename,
+                      msg.role === 'user',
+                      codeExecEnabled
+                  )
+                : attachmentBlock(att.mediaType, att.base64, att.filename);
+        blocks.push(block);
+        if (block.type === 'document') {
+            docFiles.push({
+                hash: att.hash,
+                filename: att.filename,
+                mediaType: att.mediaType,
+            });
+        }
     }
     return blocks;
 }
@@ -228,7 +248,8 @@ function toAnthropicMessages(
     messages: CourierAIMessage[],
     blobs: Record<string, { mediaType: string; base64: string }>,
     codeExecEnabled: boolean,
-    replicas: ProviderReplicas | undefined
+    replicas: ProviderReplicas | undefined,
+    docFiles: DocFile[]
 ): Anthropic.Messages.MessageParam[] {
     return messages.map((msg) => {
         const text = foldReplayIntoText(msg);
@@ -236,7 +257,8 @@ function toAnthropicMessages(
             msg,
             blobs,
             codeExecEnabled,
-            replicas
+            replicas,
+            docFiles
         );
         if (!blocks.length) return { role: msg.role, content: text };
         const content: Anthropic.Messages.ContentBlockParam[] = [];
@@ -324,6 +346,7 @@ export async function* streamAnthropic(
             ? { providerId: 'anthropic', files: args.providerFiles }
             : undefined;
     const needsFilesBeta = codeExecEnabled || !!replicas;
+    const docFiles: DocFile[] = [];
 
     const stream = await client.messages.create(
         {
@@ -333,7 +356,8 @@ export async function* streamAnthropic(
                 args.messages,
                 args.blobs ?? {},
                 codeExecEnabled,
-                replicas
+                replicas,
+                docFiles
             ),
             ...(args.system ? { system: args.system } : {}),
             ...(args.params.temperature !== undefined
@@ -361,6 +385,8 @@ export async function* streamAnthropic(
         number,
         { id: string; name: CourierAIToolName; json: string }
     >();
+    const seenSourceUrls = new Set<string>();
+    const seenDocIndices = new Set<number>();
     let inputTokens = 0;
     let outputTokens = 0;
     let stopReason: CourierAIMessageMetadata['stopReason'];
@@ -399,12 +425,13 @@ export async function* streamAnthropic(
                     } else if (block.type === 'web_search_tool_result') {
                         const content = block.content;
                         if (Array.isArray(content)) {
-                            for (let i = 0; i < content.length; i++) {
-                                const r = content[i];
+                            for (const r of content) {
                                 if (r.type !== 'web_search_result') continue;
+                                if (seenSourceUrls.has(r.url)) continue;
+                                seenSourceUrls.add(r.url);
                                 yield {
                                     type: 'source-url',
-                                    sourceId: `${block.tool_use_id}:${i}`,
+                                    sourceId: r.url,
                                     url: r.url,
                                     ...(r.title ? { title: r.title } : {}),
                                 };
@@ -416,10 +443,11 @@ export async function* streamAnthropic(
                         };
                     } else if (block.type === 'web_fetch_tool_result') {
                         const fetched = readWebFetchResult(block.content);
-                        if (fetched) {
+                        if (fetched && !seenSourceUrls.has(fetched.url)) {
+                            seenSourceUrls.add(fetched.url);
                             yield {
                                 type: 'source-url',
-                                sourceId: `${block.tool_use_id}:fetch`,
+                                sourceId: fetched.url,
                                 url: fetched.url,
                                 ...(fetched.title
                                     ? { title: fetched.title }
@@ -490,33 +518,62 @@ export async function* streamAnthropic(
                         if (pending) pending.json += delta.partial_json;
                     } else if (delta.type === 'citations_delta') {
                         const c = delta.citation;
-                        if (c.type === 'page_location') {
+                        const textId = String(event.index);
+                        if (
+                            c.type === 'page_location' ||
+                            c.type === 'char_location'
+                        ) {
+                            const sourceId = `doc:${c.document_index}`;
+                            if (!seenDocIndices.has(c.document_index)) {
+                                seenDocIndices.add(c.document_index);
+                                const file = docFiles[c.document_index];
+                                const title =
+                                    file?.filename ?? c.document_title;
+                                yield {
+                                    type: 'source-document',
+                                    sourceId,
+                                    ...(title ? { title } : {}),
+                                    mediaType:
+                                        file?.mediaType ??
+                                        (c.type === 'page_location'
+                                            ? 'application/pdf'
+                                            : 'text/plain'),
+                                    ...(file ? { hash: file.hash } : {}),
+                                };
+                            }
                             yield {
-                                type: 'source-document',
-                                sourceId: `${event.index}:page:${c.start_page_number}`,
-                                ...(c.document_title
-                                    ? { title: c.document_title }
-                                    : {}),
+                                type: 'citation',
+                                sourceId,
+                                textId,
                                 citedText: c.cited_text,
-                                location: {
-                                    kind: 'page',
-                                    start: c.start_page_number,
-                                    end: c.end_page_number,
-                                },
+                                location:
+                                    c.type === 'page_location'
+                                        ? {
+                                              kind: 'page',
+                                              start: c.start_page_number,
+                                              end: c.end_page_number,
+                                          }
+                                        : {
+                                              kind: 'char',
+                                              start: c.start_char_index,
+                                              end: c.end_char_index,
+                                          },
                             };
-                        } else if (c.type === 'char_location') {
+                        } else if (c.type === 'web_search_result_location') {
+                            if (!seenSourceUrls.has(c.url)) {
+                                seenSourceUrls.add(c.url);
+                                yield {
+                                    type: 'source-url',
+                                    sourceId: c.url,
+                                    url: c.url,
+                                    ...(c.title ? { title: c.title } : {}),
+                                };
+                            }
                             yield {
-                                type: 'source-document',
-                                sourceId: `${event.index}:char:${c.start_char_index}`,
-                                ...(c.document_title
-                                    ? { title: c.document_title }
-                                    : {}),
+                                type: 'citation',
+                                sourceId: c.url,
+                                textId,
                                 citedText: c.cited_text,
-                                location: {
-                                    kind: 'char',
-                                    start: c.start_char_index,
-                                    end: c.end_char_index,
-                                },
                             };
                         }
                     }

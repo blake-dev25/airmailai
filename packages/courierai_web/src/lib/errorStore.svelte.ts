@@ -1,10 +1,10 @@
-const LOG = '[courierai:web]';
+import { log } from './log';
 
 class ErrorStore {
     appError = $state<string | null>(null);
 
     setAppError(message: string): void {
-        console.warn(LOG, 'app error:', message);
+        log.warn('app error:', message);
         this.appError = `App Error: ${message}`;
     }
 
@@ -25,6 +25,6 @@ export function reportAppError(
     userMessage: string,
     err: unknown
 ): void {
-    console.error(LOG, context, err);
+    log.error(context, err);
     errorStore.setAppError(`${userMessage}: ${formatErr(err)}`);
 }

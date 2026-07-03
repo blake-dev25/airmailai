@@ -1,8 +1,5 @@
 export type SmoothMode =
-    | 'smooth'
-    | 'boost-on-complete'
-    | 'dump-on-complete'
-    | 'raw';
+    'smooth' | 'boost-on-complete' | 'dump-on-complete' | 'raw';
 
 const DRAIN_CHARS_PER_SEC = 300;
 const DRAIN_CHARS_PER_SEC_BOOST = 600;

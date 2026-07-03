@@ -16,14 +16,8 @@ export const OPENAI: ProviderOption = {
                 knowledgeCutoff: 'Dec 2025',
                 thinking: {
                     levels: ['medium', 'high', 'xhigh'],
-                    defaultLevel: 'medium',
+                    defaultLevel: 'high',
                 },
-            },
-            tools: {
-                webSearch: true,
-                webFetch: true,
-                codeExecution: true,
-                searchFetchLinked: true,
             },
         },
         {
@@ -39,12 +33,6 @@ export const OPENAI: ProviderOption = {
                     defaultLevel: 'medium',
                 },
             },
-            tools: {
-                webSearch: true,
-                webFetch: true,
-                codeExecution: true,
-                searchFetchLinked: true,
-            },
         },
         {
             id: 'gpt-5.4-mini',
@@ -59,12 +47,6 @@ export const OPENAI: ProviderOption = {
                     defaultLevel: 'none',
                 },
             },
-            tools: {
-                webSearch: true,
-                webFetch: true,
-                codeExecution: true,
-                searchFetchLinked: true,
-            },
         },
         {
             id: 'gpt-5.4-nano',
@@ -78,12 +60,6 @@ export const OPENAI: ProviderOption = {
                     levels: ['none', 'low', 'medium', 'high', 'xhigh'],
                     defaultLevel: 'none',
                 },
-            },
-            tools: {
-                webSearch: true,
-                webFetch: true,
-                codeExecution: true,
-                searchFetchLinked: true,
             },
         },
         {
@@ -245,12 +221,6 @@ export const OPENAI: ProviderOption = {
                     defaultLevel: 'none',
                 },
             },
-            tools: {
-                webSearch: true,
-                webFetch: true,
-                codeExecution: true,
-                searchFetchLinked: true,
-            },
         },
         {
             id: 'gpt-5.1-chat-latest',
@@ -303,12 +273,6 @@ export const OPENAI: ProviderOption = {
                     defaultLevel: 'minimal',
                 },
             },
-            tools: {
-                webSearch: true,
-                webFetch: true,
-                codeExecution: true,
-                searchFetchLinked: true,
-            },
         },
         {
             id: 'gpt-5-mini',
@@ -323,12 +287,6 @@ export const OPENAI: ProviderOption = {
                     defaultLevel: 'minimal',
                 },
             },
-            tools: {
-                webSearch: true,
-                webFetch: true,
-                codeExecution: true,
-                searchFetchLinked: true,
-            },
         },
         {
             id: 'gpt-5',
@@ -342,12 +300,6 @@ export const OPENAI: ProviderOption = {
                     levels: ['minimal', 'low', 'medium', 'high'],
                     defaultLevel: 'minimal',
                 },
-            },
-            tools: {
-                webSearch: true,
-                webFetch: true,
-                codeExecution: true,
-                searchFetchLinked: true,
             },
         },
         {

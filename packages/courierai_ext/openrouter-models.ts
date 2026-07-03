@@ -1,6 +1,5 @@
 import type { OpenRouterModel } from '@courierai/shared';
-
-const LOG = '[courierai:ext]';
+import { log } from './debug';
 
 const FRESH_MS = 24 * 60 * 60 * 1000;
 const ERROR_COOLDOWN_MS = 5 * 60 * 1000;
@@ -65,7 +64,7 @@ async function fetchAndSlim(apiKey: string): Promise<OpenRouterModel[]> {
     const models = (json.data ?? [])
         .map(slim)
         .filter((m): m is OpenRouterModel => m !== null);
-    console.log(LOG, 'openrouter: fetched', models.length, 'models');
+    log.info('openrouter: fetched', models.length, 'models');
     return models;
 }
 
@@ -106,7 +105,7 @@ export async function getOpenRouterModels(
         await writeCache({ version: CACHE_VERSION, models, fetchedAt: now });
         return models;
     } catch (e) {
-        console.error(LOG, 'openrouter: cold fetch failed', e);
+        log.error('openrouter: cold fetch failed', e);
         await writeCache({
             version: CACHE_VERSION,
             models: [],
@@ -132,7 +131,7 @@ function refreshInBackground(apiKey: string): void {
             }).catch(() => {})
         )
         .catch(async (e) => {
-            console.error(LOG, 'openrouter: background refresh failed', e);
+            log.error('openrouter: background refresh failed', e);
             const cache = await readCache();
             if (cache) {
                 await writeCache({

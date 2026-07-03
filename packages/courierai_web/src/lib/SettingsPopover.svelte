@@ -40,6 +40,32 @@
     let storageUsage = $state<StorageUsage | null>(null);
     let storageLoading = $state(false);
     let storageBusy = $state(false);
+    let transferBusy = $state(false);
+    let importInput = $state<HTMLInputElement | undefined>(undefined);
+
+    async function handleExportAll() {
+        transferBusy = true;
+        try {
+            await chatStore.exportAllChats();
+        } finally {
+            transferBusy = false;
+        }
+    }
+
+    async function handleImportChats(e: Event) {
+        const input = e.currentTarget as HTMLInputElement;
+        const files = Array.from(input.files ?? []);
+        input.value = '';
+        transferBusy = true;
+        try {
+            for (const file of files) {
+                await chatStore.importChatFile(file);
+            }
+            await refreshStorageUsage();
+        } finally {
+            transferBusy = false;
+        }
+    }
 
     async function refreshStorageUsage() {
         storageLoading = true;
@@ -727,21 +753,58 @@
                     which can be managed in the Files tab.
                 </p>
             </div>
+            <div class="flex flex-col gap-2">
+                <div class="flex gap-2">
+                    <button
+                        type="button"
+                        class="flex-1 flex items-center justify-center gap-2 px-3 py-2 border border-accent-fg rounded-md text-sm font-medium cursor-pointer whitespace-nowrap transition-[background-color,color,opacity] duration-150 bg-transparent text-accent-fg enabled:hover:bg-accent-bg enabled:hover:text-on-accent-bg disabled:opacity-[0.35] disabled:cursor-not-allowed"
+                        disabled={transferBusy}
+                        onclick={handleExportAll}
+                    >
+                        <Icon name="download" />
+                        Export all chats
+                    </button>
+                    <button
+                        type="button"
+                        class="flex-1 flex items-center justify-center gap-2 px-3 py-2 border border-accent-fg rounded-md text-sm font-medium cursor-pointer whitespace-nowrap transition-[background-color,color,opacity] duration-150 bg-transparent text-accent-fg enabled:hover:bg-accent-bg enabled:hover:text-on-accent-bg disabled:opacity-[0.35] disabled:cursor-not-allowed"
+                        disabled={transferBusy}
+                        onclick={() => importInput?.click()}
+                    >
+                        <Icon name="upload" />
+                        Import chats
+                    </button>
+                    <input
+                        class="hidden"
+                        type="file"
+                        accept=".md,.json,.jsonl,.yaml,.yml"
+                        multiple
+                        bind:this={importInput}
+                        onchange={handleImportChats}
+                    />
+                </div>
+                <p class="m-0 text-xs text-fg-muted">
+                    Export downloads a readable YAML backup of all chats. Import
+                    accepts CourierAI backups, plus single-chat Markdown, LM
+                    Studio JSON, and SillyTavern JSONL files.
+                </p>
+            </div>
             <div class="flex gap-2">
                 <button
                     type="button"
-                    class="flex-1 px-3 py-2 border border-accent-fg rounded-md text-sm font-medium cursor-pointer whitespace-nowrap transition-[background-color,color,opacity] duration-150 bg-transparent text-accent-fg enabled:hover:bg-accent-bg enabled:hover:text-on-accent-bg disabled:opacity-[0.35] disabled:cursor-not-allowed"
+                    class="flex-1 flex items-center justify-center gap-2 px-3 py-2 border border-accent-fg rounded-md text-sm font-medium cursor-pointer whitespace-nowrap transition-[background-color,color,opacity] duration-150 bg-transparent text-accent-fg enabled:hover:bg-accent-bg enabled:hover:text-on-accent-bg disabled:opacity-[0.35] disabled:cursor-not-allowed"
                     disabled={storageBusy || storageLoading}
                     onclick={handleClearChats}
                 >
+                    <Icon name="trash" />
                     Delete chat history
                 </button>
                 <button
                     type="button"
-                    class="flex-1 px-3 py-2 border border-accent-fg rounded-md text-sm font-medium cursor-pointer whitespace-nowrap transition-[background-color,color,opacity] duration-150 bg-transparent text-accent-fg enabled:hover:bg-accent-bg enabled:hover:text-on-accent-bg disabled:opacity-[0.35] disabled:cursor-not-allowed"
+                    class="flex-1 flex items-center justify-center gap-2 px-3 py-2 border border-accent-fg rounded-md text-sm font-medium cursor-pointer whitespace-nowrap transition-[background-color,color,opacity] duration-150 bg-transparent text-accent-fg enabled:hover:bg-accent-bg enabled:hover:text-on-accent-bg disabled:opacity-[0.35] disabled:cursor-not-allowed"
                     disabled={storageBusy || storageLoading}
                     onclick={handleClearAll}
                 >
+                    <Icon name="trash" />
                     Delete all local storage
                 </button>
             </div>

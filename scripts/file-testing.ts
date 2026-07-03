@@ -18,8 +18,16 @@
 //   reref    can a created file_id be re-fed via container_upload (no re-upload)?
 //   inline   retrieve a created file WITHOUT the Files API (base64 via stdout)?
 //   upload   does a user PDF attachment reach the model via streamAnthropic?
+//   editpersist  edit an attached file in the sandbox - does the edit reach
+//            the durable file_id? (expected no - the Files API is immutable)
 //   shell    (openai) hosted shell tool, NO provisioned container: does a
 //            container_id come back + are output files listable/downloadable?
+//   expire   (openai) reuse a container after >20min idle - does
+//            container_reference still work? (waits 21 min)
+//   roundtrip (openai) create -> download -> /v1/files upload -> attach via
+//            file_ids: can the model read/EDIT the attached copy?
+//   attachwarm (openai) attach a /v1/files upload to a WARM container - does
+//            the model see it on container_reference reuse?
 //   create   (google) do code-exec outputs surface as inlineData parts, with
 //            what metadata, and do they arrive via STREAMING too?
 //   read     (google) can code exec READ an attached file's raw bytes
@@ -95,11 +103,7 @@ type GoogleTestName = 'create' | 'read' | 'tokens' | 'limit';
 const GOOGLE_TESTS: GoogleTestName[] = ['create', 'read', 'tokens', 'limit'];
 
 type OpenRouterTestName =
-    | 'image'
-    | 'pdf'
-    | 'fallback'
-    | 'annotations'
-    | 'replay';
+    'image' | 'pdf' | 'fallback' | 'annotations' | 'replay';
 
 const OPENROUTER_TESTS: OpenRouterTestName[] = [
     'image',
@@ -2368,6 +2372,12 @@ async function main() {
     }
     const provider = (flag('--provider') ?? 'anthropic') as ProviderName;
     const defaults = PROVIDER_DEFAULTS[provider];
+    if (!defaults) {
+        console.error(
+            `Unknown provider '${provider}'. Valid: anthropic, openai, google, openrouter.`
+        );
+        process.exit(1);
+    }
     const model = flag('--model') ?? defaults.model;
     const apiKey = process.env[defaults.env];
     if (!apiKey) {
@@ -2420,12 +2430,6 @@ async function main() {
             tests
         );
         return;
-    }
-    if (provider !== 'anthropic') {
-        console.error(
-            `Unknown provider '${provider}'. Valid: anthropic, openai, google, openrouter.`
-        );
-        process.exit(1);
     }
 
     const toolType = codeExecWire(provider, model);

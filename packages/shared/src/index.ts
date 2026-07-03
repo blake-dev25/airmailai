@@ -15,6 +15,8 @@ export type {
     CourierAIToolName,
     CourierAISourceUrlPart,
     CourierAISourceDocumentPart,
+    CourierAICitationPart,
+    CourierAIGoogleSearchSuggestionsPart,
     CourierAIFilePart,
     FileAvailability,
     FileDeleteTarget,
@@ -44,3 +46,9 @@ export {
     applyCourierAIChunk,
     type MessageAssemblerState,
 } from './assemble';
+export {
+    createLogger,
+    normalizeLogLevel,
+    type Logger,
+    type LogLevel,
+} from './logger';

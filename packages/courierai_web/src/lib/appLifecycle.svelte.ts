@@ -12,7 +12,7 @@ import { waitForExtension } from './extension';
 import { providersStore } from './providersStore.svelte';
 import { settingsStore } from './settingsStore.svelte';
 
-const LOG = '[courierai:web]';
+import { log } from './log';
 
 class AppLifecycle {
     initialized = $state(false);
@@ -73,7 +73,7 @@ class AppLifecycle {
     }
 
     async start(): Promise<void> {
-        console.log(LOG, 'page load', {
+        log.info('page load', {
             screen: `${window.screen.width}x${window.screen.height}`,
             time: new Date().toISOString(),
         });
@@ -89,7 +89,7 @@ class AppLifecycle {
                       : 'no-extension';
             this.showExtensionPrompt = true;
         }
-        console.log(LOG, 'extension detected:', detected);
+        log.info('extension detected:', detected);
 
         if (detected) {
             providersStore.hydrateOpenRouter().catch((err) => {
@@ -109,7 +109,7 @@ class AppLifecycle {
 
             if (settingsStore.legalAcceptedVersion !== __LEGAL_VERSION__) {
                 this.showLegalGate = true;
-                console.log(LOG, 'legal gate', {
+                log.info('legal gate', {
                     acceptedVersion: settingsStore.legalAcceptedVersion,
                     currentVersion: __LEGAL_VERSION__,
                 });
@@ -134,7 +134,7 @@ class AppLifecycle {
     handleLegalAgree(): void {
         settingsStore.persistLegalVersion(__LEGAL_VERSION__);
         this.showLegalGate = false;
-        console.log(LOG, 'legal agreed', __LEGAL_VERSION__);
+        log.info('legal agreed', __LEGAL_VERSION__);
     }
 }
 

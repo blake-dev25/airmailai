@@ -20,7 +20,7 @@ import {
     applyCourierAIChunk,
     createMessageAssembler,
 } from '@courierai/shared';
-import { DEBUG_API_LOGGING } from '../debug';
+import { log } from '../debug';
 import {
     CACHE_KEY as OPENROUTER_CACHE_KEY,
     getOpenRouterModels,
@@ -66,7 +66,6 @@ import {
     dbGetStorageUsage,
     dbLoadChat,
     dbLoadChatMetas,
-    dbLoadChats,
     dbLoadChatsByIds,
     dbPutMessage,
     dbSaveMeta,
@@ -75,7 +74,6 @@ import {
 } from '../storage/db';
 import { base64ToBytes, bytesToBase64, hashBytes } from '../storage/encoding';
 
-const LOG = '[courierai:ext]';
 const API_KEY_PREFIX = 'apiKey_';
 
 const inflightTurns = new Set<string>();
@@ -137,8 +135,7 @@ async function deleteProviderFiles(refs: ProviderFileRef[]): Promise<void> {
     for (const [providerId, fileIds] of byProvider) {
         const apiKey = await readApiKey(providerId);
         if (!apiKey) {
-            console.warn(
-                LOG,
+            log.warn(
                 'orphaned provider files left (no api key)',
                 providerId,
                 fileIds.length
@@ -149,8 +146,7 @@ async function deleteProviderFiles(refs: ProviderFileRef[]): Promise<void> {
             try {
                 await deleteProviderFile(providerId, apiKey, fileId);
             } catch (err) {
-                console.error(
-                    LOG,
+                log.error(
                     'failed to delete orphaned provider file',
                     providerId,
                     fileId,
@@ -162,6 +158,13 @@ async function deleteProviderFiles(refs: ProviderFileRef[]): Promise<void> {
 }
 
 const FILE_PROVIDERS = new Set(['anthropic', 'openai', 'google']);
+const KNOWN_PROVIDERS = new Set([...FILE_PROVIDERS, 'openrouter']);
+
+function assertKnownProvider(provider: string): void {
+    if (!KNOWN_PROVIDERS.has(provider)) {
+        throw new Error(`Unknown provider: ${provider}`);
+    }
+}
 const REPLICA_EXPIRY_MARGIN_MS = 60_000;
 
 function replicaFresh(entry: ProviderFileEntry): boolean {
@@ -181,12 +184,7 @@ async function uploadWithDedup(
     const hash = await hashBytes(bytes.buffer);
     const existing = await dbLookupProviderFile(hash, provider);
     if (existing && replicaFresh(existing)) {
-        console.log(
-            LOG,
-            'dedup: reusing provider file',
-            provider,
-            existing.fileId
-        );
+        log.info('dedup: reusing provider file', provider, existing.fileId);
         return existing;
     }
     let entry: ProviderFileEntry;
@@ -237,10 +235,10 @@ async function ensureReplicas(
         if (!entry || !replicaFresh(entry)) {
             const blob = await dbGetFileBlob(hash);
             if (!blob) {
-                console.warn(LOG, 'replica skipped, no local bytes', hash);
+                log.warn('replica skipped, no local bytes', hash);
                 continue;
             }
-            console.log(LOG, 'replicating file to provider', provider, hash);
+            log.info('replicating file to provider', provider, hash);
             entry = await uploadWithDedup(
                 provider,
                 apiKey,
@@ -257,23 +255,26 @@ async function ensureReplicas(
 async function handleStorage(
     message: StorageRequest
 ): Promise<StorageResponse> {
-    console.log(LOG, '<- storage request', message.type);
+    log.info('<- storage request', message.type);
     switch (message.type) {
         case 'save_key': {
-            console.log(LOG, 'storage: saving API key for', message.provider);
+            assertKnownProvider(message.provider);
+            log.info('storage: saving API key for', message.provider);
             const key = apiKeyName(message.provider);
             await chrome.storage.local.set({ [key]: message.apiKey });
-            console.log(LOG, '-> storage response: saved');
+            log.info('-> storage response: saved');
             return { type: 'saved' };
         }
         case 'clear_key': {
-            console.log(LOG, 'storage: clearing API key for', message.provider);
+            assertKnownProvider(message.provider);
+            log.info('storage: clearing API key for', message.provider);
             const key = apiKeyName(message.provider);
             await chrome.storage.local.remove(key);
-            console.log(LOG, '-> storage response: saved');
+            log.info('-> storage response: saved');
             return { type: 'saved' };
         }
         case 'has_keys': {
+            for (const p of message.providers) assertKnownProvider(p);
             const storageKeys = message.providers.map(apiKeyName);
             const result = await chrome.storage.local.get(storageKeys);
             const saved: Record<string, boolean> = {};
@@ -281,7 +282,7 @@ async function handleStorage(
                 const val = result[apiKeyName(p)];
                 saved[p] = typeof val === 'string' && val.length > 0;
             }
-            console.log(LOG, '-> storage response: has_keys', saved);
+            log.info('-> storage response: has_keys', saved);
             return { type: 'has_keys', saved };
         }
         case 'save_settings': {
@@ -291,14 +292,14 @@ async function handleStorage(
                     message.settings[k],
                 ])
             );
-            console.log(LOG, 'storage: saving settings', filtered);
+            log.info('storage: saving settings', filtered);
             await chrome.storage.sync.set(filtered);
-            console.log(LOG, '-> storage response: saved');
+            log.info('-> storage response: saved');
             return { type: 'saved' };
         }
         case 'load_settings': {
             const result = await chrome.storage.sync.get(SETTINGS_KEYS);
-            console.log(LOG, '-> storage response: settings', result);
+            log.info('-> storage response: settings', result);
             return {
                 type: 'settings',
                 settings: result as Partial<UserSettings>,
@@ -306,7 +307,11 @@ async function handleStorage(
         }
         case 'save_meta': {
             await dbSaveMeta(message.meta);
-            console.log(LOG, '-> storage response: saved');
+            broadcast(
+                { type: 'meta-changed', meta: message.meta },
+                message.sourceTabId
+            );
+            log.info('-> storage response: saved');
             return { type: 'saved' };
         }
         case 'stage_draft_attachment': {
@@ -335,7 +340,7 @@ async function handleStorage(
                         message.attachment.name
                     );
                 } catch (err) {
-                    console.error(LOG, 'draft replica upload failed', err);
+                    log.error('draft replica upload failed', err);
                     warning = err instanceof Error ? err.message : String(err);
                 }
             }
@@ -357,7 +362,7 @@ async function handleStorage(
         case 'put_message': {
             const refs = await dbPutMessage(message.message);
             await deleteProviderFiles(refs);
-            console.log(LOG, '-> storage response: saved');
+            log.info('-> storage response: saved');
             return { type: 'saved' };
         }
         case 'delete_message': {
@@ -366,7 +371,7 @@ async function handleStorage(
                 message.messageId
             );
             await deleteProviderFiles(refs);
-            console.log(LOG, '-> storage response: saved');
+            log.info('-> storage response: saved');
             return { type: 'saved' };
         }
         case 'delete_messages_after': {
@@ -375,46 +380,35 @@ async function handleStorage(
                 message.lastKeptId
             );
             await deleteProviderFiles(refs);
-            console.log(LOG, '-> storage response: saved');
+            log.info('-> storage response: saved');
             return { type: 'saved' };
         }
         case 'delete_chat': {
             const refs = await dbDeleteChat(message.chatId);
             await deleteProviderFiles(refs);
-            console.log(LOG, '-> storage response: saved');
+            broadcast(
+                { type: 'chat-deleted', chatId: message.chatId },
+                message.sourceTabId
+            );
+            log.info('-> storage response: saved');
             return { type: 'saved' };
         }
         case 'load_chat_metas': {
             const metas = await dbLoadChatMetas();
-            console.log(
-                LOG,
+            log.info(
                 '-> storage response: chat_metas',
                 `${metas.length} metas`
             );
             return { type: 'chat_metas', metas };
         }
-        case 'load_chats': {
-            const chats = await dbLoadChats();
-            console.log(
-                LOG,
-                '-> storage response: chats',
-                `${chats.length} chats`
-            );
-            return { type: 'chats', chats };
-        }
         case 'load_chats_by_ids': {
             const chats = await dbLoadChatsByIds(message.ids);
-            console.log(
-                LOG,
-                '-> storage response: chats',
-                `${chats.length} chats`
-            );
+            log.info('-> storage response: chats', `${chats.length} chats`);
             return { type: 'chats', chats };
         }
         case 'load_chat': {
             const chat = await dbLoadChat(message.chatId);
-            console.log(
-                LOG,
+            log.info(
                 '-> storage response: chat',
                 message.chatId,
                 chat ? 'found' : 'not found'
@@ -424,8 +418,7 @@ async function handleStorage(
         case 'load_openrouter_models': {
             const apiKey = await readApiKey('openrouter');
             const models = await getOpenRouterModels(apiKey);
-            console.log(
-                LOG,
+            log.info(
                 '-> storage response: openrouter_models',
                 models ? `${models.length} models` : 'unavailable',
                 apiKey ? 'with key' : 'cache only'
@@ -434,10 +427,11 @@ async function handleStorage(
         }
         case 'get_file_blob': {
             const blob = await dbGetFileBlobBase64(message.hash);
-            console.log(LOG, '-> storage response: file_blob', !!blob);
+            log.info('-> storage response: file_blob', !!blob);
             return { type: 'file_blob', blob };
         }
         case 'file_status': {
+            assertKnownProvider(message.provider);
             const storageOn = await readProviderFileStorageEnabled();
             const facts = await dbGetFileFacts(
                 message.hashes,
@@ -452,19 +446,16 @@ async function handleStorage(
                     statuses[hash] = 'provider';
                 else statuses[hash] = 'expired';
             }
-            console.log(
-                LOG,
-                '-> storage response: file_status',
-                message.hashes.length
-            );
+            log.info('-> storage response: file_status', message.hashes.length);
             return { type: 'file_status', statuses };
         }
         case 'list_local_files': {
             const files = await dbListLocalFiles();
-            console.log(LOG, '-> storage response: local_files', files.length);
+            log.info('-> storage response: local_files', files.length);
             return { type: 'local_files', files };
         }
         case 'list_provider_files': {
+            assertKnownProvider(message.provider);
             const apiKey = await readApiKey(message.provider);
             if (!apiKey) {
                 return {
@@ -490,8 +481,7 @@ async function handleStorage(
                 const hash = hashes.get(f.fileId);
                 return hash ? { ...f, hash } : f;
             });
-            console.log(
-                LOG,
+            log.info(
                 '-> storage response: provider_files',
                 message.provider,
                 files.length
@@ -500,6 +490,7 @@ async function handleStorage(
         }
         case 'delete_stored_file': {
             if (message.target.kind === 'provider') {
+                assertKnownProvider(message.target.providerId);
                 const apiKey = await readApiKey(message.target.providerId);
                 if (!apiKey) {
                     return {
@@ -518,8 +509,7 @@ async function handleStorage(
                         message.sourceTabId
                     );
                 }
-                console.log(
-                    LOG,
+                log.info(
                     '-> storage response: provider file deleted',
                     message.target.fileId
                 );
@@ -532,8 +522,7 @@ async function handleStorage(
                     message.sourceTabId
                 );
             }
-            console.log(
-                LOG,
+            log.info(
                 '-> storage response: stored_file_deleted',
                 chatIds.length
             );
@@ -552,7 +541,7 @@ async function handleStorage(
                 chrome.storage.sync.getBytesInUse(null),
             ]);
             const localSettingsBytes = localTotalBytes - openRouterCacheBytes;
-            console.log(LOG, '-> storage response: storage_usage', {
+            log.info('-> storage response: storage_usage', {
                 localSettingsBytes,
                 openRouterCacheBytes,
                 syncSettingsBytes,
@@ -569,7 +558,7 @@ async function handleStorage(
         case 'clear_chats': {
             await dbClearChats();
             broadcast({ type: 'chats-cleared' }, message.sourceTabId);
-            console.log(LOG, '-> storage response: saved');
+            log.info('-> storage response: saved');
             return { type: 'saved' };
         }
         case 'clear_all': {
@@ -579,7 +568,7 @@ async function handleStorage(
                 chrome.storage.sync.clear(),
             ]);
             broadcast({ type: 'chats-cleared' }, message.sourceTabId);
-            console.log(LOG, '-> storage response: saved');
+            log.info('-> storage response: saved');
             return { type: 'saved' };
         }
     }
@@ -639,7 +628,7 @@ async function captureOpenAIOutputs(
                     f.filename
                 );
             } catch (err) {
-                console.error(LOG, 'output replica upload failed', err);
+                log.error('output replica upload failed', err);
                 warnings.push(
                     `${f.filename}: ${err instanceof Error ? err.message : String(err)}`
                 );
@@ -710,66 +699,41 @@ function truncateAssistantParts(msg: CourierAIMessage, maxChars: number): void {
     }
 }
 
-export default defineBackground(() => {
-    console.log(LOG, 'background ready');
+function dispatchStorage(
+    message: StorageRequest,
+    sendResponse: (response: StorageResponse) => void
+): true {
+    handleStorage(message)
+        .then(sendResponse)
+        .catch((err) => {
+            log.error('storage handler threw', message.type, err);
+            sendResponse({
+                type: 'error',
+                message: err instanceof Error ? err.message : String(err),
+            });
+        });
+    return true;
+}
 
-    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-        if (message.type === 'admin_clear_chats') {
-            dbClearChats()
-                .then(() => sendResponse({ ok: true }))
-                .catch((err) => {
-                    console.error(LOG, 'admin_clear_chats failed', err);
-                    sendResponse({
-                        ok: false,
-                        message:
-                            err instanceof Error ? err.message : String(err),
-                    });
-                });
-            return true;
+export default defineBackground(() => {
+    log.info('background ready');
+
+    chrome.runtime.onMessage.addListener(
+        (message: StorageRequest, _sender, sendResponse) => {
+            if (message.type !== 'clear_chats' && message.type !== 'clear_all')
+                return;
+            return dispatchStorage(message, sendResponse);
         }
-        if (message.type === 'admin_clear_all') {
-            Promise.all([
-                dbWipeAll(),
-                chrome.storage.local.clear(),
-                chrome.storage.sync.clear(),
-            ])
-                .then(() => sendResponse({ ok: true }))
-                .catch((err) => {
-                    console.error(LOG, 'admin_clear_all failed', err);
-                    sendResponse({
-                        ok: false,
-                        message:
-                            err instanceof Error ? err.message : String(err),
-                    });
-                });
-            return true;
-        }
-    });
+    );
 
     chrome.runtime.onMessageExternal.addListener(
-        (message: StorageRequest, _sender, sendResponse) => {
-            handleStorage(message)
-                .then(sendResponse)
-                .catch((err) => {
-                    console.error(
-                        LOG,
-                        'storage handler threw',
-                        message.type,
-                        err
-                    );
-                    sendResponse({
-                        type: 'error',
-                        message:
-                            err instanceof Error ? err.message : String(err),
-                    });
-                });
-            return true;
-        }
+        (message: StorageRequest, _sender, sendResponse) =>
+            dispatchStorage(message, sendResponse)
     );
 
     chrome.runtime.onConnectExternal.addListener((port) => {
         if (port.name === 'broadcast') {
-            console.log(LOG, 'broadcast port connected');
+            log.info('broadcast port connected');
             broadcastPorts.set(port, undefined);
             port.onMessage.addListener((msg: BroadcastRequest) => {
                 if (msg.type === 'register') {
@@ -780,8 +744,7 @@ export default defineBackground(() => {
             });
             port.onDisconnect.addListener(() => {
                 const reason = chrome.runtime.lastError?.message;
-                console.log(
-                    LOG,
+                log.info(
                     'broadcast port disconnected',
                     reason ? `(${reason})` : ''
                 );
@@ -790,7 +753,7 @@ export default defineBackground(() => {
             return;
         }
 
-        console.log(LOG, 'turn port connected');
+        log.info('turn port connected');
         const controller = new AbortController();
         type Disposition =
             | 'pending'
@@ -814,7 +777,7 @@ export default defineBackground(() => {
 
         port.onDisconnect.addListener(() => {
             portOpen = false;
-            console.log(LOG, 'port disconnected, disposition:', disposition);
+            log.info('port disconnected, disposition:', disposition);
             if (disposition === 'pending' || disposition === 'streaming') {
                 disposition = 'aborted';
                 if (lockedChatId) inflightTurns.delete(lockedChatId);
@@ -825,12 +788,7 @@ export default defineBackground(() => {
         port.onMessage.addListener(async (msg: TurnRequest) => {
             if (msg.type === 'stop') {
                 if (disposition !== 'streaming') return;
-                console.log(
-                    LOG,
-                    'stop received',
-                    'truncateTo:',
-                    msg.truncateTo
-                );
+                log.info('stop received', 'truncateTo:', msg.truncateTo);
                 disposition = 'stopped';
                 truncateTo = msg.truncateTo;
                 if (lockedChatId) {
@@ -850,7 +808,7 @@ export default defineBackground(() => {
             if (disposition !== 'pending') return;
 
             if (inflightTurns.has(msg.chatId)) {
-                console.log(LOG, 'lock taken, rejecting', msg.chatId);
+                log.info('lock taken, rejecting', msg.chatId);
                 send({
                     type: 'error',
                     source: 'extension',
@@ -871,7 +829,6 @@ export default defineBackground(() => {
                     chatId: msg.chatId,
                     sourceTabId: msg.sourceTabId,
                     meta: msg.meta,
-                    history: msg.history,
                     assistantMessageId: msg.assistantMessageId,
                 },
                 msg.sourceTabId
@@ -897,33 +854,30 @@ export default defineBackground(() => {
             try {
                 apiKey = await readApiKey(msg.provider);
                 if (!apiKey) {
-                    console.error(LOG, 'no API key for provider', msg.provider);
+                    log.error('no API key for provider', msg.provider);
                     inStreamErrorText = `No API key saved for ${msg.provider}. Add one in Settings.`;
                     errorSource = 'extension';
                     disposition = 'errored';
                     return;
                 }
 
-                console.log(LOG, 'streaming', msg.chatId, {
+                log.info('streaming', msg.chatId, {
                     provider: msg.provider,
                     model: msg.model,
                     messages: msg.messages.length,
                 });
 
-                if (DEBUG_API_LOGGING) {
-                    console.log(LOG, '[debug] site -> ext request', {
-                        provider: msg.provider,
-                        model: msg.model,
-                        params: msg.params,
-                        system: msg.system,
-                        messages: msg.messages,
-                    });
-                }
+                log.debug('site -> ext request', {
+                    provider: msg.provider,
+                    model: msg.model,
+                    params: msg.params,
+                    system: msg.system,
+                    messages: msg.messages,
+                });
 
                 storageOn = await readProviderFileStorageEnabled();
                 let providerFiles:
-                    | Record<string, ProviderFileEntry>
-                    | undefined;
+                    Record<string, ProviderFileEntry> | undefined;
                 if (FILE_PROVIDERS.has(msg.provider) && storageOn) {
                     providerFiles = await ensureReplicas(
                         msg.messages,
@@ -956,11 +910,7 @@ export default defineBackground(() => {
                                 ...turnParams,
                                 container: meta.containerId,
                             };
-                            console.log(
-                                LOG,
-                                'reusing container',
-                                meta.containerId
-                            );
+                            log.info('reusing container', meta.containerId);
                         }
                     }
                 }
@@ -978,7 +928,7 @@ export default defineBackground(() => {
                         providerFiles,
                     });
                 } catch (e) {
-                    console.error(LOG, 'streamProvider threw', e);
+                    log.error('streamProvider threw', e);
                     inStreamErrorText =
                         e instanceof Error ? e.message : String(e);
                     errorSource = 'extension';
@@ -1011,11 +961,7 @@ export default defineBackground(() => {
                                     );
                                 }
                             } catch (err) {
-                                console.error(
-                                    LOG,
-                                    'output replica policy failed',
-                                    err
-                                );
+                                log.error('output replica policy failed', err);
                                 const m =
                                     err instanceof Error
                                         ? err.message
@@ -1057,7 +1003,7 @@ export default defineBackground(() => {
                     disposition = 'completed';
                 }
             } catch (e: unknown) {
-                console.error(LOG, 'stream threw', e);
+                log.error('stream threw', e);
                 if (disposition === 'streaming') {
                     inStreamErrorText =
                         e instanceof Error ? e.message : String(e);
@@ -1112,7 +1058,7 @@ export default defineBackground(() => {
                                 );
                             }
                         } catch (err) {
-                            console.error(LOG, 'output capture failed', err);
+                            log.error('output capture failed', err);
                             inStreamErrorText = `Couldn't download generated file(s): ${err instanceof Error ? err.message : String(err)}`;
                             disp = 'errored';
                         }
@@ -1129,7 +1075,7 @@ export default defineBackground(() => {
                         const refs = await dbPutMessage(stored);
                         await deleteProviderFiles(refs);
                     } catch (err) {
-                        console.error(LOG, 'save failed', err);
+                        log.error('save failed', err);
                         const m =
                             err instanceof Error ? err.message : String(err);
                         inStreamErrorText = `Couldn't save assistant message: ${m}`;
@@ -1144,7 +1090,7 @@ export default defineBackground(() => {
                                 containerFileIds
                             );
                         } catch (err) {
-                            console.error(LOG, 'container persist failed', err);
+                            log.error('container persist failed', err);
                         }
                     }
                     if (outputWarnings.length && disp !== 'errored') {

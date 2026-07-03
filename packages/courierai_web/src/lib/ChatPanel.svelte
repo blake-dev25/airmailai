@@ -29,6 +29,7 @@
     const expandedThinking = new SvelteSet<string>();
     const expandedSources = new SvelteSet<string>();
     const expandedCode = new SvelteSet<string>();
+    const expandedSuggestions = new SvelteSet<string>();
     let inputText = $state('');
     let messagesEl = $state<HTMLElement | null>(null);
     let messagesContentEl = $state<HTMLElement | null>(null);
@@ -94,7 +95,6 @@
 
     let uploadGeneration = 0;
     let filePolicyOpts = $derived({
-        providerStorageEnabled: settingsStore.enableProviderFileStorage,
         openRouterPdfEngine: settingsStore.openRouterPdfEngine,
     });
     let filePolicy = $derived(
@@ -676,8 +676,7 @@
                 <textarea
                     class="w-full min-h-20 max-h-45 px-3 py-2.5 bg-canvas border border-border rounded-lg text-fg font-sans text-sm leading-[1.6] resize-y box-border outline-none transition-[border-color] duration-150 focus:border-accent-fg placeholder:text-fg-muted"
                     placeholder="Give the model a persona, instructions, or context..."
-                    bind:value={settingsStore.systemPrompt}
-                ></textarea>
+                    bind:value={settingsStore.systemPrompt}></textarea>
             </div>
         {/if}
     </div>
@@ -759,6 +758,9 @@
                             thinkingExpanded={expandedThinking.has(message.id)}
                             sourcesExpanded={expandedSources.has(message.id)}
                             codeExpanded={expandedCode.has(message.id)}
+                            suggestionsExpanded={expandedSuggestions.has(
+                                message.id
+                            )}
                             onhoverenter={() => setHovered(message.id)}
                             onhoverleave={() => setHovered(null)}
                             onstartedit={(content, bubbleEl) =>
@@ -779,6 +781,11 @@
                                 if (expandedCode.has(message.id))
                                     expandedCode.delete(message.id);
                                 else expandedCode.add(message.id);
+                            }}
+                            onsuggestionstoggle={() => {
+                                if (expandedSuggestions.has(message.id))
+                                    expandedSuggestions.delete(message.id);
+                                else expandedSuggestions.add(message.id);
                             }}
                             onretry={() => handleRetry(i)}
                             ondelete={() => chatStore.deleteMessage(i)}
@@ -956,8 +963,7 @@
                 bind:value={inputText}
                 bind:this={textareaEl}
                 onkeydown={handleKeydown}
-                oninput={autoResize}
-            ></textarea>
+                oninput={autoResize}></textarea>
             {#if chatStore.isActiveStreaming && chatStore.isActiveLocalStreaming}
                 <button
                     type="button"

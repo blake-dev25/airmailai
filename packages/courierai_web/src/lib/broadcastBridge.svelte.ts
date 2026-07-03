@@ -9,7 +9,6 @@ function handleBroadcastEvent(event: BroadcastEvent): void {
             chatStore.applyRemoteTurnStart(
                 event.chatId,
                 event.meta,
-                event.history,
                 event.assistantMessageId
             );
             return;
@@ -30,6 +29,12 @@ function handleBroadcastEvent(event: BroadcastEvent): void {
             return;
         case 'files-changed':
             void chatStore.refreshLoadedChats(event.chatIds);
+            return;
+        case 'meta-changed':
+            chatStore.applyRemoteMetaChanged(event.meta);
+            return;
+        case 'chat-deleted':
+            chatStore.applyRemoteChatDeleted(event.chatId);
             return;
         case 'chats-cleared':
             chatStore.resetLocal();

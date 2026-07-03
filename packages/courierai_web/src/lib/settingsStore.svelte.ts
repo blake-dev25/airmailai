@@ -5,6 +5,7 @@ import {
     FONT_SIZES,
     type ModelTier,
     PROVIDERS,
+    THEMES,
 } from './constants';
 import type { ModelOption } from './models';
 import { reportAppError } from './errorStore.svelte';
@@ -13,12 +14,20 @@ import {
     saveSettings as saveToExtRaw,
 } from './extension';
 
-const LOG = '[courierai:web]';
+import { log } from './log';
 
 function saveToExt(snapshot: Partial<UserSettings>): void {
     saveToExtRaw(snapshot).catch((err) => {
         reportAppError('settings save failed', "Couldn't save settings", err);
     });
+}
+
+function setSettingValue<K extends keyof UserSettings>(
+    target: Partial<UserSettings>,
+    key: K,
+    value: Partial<UserSettings>[K]
+): void {
+    target[key] = value;
 }
 
 function getDefaultFontSizeIndex(): number {
@@ -29,6 +38,56 @@ function getDefaultFontSizeIndex(): number {
 
 const defaultModel =
     defaultModelForProvider(PROVIDERS[0]) ?? PROVIDERS[0].models[0];
+
+const isBool = (v: unknown) => typeof v === 'boolean';
+const isString = (v: unknown) => typeof v === 'string';
+const isIntInRange = (min: number, max: number) => (v: unknown) =>
+    typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max;
+const isNumInRange = (min: number, max: number) => (v: unknown) =>
+    typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max;
+const isOneOf =
+    (...options: string[]) =>
+    (v: unknown) =>
+        typeof v === 'string' && options.includes(v);
+
+const SETTING_VALIDATORS: {
+    [K in keyof UserSettings]: (v: unknown) => boolean;
+} = {
+    theme: (v) => typeof v === 'string' && THEMES.some((t) => t.id === v),
+    fontSizeIndex: isIntInRange(0, FONT_SIZES.length - 1),
+    chatWidth: isNumInRange(0, 100),
+    smoothTextMode: isOneOf(
+        'smooth',
+        'boost-on-complete',
+        'dump-on-complete',
+        'raw'
+    ),
+    submitKeystroke: isOneOf('enter', 'ctrl+enter'),
+    modelTier: isOneOf('latest', 'previous', 'legacy'),
+    autoscrollMode: isOneOf('pin-user-message', 'pin-bottom', 'off'),
+    enableWebSearch: isBool,
+    enableWebFetch: isBool,
+    enableCodeExecution: isBool,
+    enableFileUploads: isBool,
+    enableProviderFileStorage: isBool,
+    providerId: (v) =>
+        typeof v === 'string' && PROVIDERS.some((p) => p.id === v),
+    modelId: isString,
+    temperature: isNumInRange(0, 2),
+    maxTokens: isIntInRange(1, 1_000_000),
+    thinkingLevel: isString,
+    adaptiveThinking: isBool,
+    tagOpenRouterRequests: isBool,
+    openRouterPdfEngine: isOneOf(
+        'native',
+        'auto',
+        'cloudflare-ai',
+        'mistral-ocr'
+    ),
+    showBranding: isBool,
+    messageFont: isOneOf('serif', 'sans'),
+    legalAcceptedVersion: isString,
+};
 
 class SettingsStore {
     theme = $state('airmail-warm');
@@ -76,6 +135,20 @@ class SettingsStore {
     systemPrompt = $state('');
     settingsLoaded = $state(false);
     paused = $state(false);
+    private lastSaved: Partial<UserSettings> = {};
+
+    private saveChanged(snapshot: Partial<UserSettings>): void {
+        const changed: Partial<UserSettings> = {};
+        for (const key of Object.keys(snapshot) as (keyof UserSettings)[]) {
+            if (this.lastSaved[key] !== snapshot[key]) {
+                setSettingValue(changed, key, snapshot[key]);
+            }
+        }
+        if (Object.keys(changed).length === 0) return;
+        Object.assign(this.lastSaved, changed);
+        log.info('settings save', changed);
+        saveToExt(changed);
+    }
 
     constructor() {
         $effect.root(() => {
@@ -121,8 +194,7 @@ class SettingsStore {
                     messageFont: this.messageFont,
                 };
                 if (!this.shouldSave()) return;
-                console.log(LOG, 'settings save', snapshot);
-                saveToExt(snapshot);
+                this.saveChanged(snapshot);
             });
 
             $effect(() => {
@@ -135,12 +207,7 @@ class SettingsStore {
                 };
                 if (!this.shouldSave()) return;
                 const timer = setTimeout(() => {
-                    console.log(
-                        LOG,
-                        'settings save (slider debounce)',
-                        snapshot
-                    );
-                    saveToExt(snapshot);
+                    this.saveChanged(snapshot);
                 }, 300);
                 return () => clearTimeout(timer);
             });
@@ -165,7 +232,7 @@ class SettingsStore {
             );
             return;
         }
-        console.log(LOG, 'settings loaded', settings);
+        log.info('settings loaded', settings);
 
         const setSetting: {
             [K in keyof UserSettings]: (v: UserSettings[K]) => void;
@@ -242,7 +309,13 @@ class SettingsStore {
         };
         for (const key of SETTINGS_KEYS) {
             const v = settings[key];
-            if (v !== undefined) (setSetting[key] as (val: unknown) => void)(v);
+            if (v === undefined) continue;
+            if (!SETTING_VALIDATORS[key](v)) {
+                log.warn('ignoring invalid stored setting', key, v);
+                continue;
+            }
+            (setSetting[key] as (val: unknown) => void)(v);
+            setSettingValue(this.lastSaved, key, v);
         }
         this.settingsLoaded = true;
     }
@@ -306,7 +379,7 @@ class SettingsStore {
 
     persistLegalVersion(version: string): void {
         this.legalAcceptedVersion = version;
-        saveToExt({ legalAcceptedVersion: version });
+        this.saveChanged({ legalAcceptedVersion: version });
     }
 
     setFileUploadsEnabled(on: boolean): void {

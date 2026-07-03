@@ -56,12 +56,7 @@
                 background-color: #008080;
             }
         </style>
-        <script>
-            const t = localStorage.getItem('courierai-theme');
-            if (t) document.documentElement.dataset.theme = t;
-            const mf = localStorage.getItem('courierai-message-font');
-            if (mf) document.documentElement.dataset.messageFont = mf;
-        </script>
+        <script src="/theme-init.js"></script>
     </head>
     <body>
         <div id="app"></div>

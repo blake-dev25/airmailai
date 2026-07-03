@@ -11,6 +11,23 @@ import type {
 } from '@courierai/shared';
 import { applyCourierAIChunk, createMessageAssembler } from '@courierai/shared';
 import { SvelteSet } from 'svelte/reactivity';
+import {
+    buildBackupExport,
+    buildCourierAIJsonExport,
+    buildJsonExport,
+    buildMarkdownExport,
+    buildSillyTavernExport,
+    downloadTextFile,
+    exportFilename,
+    MAX_IMPORT_FILE_BYTES,
+    parseChatTransferFile,
+    sillyTavernFilename,
+    type ChatExportFormat,
+    type ChatTransferParseResult,
+    type ImportedChat,
+    type TransferChatEntry,
+    type TransferChatInfo,
+} from './chatTransfer';
 import { buildDemoChats } from './demo';
 import { reportAppError } from './errorStore.svelte';
 import {
@@ -39,7 +56,7 @@ import {
     type SearchResult,
 } from './types';
 
-const LOG = '[courierai:web]';
+import { log } from './log';
 const INITIAL_PAGE_SIZE = 40;
 const LOAD_MORE_PAGE_SIZE = 15;
 
@@ -188,7 +205,7 @@ class ChatStore {
             return;
         }
         const sorted = metas.sort((a, b) => b.createdAt - a.createdAt);
-        console.log(LOG, 'chat metas loaded', `${sorted.length} chats`);
+        log.info('chat metas loaded', `${sorted.length} chats`);
 
         const firstPage = sorted.slice(0, INITIAL_PAGE_SIZE);
         this.unloadedMetas = sorted.slice(INITIAL_PAGE_SIZE);
@@ -216,7 +233,7 @@ class ChatStore {
                     };
                 })
                 .filter((c): c is Chat => c !== null);
-            console.log(LOG, 'first page loaded', `${this.chats.length} chats`);
+            log.info('first page loaded', `${this.chats.length} chats`);
         }
     }
 
@@ -245,8 +262,7 @@ class ChatStore {
             .filter((c): c is Chat => c !== null);
         this.chats.push(...newChats);
         this.unloadedMetas.splice(0, LOAD_MORE_PAGE_SIZE);
-        console.log(
-            LOG,
+        log.info(
             'loaded more chats',
             `${newChats.length} chats, total ${this.chats.length}`
         );
@@ -269,7 +285,38 @@ class ChatStore {
         this.unloadedMetas = [];
         this.activeChatId = demoChats[0].id;
         this.demoMode = true;
-        console.log(LOG, 'entered demo mode');
+        log.info('entered demo mode');
+    }
+
+    private matchChat(
+        id: string,
+        title: string,
+        messages: Message[],
+        q: string
+    ): SearchResult | null {
+        for (let i = 0; i < messages.length; i++) {
+            const content = messageText(messages[i]);
+            const idx = content.toLowerCase().indexOf(q);
+            if (idx !== -1) {
+                const start = Math.max(0, idx - 40);
+                const end = Math.min(content.length, idx + q.length + 60);
+                const snippet =
+                    (start > 0 ? '...' : '') +
+                    content.slice(start, end) +
+                    (end < content.length ? '...' : '');
+                return { id, title, snippet, matchIndex: i };
+            }
+        }
+        if (title.toLowerCase().includes(q)) {
+            const firstMsg = messages.find((m) => messageText(m).length > 0);
+            const firstText = firstMsg ? messageText(firstMsg) : '';
+            const snippet = firstText
+                ? firstText.slice(0, 100) +
+                  (firstText.length > 100 ? '...' : '')
+                : '';
+            return { id, title, snippet, matchIndex: null };
+        }
+        return null;
     }
 
     search(query: string): void {
@@ -278,44 +325,20 @@ class ChatStore {
         const q = query.toLowerCase();
         const results: SearchResult[] = [];
         for (const chat of this.chats) {
-            let matchIndex: number | null = null;
-            let snippet = '';
-            for (let i = 0; i < chat.messages.length; i++) {
-                const content = messageText(chat.messages[i]);
-                const idx = content.toLowerCase().indexOf(q);
-                if (idx !== -1) {
-                    matchIndex = i;
-                    const start = Math.max(0, idx - 40);
-                    const end = Math.min(content.length, idx + q.length + 60);
-                    snippet =
-                        (start > 0 ? '...' : '') +
-                        content.slice(start, end) +
-                        (end < content.length ? '...' : '');
-                    break;
-                }
-            }
-            if (matchIndex !== null) {
-                results.push({
-                    id: chat.id,
-                    title: chat.title,
-                    snippet,
-                    matchIndex,
-                });
-            } else if (chat.title.toLowerCase().includes(q)) {
-                const firstMsg = chat.messages.find(
-                    (m) => messageText(m).length > 0
-                );
-                const firstText = firstMsg ? messageText(firstMsg) : '';
-                snippet = firstText
-                    ? firstText.slice(0, 100) +
-                      (firstText.length > 100 ? '...' : '')
-                    : '';
-                results.push({
-                    id: chat.id,
-                    title: chat.title,
-                    snippet,
-                    matchIndex: null,
-                });
+            const result = this.matchChat(
+                chat.id,
+                chat.title,
+                chat.messages,
+                q
+            );
+            if (result) results.push(result);
+        }
+        if (this.searchCache) {
+            for (const meta of this.unloadedMetas) {
+                const messages = this.searchCache.get(meta.id);
+                if (!messages) continue;
+                const result = this.matchChat(meta.id, meta.title, messages, q);
+                if (result) results.push(result);
             }
         }
         this.searchResults = results;
@@ -325,33 +348,33 @@ class ChatStore {
         this.searchResults = null;
         this.searchQuery = '';
         this.highlightMessageIndex = null;
+        this.searchCache = null;
+        this.allChatsSearched = false;
     }
 
     searchingAll = $state(false);
+    allChatsSearched = $state(false);
+    private searchCache: Map<string, Message[]> | null = null;
 
     async searchAllChats(): Promise<void> {
-        if (this.searchingAll || this.unloadedMetas.length === 0) return;
+        if (
+            this.searchingAll ||
+            this.allChatsSearched ||
+            this.unloadedMetas.length === 0
+        )
+            return;
         this.searchingAll = true;
         try {
-            const metas = this.unloadedMetas;
-            const fullChats = await loadChatsByIds(metas.map((m) => m.id));
-            const byId = new Map(fullChats.map((c) => [c.id, c]));
-            const newChats = metas
-                .map((meta) => {
-                    const stored = byId.get(meta.id);
-                    if (!stored) return null;
-                    return {
-                        ...meta,
-                        messages: this.storedToMessages(stored.messages),
-                    };
-                })
-                .filter((c): c is Chat => c !== null);
-            this.chats.push(...newChats);
-            this.unloadedMetas = [];
-            console.log(
-                LOG,
-                'loaded all chats for search',
-                `${newChats.length} chats`
+            const fullChats = await loadChatsByIds(
+                this.unloadedMetas.map((m) => m.id)
+            );
+            this.searchCache = new Map(
+                fullChats.map((c) => [c.id, this.storedToMessages(c.messages)])
+            );
+            this.allChatsSearched = true;
+            log.info(
+                'search cache built',
+                `${fullChats.length} unloaded chats`
             );
             if (this.searchQuery) this.search(this.searchQuery);
         } catch (err) {
@@ -366,7 +389,7 @@ class ChatStore {
     }
 
     resetLocal(): void {
-        console.log(LOG, 'resetting local chat state');
+        log.info('resetting local chat state');
         for (const handle of this.streamHandles.values()) handle.abort();
         this.streamHandles.clear();
         this.remotePipelines.clear();
@@ -395,7 +418,7 @@ class ChatStore {
     newChat(): void {
         const id = crypto.randomUUID();
         const now = Date.now();
-        console.log(LOG, 'new chat', id);
+        log.info('new chat', id);
         settingsStore.applyToolDefaults(providersStore.selectedModel);
         this.chats.unshift({
             id,
@@ -409,7 +432,7 @@ class ChatStore {
 
     async activate(id: string, matchIndex?: number | null): Promise<void> {
         this.highlightMessageIndex = matchIndex ?? null;
-        console.log(LOG, 'select chat', id);
+        log.info('select chat', id);
         this.activeChatId = id;
 
         const loaded = this.chats.find((c) => c.id === id);
@@ -454,11 +477,7 @@ class ChatStore {
         }
     }
 
-    remove(id: string): void {
-        console.log(LOG, 'remove chat', id);
-        const removedTitle =
-            this.chats.find((c) => c.id === id)?.title ??
-            this.unloadedMetas.find((m) => m.id === id)?.title;
+    private removeLocal(id: string): void {
         this.streamHandles.get(id)?.abort();
         this.streamHandles.delete(id);
         const chatIdx = this.chats.findIndex((c) => c.id === id);
@@ -474,6 +493,14 @@ class ChatStore {
         this.remoteStreamingChatIds.delete(id);
         this.closeRemotePipeline(id);
         this.clearChatError(id);
+    }
+
+    remove(id: string): void {
+        log.info('remove chat', id);
+        const removedTitle =
+            this.chats.find((c) => c.id === id)?.title ??
+            this.unloadedMetas.find((m) => m.id === id)?.title;
+        this.removeLocal(id);
         if (!this.demoMode)
             deleteChat(id).catch((err) => {
                 reportAppError(
@@ -484,8 +511,27 @@ class ChatStore {
             });
     }
 
+    applyRemoteChatDeleted(chatId: string): void {
+        log.info('remote chat deleted', chatId);
+        this.removeLocal(chatId);
+    }
+
+    applyRemoteMetaChanged(meta: ChatMeta): void {
+        const chat = this.chats.find((c) => c.id === meta.id);
+        if (chat) {
+            Object.assign(chat, meta);
+            return;
+        }
+        const metaIdx = this.unloadedMetas.findIndex((m) => m.id === meta.id);
+        if (metaIdx >= 0) {
+            this.unloadedMetas[metaIdx] = meta;
+            return;
+        }
+        this.chats.unshift({ ...meta, messages: [] });
+    }
+
     rename(id: string, newTitle: string): void {
-        console.log(LOG, 'rename chat', id, newTitle);
+        log.info('rename chat', id, newTitle);
         const chat = this.chats.find((c) => c.id === id);
         if (chat) chat.title = newTitle;
         const meta = this.unloadedMetas.find((m) => m.id === id);
@@ -500,7 +546,23 @@ class ChatStore {
             });
     }
 
-    async export(id: string): Promise<void> {
+    private transferInfo(meta: {
+        title: string;
+        createdAt: number;
+        systemPrompt: string;
+        providerId: string;
+        modelId: string;
+    }): TransferChatInfo {
+        return {
+            title: meta.title,
+            createdAt: meta.createdAt,
+            systemPrompt: meta.systemPrompt,
+            providerId: meta.providerId,
+            modelId: meta.modelId,
+        };
+    }
+
+    async export(id: string, format: ChatExportFormat): Promise<void> {
         const chat = this.chats.find((c) => c.id === id);
         if (!chat) return;
 
@@ -519,40 +581,179 @@ class ChatStore {
             }
         }
 
-        const created = new Date(chat.createdAt);
-        const createdStr = created.toLocaleString();
-
-        let md = `# ${chat.title}\nModel: ${chat.modelId}\nCreated: ${createdStr}\nExported from: CourierAI\n`;
-        for (const msg of messages) {
-            md += `\n### ${msg.role === 'user' ? 'User' : 'Assistant'}\n`;
-            const attachments: string[] = [];
-            for (const part of msg.parts) {
-                if (part.type !== 'file') continue;
-                attachments.push(part.filename);
-            }
-            if (attachments.length) {
-                md += `Attachments: ${attachments.join(', ')}\n`;
-            }
-            md += `${messageText(msg)}\n`;
+        const info = this.transferInfo(chat);
+        let content: string;
+        let filename: string;
+        let mimeType: string;
+        if (format === 'courierai') {
+            content = buildCourierAIJsonExport(info, messages);
+            filename = exportFilename(chat.title, chat.createdAt, '.json');
+            mimeType = 'application/json';
+        } else if (format === 'lmstudio') {
+            content = buildJsonExport(info, messages);
+            filename = `${chat.createdAt}.conversation.json`;
+            mimeType = 'application/json';
+        } else if (format === 'sillytavern') {
+            content = buildSillyTavernExport(info, messages);
+            filename = sillyTavernFilename(chat.title, chat.createdAt);
+            mimeType = 'text/plain';
+        } else {
+            content = buildMarkdownExport(info, messages);
+            filename = exportFilename(chat.title, chat.createdAt, '.md');
+            mimeType = 'text/markdown';
         }
+        downloadTextFile(filename, content, mimeType);
+        log.info('exported chat', id, filename);
+    }
 
+    async exportAllChats(): Promise<void> {
+        let metas: ChatMeta[];
+        try {
+            metas = await loadChatMetas();
+        } catch (err) {
+            reportAppError(
+                'exportAllChats: metas failed',
+                "Couldn't load chat list for backup",
+                err
+            );
+            return;
+        }
+        if (metas.length === 0) {
+            reportAppError(
+                'exportAllChats: nothing to export',
+                'There are no chats to back up',
+                new Error('no chats')
+            );
+            return;
+        }
+        const sorted = metas.slice().sort((a, b) => a.createdAt - b.createdAt);
+        let stored: StoredChat[];
+        try {
+            stored = await loadChatsByIds(sorted.map((m) => m.id));
+        } catch (err) {
+            reportAppError(
+                'exportAllChats: chats failed',
+                "Couldn't load chats for backup",
+                err
+            );
+            return;
+        }
+        const byId = new Map(stored.map((c) => [c.id, c]));
+        const entries: TransferChatEntry[] = sorted.map((meta) => ({
+            info: this.transferInfo(meta),
+            messages: this.storedToMessages(byId.get(meta.id)?.messages ?? []),
+        }));
+        const now = new Date();
         const pad = (n: number) => String(n).padStart(2, '0');
-        const year = created.getFullYear();
-        const month = pad(created.getMonth() + 1);
-        const day = pad(created.getDate());
-        const hours = pad(created.getHours());
-        const mins = pad(created.getMinutes());
-        const safeTitle = chat.title.replace(/[/\\:*?"<>|]/g, '-');
-        const filename = `${safeTitle} - ${year}-${month}-${day} ${hours}.${mins}.md`;
+        const filename = `courierai-backup-${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}.${pad(now.getMinutes())}.${pad(now.getSeconds())}.yaml`;
+        downloadTextFile(
+            filename,
+            buildBackupExport(entries),
+            'application/yaml'
+        );
+        log.info('exported backup', `${entries.length} chats`);
+    }
 
-        const blob = new Blob([md], { type: 'text/markdown' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        a.click();
-        URL.revokeObjectURL(url);
-        console.log(LOG, 'exported chat', id, filename);
+    private resolveImportedModel(
+        model: string | null
+    ): { providerId: string; modelId: string } | null {
+        if (!model) return null;
+        const slash = model.indexOf('/');
+        if (slash <= 0) return null;
+        const providerId = model.slice(0, slash);
+        const modelId = model.slice(slash + 1);
+        const provider = providersStore.providers.find(
+            (p) => p.id === providerId
+        );
+        if (!provider) return null;
+        if (!provider.models.some((m) => m.id === modelId)) return null;
+        return { providerId, modelId };
+    }
+
+    private async addImportedChat(imp: ImportedChat): Promise<string | null> {
+        const id = crypto.randomUUID();
+        const createdAt = imp.createdAt || Date.now();
+        const resolved = this.resolveImportedModel(imp.model);
+        const chat: Chat = {
+            id,
+            title: imp.title || 'Imported Chat',
+            messages: [],
+            createdAt,
+            ...settingsStore.snapshotChatConfig(),
+            ...(resolved ?? {}),
+            systemPrompt: imp.systemPrompt,
+        };
+        chat.messages = imp.messages.map((m, i) => ({
+            id: crypto.randomUUID(),
+            role: m.role,
+            parts: [{ type: 'text', text: m.text, state: 'done' }],
+            metadata: { createdAt: createdAt + i },
+        }));
+        if (!this.demoMode) {
+            try {
+                await saveMeta(chatToMeta(chat));
+                for (const msg of chat.messages) {
+                    await putMessage(messageToHydrated(id, msg));
+                }
+            } catch (err) {
+                reportAppError(
+                    `import: save failed (title=${chat.title})`,
+                    `Couldn't save imported chat "${chat.title}"`,
+                    err
+                );
+                return null;
+            }
+        }
+        const insertIdx = this.chats.findIndex(
+            (c) => c.createdAt < chat.createdAt
+        );
+        if (insertIdx === -1) this.chats.push(chat);
+        else this.chats.splice(insertIdx, 0, chat);
+        return id;
+    }
+
+    async importChatFile(file: File): Promise<number> {
+        if (file.size > MAX_IMPORT_FILE_BYTES) {
+            reportAppError(
+                `import: file too large (${file.name})`,
+                `Couldn't import ${file.name}`,
+                new Error(`file is too large (${file.size} bytes)`)
+            );
+            return 0;
+        }
+        let result: ChatTransferParseResult;
+        try {
+            const text = await file.text();
+            result = parseChatTransferFile(file.name, text);
+        } catch (err) {
+            reportAppError(
+                `import: parse failed (${file.name})`,
+                `Couldn't import ${file.name}`,
+                err
+            );
+            return 0;
+        }
+        if (result.skipped.length) {
+            reportAppError(
+                `import: skipped records (${file.name})`,
+                `Skipped ${result.skipped.length} unreadable chat${result.skipped.length === 1 ? '' : 's'} in ${file.name}`,
+                new Error(result.skipped.join('; '))
+            );
+        }
+        let count = 0;
+        let lastId: string | null = null;
+        for (const chat of result.chats) {
+            const id = await this.addImportedChat(chat);
+            if (id) {
+                count++;
+                lastId = id;
+            }
+        }
+        if (count === 1 && lastId) {
+            await this.activate(lastId);
+        }
+        log.info('imported chats', `${count} from ${file.name}`);
+        return count;
     }
 
     editMessage(index: number, content: string): void {
@@ -562,7 +763,9 @@ class ChatStore {
         if (!chat) return;
         const target = chat.messages[index];
         if (!target) return;
-        const nonText = target.parts.filter((p) => p.type !== 'text');
+        const nonText = target.parts.filter(
+            (p) => p.type !== 'text' && p.type !== 'citation'
+        );
         const newParts: CourierAIMessage['parts'] = [
             ...(content
                 ? [
@@ -749,7 +952,7 @@ class ChatStore {
 
         const sendChat = this.chats.find((c) => c.id === chatId);
         const draftAttachments = sendChat?.draftAttachments ?? [];
-        console.log(LOG, 'send message', {
+        log.info('send message', {
             provider: settingsStore.providerId,
             model: settingsStore.modelId,
             contentLength: content.length,
@@ -774,49 +977,46 @@ class ChatStore {
             sendChat.draftAttachments = [];
         }
 
-        if (!this.demoMode) {
-            const chat = this.chats.find((c) => c.id === chatId);
-            if (chat) {
-                const persistUser = () =>
-                    putMessage(messageToHydrated(chatId!, userMsg))
-                        .then(() =>
-                            draftAttachments.length
-                                ? clearDraftAttachments(chatId!)
-                                : undefined
-                        )
-                        .catch((err) => {
-                            reportAppError(
-                                'persist user msg failed',
-                                "Couldn't save your message",
-                                err
-                            );
-                        });
-                if (createdNewChat || draftAttachments.length) {
-                    saveMeta(chatToMeta(chat))
-                        .then(persistUser)
-                        .catch((err) => {
-                            reportAppError(
-                                'persist new chat failed',
-                                "Couldn't save chat",
-                                err
-                            );
-                        });
-                } else {
-                    saveMeta(chatToMeta(chat)).catch((err) => {
-                        reportAppError(
-                            'persist meta failed',
-                            "Couldn't save chat config",
-                            err
-                        );
-                    });
-                    void persistUser();
-                }
-            }
-        }
-
         this.streamingChatIds.add(chatId);
         this.clearChatError(chatId);
-        this.streamForChat(chatId, assistantId);
+
+        if (this.demoMode) {
+            this.streamForChat(chatId, assistantId);
+            return;
+        }
+
+        const chat = this.chats.find((c) => c.id === chatId);
+        if (!chat) {
+            this.streamingChatIds.delete(chatId);
+            return;
+        }
+        const id = chatId;
+        void (async () => {
+            try {
+                await saveMeta(chatToMeta(chat));
+            } catch (err) {
+                reportAppError(
+                    createdNewChat
+                        ? 'persist new chat failed'
+                        : 'persist meta failed',
+                    "Couldn't save chat",
+                    err
+                );
+            }
+            try {
+                await putMessage(messageToHydrated(id, userMsg));
+                if (draftAttachments.length) {
+                    await clearDraftAttachments(id);
+                }
+            } catch (err) {
+                reportAppError(
+                    'persist user msg failed',
+                    "Couldn't save your message",
+                    err
+                );
+            }
+            this.streamForChat(id, assistantId);
+        })();
     }
 
     retry(index: number): void {
@@ -846,26 +1046,35 @@ class ChatStore {
             assistantPlaceholder
         );
 
-        if (!this.demoMode) {
-            saveMeta(chatToMeta(chat)).catch((err) => {
+        this.clearChatError(chatId);
+        this.streamingChatIds.add(chatId);
+
+        if (this.demoMode) {
+            this.streamForChat(chatId, assistantId);
+            return;
+        }
+
+        void (async () => {
+            try {
+                await saveMeta(chatToMeta(chat));
+            } catch (err) {
                 reportAppError(
                     'retry: meta save failed',
                     "Couldn't save chat config",
                     err
                 );
-            });
-            deleteMessagesAfter(chatId, lastKeptMsg.id).catch((err) => {
+            }
+            try {
+                await deleteMessagesAfter(chatId, lastKeptMsg.id);
+            } catch (err) {
                 reportAppError(
                     'retry: truncate failed',
                     "Couldn't truncate chat history",
                     err
                 );
-            });
-        }
-
-        this.clearChatError(chatId);
-        this.streamingChatIds.add(chatId);
-        this.streamForChat(chatId, assistantId);
+            }
+            this.streamForChat(chatId, assistantId);
+        })();
     }
 
     stop(visibleChars: number): void {
@@ -890,10 +1099,6 @@ class ChatStore {
             return;
         }
         const history: CourierAIMessage[] = snap.messages.slice(0, -1);
-        const broadcastHistory: StoredMessage[] = history.map((m) => ({
-            chatId,
-            message: m,
-        }));
 
         const selectedModel = providersStore.providers
             .find((p) => p.id === snap.providerId)
@@ -962,7 +1167,6 @@ class ChatStore {
                     openRouterPdfEngine: settingsStore.openRouterPdfEngine,
                 },
                 meta: chatToMeta(snap),
-                history: broadcastHistory,
                 assistantMessageId: assistantId,
             },
             {
@@ -1001,21 +1205,22 @@ class ChatStore {
     applyRemoteTurnStart(
         chatId: string,
         meta: ChatMeta,
-        history: StoredMessage[],
         assistantMessageId: string
     ): void {
         const placeholder = buildAssistantPlaceholder(
             assistantMessageId,
             Date.now()
         );
-        const hydratedHistory = this.storedToMessages(history);
         let chat = this.chats.find((c) => c.id === chatId);
         if (chat) {
-            chat.messages = [...hydratedHistory, placeholder];
+            chat.messages = [
+                ...chat.messages.filter((m) => m.id !== assistantMessageId),
+                placeholder,
+            ];
         } else {
             this.chats.unshift({
                 ...meta,
-                messages: [...hydratedHistory, placeholder],
+                messages: [placeholder],
             });
             chat = this.chats.find((c) => c.id === chatId)!;
             const metaIdx = this.unloadedMetas.findIndex(
@@ -1035,6 +1240,34 @@ class ChatStore {
             placeholderId: assistantMessageId,
             chat,
         });
+
+        void this.backfillRemoteHistory(chatId, assistantMessageId);
+    }
+
+    private async backfillRemoteHistory(
+        chatId: string,
+        assistantMessageId: string
+    ): Promise<void> {
+        let stored: StoredChat | null;
+        try {
+            stored = await loadChat(chatId);
+        } catch (err) {
+            reportAppError(
+                'remote turn-start: loadChat failed',
+                "Couldn't refresh chat from storage",
+                err
+            );
+            return;
+        }
+        if (!stored) return;
+        const pipeline = this.remotePipelines.get(chatId);
+        if (!pipeline || pipeline.placeholderId !== assistantMessageId) return;
+        const assistantRef =
+            pipeline.chat.messages[pipeline.chat.messages.length - 1];
+        const history = this.storedToMessages(
+            stored.messages.filter((s) => s.message.id !== assistantMessageId)
+        );
+        pipeline.chat.messages = [...history, assistantRef];
     }
 
     applyRemoteTurnChunk(chatId: string, chunk: CourierAIChunk): void {
@@ -1046,7 +1279,7 @@ class ChatStore {
             if (chunk.type === 'text-delta')
                 pipeline.chat.streamingText += chunk.delta;
         } catch (e) {
-            console.warn(LOG, 'remote chunk apply failed', e);
+            log.warn('remote chunk apply failed', e);
         }
     }
 
@@ -1083,7 +1316,7 @@ class ChatStore {
             if (opts.userMessage) {
                 reportAppError(opts.context, opts.userMessage, err);
             } else {
-                console.error(LOG, opts.context, err);
+                log.error(opts.context, err);
             }
             return;
         }

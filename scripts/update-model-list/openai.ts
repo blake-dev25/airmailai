@@ -420,8 +420,10 @@ export async function pipelineOpenAI(
     }
 
     await applyOpenAIDocFallback(models);
+    const fallbackThinkingIds = new Set<string>();
     for (const model of models) {
         if (model.notes.some((n) => n.includes('reasoning supported'))) {
+            fallbackThinkingIds.add(model.id);
             model.thinking = fallbackReasoningThinking();
             model.notes = model.notes.filter(
                 (n) => !n.includes('reasoning supported')
@@ -440,8 +442,8 @@ export async function pipelineOpenAI(
 
     const probedModels = await probeOpenAIModels(completeModels, skipped);
 
-    const needsLevels = models
-        .filter((m) => m.notes.some((n) => n.includes('reasoning supported')))
+    const needsLevels = probedModels
+        .filter((m) => fallbackThinkingIds.has(m.id))
         .map((m) => m.id);
     const missingCutoff = probedModels
         .filter((m) => !m.knowledgeCutoff)
@@ -468,7 +470,7 @@ export function printOpenAIPipeline(r: OpenAIPipelineResult): void {
 
 export function printOpenAIWarnings(r: OpenAIPipelineResult): void {
     printIdList(
-        `${r.needsLevels.length} reasoning model(s) have OpenRouter reasoning support but no inferred levels - add to OPENAI_OVERRIDES if desired:`,
+        `${r.needsLevels.length} reasoning model(s) using generic fallback thinking levels - add to OPENAI_OVERRIDES if desired:`,
         r.needsLevels
     );
     printIdList(

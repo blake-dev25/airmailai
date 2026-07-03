@@ -13,6 +13,16 @@
     let searchValue = $state('');
     let listRef = $state<VList<Chat> | undefined>(undefined);
 
+    const exportFormats: {
+        format: 'md' | 'courierai' | 'lmstudio' | 'sillytavern';
+        label: string;
+    }[] = [
+        { format: 'md', label: 'Markdown' },
+        { format: 'courierai', label: 'CourierAI JSON' },
+        { format: 'lmstudio', label: 'LM Studio JSON' },
+        { format: 'sillytavern', label: 'SillyTavern JSONL' },
+    ];
+
     function maybeLoadMore() {
         if (!listRef || !chatStore.hasMoreChats || chatStore.isLoadingMore)
             return;
@@ -40,11 +50,13 @@
 
     let openMenuChat = $state<Chat | null>(null);
     let menuPos = $state({ top: 0, left: 0 });
+    let exportMenuOpen = $state(false);
     let renamingChatId = $state<string | null>(null);
     let renameValue = $state('');
 
     function openMenu(e: MouseEvent, chat: Chat) {
         e.stopPropagation();
+        exportMenuOpen = false;
         if (openMenuChat?.id === chat.id) {
             openMenuChat = null;
             return;
@@ -56,6 +68,7 @@
 
     function closeMenu() {
         openMenuChat = null;
+        exportMenuOpen = false;
     }
 
     function startRename(chatId: string, currentTitle: string) {
@@ -234,7 +247,7 @@
                     ? ''
                     : 's'}
             </p>
-            {#if chatStore.hasMoreChats || chatStore.searchingAll}
+            {#if (chatStore.hasMoreChats && !chatStore.allChatsSearched) || chatStore.searchingAll}
                 <button
                     type="button"
                     class="flex items-center justify-center gap-1.5 w-full px-2.5 py-1.5 mb-1 bg-transparent border border-border rounded-md text-xs text-fg-muted cursor-pointer transition-[background-color,color] duration-100 hover:bg-surface-raised hover:text-fg disabled:cursor-default"
@@ -453,18 +466,56 @@
             <Icon name="edit" />
             Rename
         </button>
-        <button
-            type="button"
-            class="flex items-center gap-2 w-full px-2.5 py-1.75 bg-transparent border-0 rounded text-sm font-sans text-fg cursor-pointer text-left transition-[background-color,color] duration-100 hover:bg-canvas"
-            onclick={(e) => {
-                e.stopPropagation();
-                chatStore.export(openMenuChat!.id);
-                closeMenu();
-            }}
+        <div
+            class="relative"
+            role="none"
+            onmouseenter={() => (exportMenuOpen = true)}
+            onmouseleave={() => (exportMenuOpen = false)}
         >
-            <Icon name="download" />
-            Export
-        </button>
+            <button
+                type="button"
+                class={[
+                    'flex items-center gap-2 w-full px-2.5 py-1.75 bg-transparent border-0 rounded text-sm font-sans text-fg cursor-pointer text-left transition-[background-color,color] duration-100 hover:bg-canvas',
+                    exportMenuOpen && 'bg-canvas',
+                ]}
+                aria-haspopup="menu"
+                aria-expanded={exportMenuOpen}
+                onclick={(e) => {
+                    e.stopPropagation();
+                    exportMenuOpen = !exportMenuOpen;
+                }}
+            >
+                <Icon name="download" />
+                Export
+                <span class="ml-auto flex items-center text-fg-muted">
+                    <Icon name="chevron-right" />
+                </span>
+            </button>
+            {#if exportMenuOpen}
+                <div class="absolute left-full top-0 z-10 pl-1.5">
+                    <div
+                        class="flex flex-col bg-surface-raised border border-border rounded-lg shadow-[0_4px_16px_rgba(0,0,0,0.18)] p-1"
+                    >
+                        {#each exportFormats as fmt (fmt.format)}
+                            <button
+                                type="button"
+                                class="flex items-center gap-2 w-full px-2.5 py-1.75 bg-transparent border-0 rounded text-sm font-sans text-fg cursor-pointer text-left whitespace-nowrap transition-[background-color,color] duration-100 hover:bg-canvas"
+                                onclick={(e) => {
+                                    e.stopPropagation();
+                                    chatStore.export(
+                                        openMenuChat!.id,
+                                        fmt.format
+                                    );
+                                    closeMenu();
+                                }}
+                            >
+                                {fmt.label}
+                            </button>
+                        {/each}
+                    </div>
+                </div>
+            {/if}
+        </div>
         <div class="h-px bg-border my-0.75"></div>
         <button
             type="button"

@@ -126,6 +126,7 @@ interface TurnResult {
     reasoningChars: number;
     sources: CourierAISourceUrlPart[];
     docs: number;
+    citations: number;
     files: number;
     toolEvents: string[];
     codeExecutions: CodeExecPart[];
@@ -139,6 +140,10 @@ function dumpChunk(chunk: CourierAIChunk): void {
         );
     } else if (chunk.type === 'source-url') {
         console.log(`  source-url ${chunk.url}`);
+    } else if (chunk.type === 'citation') {
+        console.log(
+            `  citation ${chunk.sourceId} text=${chunk.textId}@${chunk.textStart ?? '?'}-${chunk.textEnd ?? '?'} ${JSON.stringify((chunk.citedText ?? '').slice(0, 60))}`
+        );
     } else if (chunk.type === 'tool-call') {
         console.log(`  tool-call ${chunk.name} ${chunk.toolCallId}`);
     } else {
@@ -159,6 +164,7 @@ async function runTurn(
         reasoningChars: 0,
         sources: [],
         docs: 0,
+        citations: 0,
         files: 0,
         toolEvents: [],
         codeExecutions: [],
@@ -182,6 +188,9 @@ async function runTurn(
                 break;
             case 'source-document':
                 r.docs++;
+                break;
+            case 'citation':
+                r.citations++;
                 break;
             case 'file':
                 r.files++;
@@ -330,7 +339,14 @@ async function main() {
         'sources:',
         t1.sources.map((s) => s.url)
     );
-    console.log('docs:', t1.docs, ' files:', t1.files);
+    console.log(
+        'docs:',
+        t1.docs,
+        ' citations:',
+        t1.citations,
+        ' files:',
+        t1.files
+    );
     console.log('tokens:', t1.tokens);
 
     if (tool === 'web_fetch') {

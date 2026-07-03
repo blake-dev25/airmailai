@@ -1,20 +1,27 @@
+import { createLogger, normalizeLogLevel } from '@courierai/shared';
+
+declare const __LOG_LEVEL__: string | undefined;
+
 /**
- * Set WXT_DEBUG_API_LOGGING=true in the root .env (or the environment) to log
- * API request payloads to the console. Verbose - for debugging only. The store
- * zip build forces this off regardless of .env (see the ext zip script).
+ * Set COURIERAI_LOG_LEVEL in the root .env (or the environment) to control
+ * console logging. The store zip build forces 'errors' regardless of .env
+ * (see the ext zip script).
  *
- * When enabled, two distinct flows are logged, each with a `[debug]` prefix:
+ *   errors  Errors and warnings only. The default.
+ *   info    Adds operational logs: storage requests, db writes, stream
+ *           lifecycle, settings loads.
+ *   all     Adds full API request payloads, each with a `[debug]` prefix.
+ *           Verbose - two flows are logged per turn:
  *
- *   site -> ext request        Turn payload arriving at the SW from the
- *                             website (provider, model, params, hydrated
- *                             messages). Logged once per turn at stream
- *                             start.
- *
- *   <provider>: -> request     Final request body the provider shaper hands
- *                             to the upstream SDK / API endpoint. One
- *                             entry per turn, just before the call fires.
+ *             site -> ext request     Turn payload arriving at the SW from
+ *                                     the website (provider, model, params,
+ *                                     hydrated messages).
+ *             <provider>: -> request  Final request body the provider shaper
+ *                                     hands to the upstream SDK / API
+ *                                     endpoint, just before the call fires.
  */
-export const DEBUG_API_LOGGING =
-    typeof __DEBUG_API_LOGGING__ !== 'undefined'
-        ? __DEBUG_API_LOGGING__
-        : import.meta.env.WXT_DEBUG_API_LOGGING === 'true';
+export const LOG_LEVEL = normalizeLogLevel(
+    typeof __LOG_LEVEL__ !== 'undefined' ? __LOG_LEVEL__ : undefined
+);
+
+export const log = createLogger('[courierai:ext]', LOG_LEVEL);

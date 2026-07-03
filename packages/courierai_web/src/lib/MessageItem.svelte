@@ -1,8 +1,13 @@
 <script lang="ts">
     import type { FileAvailability } from '@courierai/shared';
+    import { buildCitationView, spliceCitationMarkers } from './citations';
     import { reportAppError } from './errorStore.svelte';
     import { getFileBlob } from './extension';
-    import { formatFileSize, triggerBlobDownload } from './files';
+    import {
+        formatFileSize,
+        openBlobInNewTab,
+        triggerBlobDownload,
+    } from './files';
     import Icon from './Icon.svelte';
     import MarkdownMessage from './MarkdownMessage.svelte';
     import {
@@ -26,6 +31,7 @@
         thinkingExpanded,
         sourcesExpanded,
         codeExpanded,
+        suggestionsExpanded,
         onhoverenter,
         onhoverleave,
         onstartedit,
@@ -34,6 +40,7 @@
         onthinkingtoggle,
         onsourcestoggle,
         oncodetoggle,
+        onsuggestionstoggle,
         onretry,
         ondelete,
         ondeletefile,
@@ -52,6 +59,7 @@
         thinkingExpanded: boolean;
         sourcesExpanded: boolean;
         codeExpanded: boolean;
+        suggestionsExpanded: boolean;
         onhoverenter: () => void;
         onhoverleave: () => void;
         onstartedit: (content: string, bubbleEl: HTMLElement | null) => void;
@@ -60,6 +68,7 @@
         onthinkingtoggle: () => void;
         onsourcestoggle: () => void;
         oncodetoggle: () => void;
+        onsuggestionstoggle: () => void;
         onretry: () => void;
         ondelete: () => void;
         ondeletefile: (key: string) => void;
@@ -124,40 +133,40 @@
         }
     });
 
-    const flatSources = $derived.by(() => {
-        const seen = new Set<string>();
-        const out: { url: string; title?: string }[] = [];
-        for (const part of message.parts) {
-            if (part.type !== 'source-url') continue;
-            if (!part.url || seen.has(part.url)) continue;
-            seen.add(part.url);
-            out.push({ url: part.url, title: part.title });
-        }
-        return out;
-    });
+    const citationView = $derived(buildCitationView(message));
+    const markedContent = $derived(
+        message.role === 'assistant' && citationView.anchors.length
+            ? spliceCitationMarkers(displayContent, citationView.anchors)
+            : displayContent
+    );
 
-    const docCitations = $derived.by(() => {
-        const out: Array<{
-            title: string;
-            citedText?: string;
-            startPage?: number;
-            endPage?: number;
-        }> = [];
+    const suggestionsSrcdoc = $derived.by(() => {
         for (const part of message.parts) {
-            if (part.type !== 'source-document') continue;
-            const isPage = part.location?.kind === 'page';
-            out.push({
-                title: part.title ?? '',
-                citedText: part.citedText,
-                startPage: isPage ? part.location?.start : undefined,
-                endPage: isPage ? part.location?.end : undefined,
-            });
+            if (part.type === 'google-search-suggestions') {
+                return `<base target="_blank"><style>body{margin:0;overflow:hidden}</style>${part.html}`;
+            }
         }
-        return out;
+        return null;
     });
 
     async function copyMessage(content: string) {
         await navigator.clipboard.writeText(content);
+    }
+
+    async function openDocSource(hash: string) {
+        try {
+            const blob = await getFileBlob(hash);
+            if (!blob) {
+                throw new Error('file not found in local storage');
+            }
+            openBlobInNewTab(blob.mediaType, blob.base64);
+        } catch (err) {
+            reportAppError(
+                'citation document open failed',
+                "Couldn't open the cited document",
+                err
+            );
+        }
     }
 
     async function downloadChip(chip: ChipModel) {
@@ -306,8 +315,7 @@
                 class={editTextareaClass}
                 rows="1"
                 style={editingDims ? `min-height: ${editingDims.h}px;` : ''}
-                bind:value={editingText}
-            ></textarea>
+                bind:value={editingText}></textarea>
             <div class="flex gap-1.5">
                 <button
                     type="button"
@@ -327,34 +335,10 @@
                 </div>
             {:else}
                 <div bind:this={bubbleEl} class={bubbleAssistant}>
-                    <MarkdownMessage content={displayContent} />
-                    {#if docCitations.length}
-                        <div class="mt-2 pt-2 border-t border-current/15">
-                            <div
-                                class="flex flex-wrap gap-1.5 text-xs leading-[1.4] opacity-80"
-                            >
-                                {#each docCitations as cite, i (i)}
-                                    <span
-                                        class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-current/20 max-w-full"
-                                        title={cite.citedText ?? ''}
-                                    >
-                                        <Icon name="file" />
-                                        <span
-                                            class="overflow-hidden text-ellipsis whitespace-nowrap max-w-60"
-                                            >{cite.title}{cite.startPage !==
-                                            undefined
-                                                ? cite.endPage !== undefined &&
-                                                  cite.endPage !==
-                                                      cite.startPage
-                                                    ? ` p.${cite.startPage}-${cite.endPage}`
-                                                    : ` p.${cite.startPage}`
-                                                : ''}</span
-                                        >
-                                    </span>
-                                {/each}
-                            </div>
-                        </div>
-                    {/if}
+                    <MarkdownMessage
+                        content={markedContent}
+                        citations={citationView.anchors}
+                    />
                     {#if chips.length}
                         <div
                             class="mt-2 pt-2 border-t border-current/15 flex flex-wrap gap-1.5"
@@ -423,7 +407,7 @@
                             {/if}
                         </div>
                     {/if}
-                    {#if flatSources.length}
+                    {#if citationView.sources.length}
                         <div class="mt-2 pt-2 border-t border-current/15">
                             <button
                                 type="button"
@@ -442,19 +426,73 @@
                                 <ol
                                     class="mt-1.5 pl-5 text-xs leading-[1.6] opacity-80 list-decimal"
                                 >
-                                    {#each flatSources as source (source.url)}
+                                    {#each citationView.sources as source (source.sourceId)}
                                         <li>
-                                            <a
-                                                href={source.url}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                class="text-accent-fg hover:underline wrap-break-word"
-                                                >{source.title?.trim() ||
-                                                    source.url}</a
-                                            >
+                                            {#if source.kind === 'document'}
+                                                {#if source.hash}
+                                                    {@const hash = source.hash}
+                                                    <button
+                                                        type="button"
+                                                        class="inline-flex items-center gap-1 p-0 bg-transparent border-0 font-sans text-xs text-accent-fg cursor-pointer hover:underline wrap-break-word"
+                                                        onclick={() =>
+                                                            openDocSource(hash)}
+                                                    >
+                                                        <Icon name="file" />
+                                                        {source.title?.trim() ||
+                                                            'Document'}
+                                                    </button>
+                                                {:else}
+                                                    <span
+                                                        class="inline-flex items-center gap-1 wrap-break-word"
+                                                    >
+                                                        <Icon name="file" />
+                                                        {source.title?.trim() ||
+                                                            'Document'}
+                                                    </span>
+                                                {/if}
+                                            {:else if source.linkable}
+                                                <a
+                                                    href={source.url}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    class="text-accent-fg hover:underline wrap-break-word"
+                                                    >{source.title?.trim() ||
+                                                        source.url}</a
+                                                >
+                                            {:else}
+                                                <span class="wrap-break-word"
+                                                    >{source.title?.trim() ||
+                                                        source.url}</span
+                                                >
+                                            {/if}
                                         </li>
                                     {/each}
                                 </ol>
+                            {/if}
+                        </div>
+                    {/if}
+                    {#if suggestionsSrcdoc}
+                        <div class="mt-2 pt-2 border-t border-current/15">
+                            <button
+                                type="button"
+                                class={expandoBtnClass}
+                                onclick={onsuggestionstoggle}
+                            >
+                                <span>Google Search Suggestions</span>
+                                <Icon
+                                    name="chevron-right"
+                                    class="transition-transform duration-200 {suggestionsExpanded
+                                        ? 'rotate-90'
+                                        : ''}"
+                                />
+                            </button>
+                            {#if suggestionsExpanded}
+                                <iframe
+                                    sandbox="allow-popups allow-popups-to-escape-sandbox"
+                                    srcdoc={suggestionsSrcdoc}
+                                    title="Google Search Suggestions"
+                                    class="mt-1.5 w-full h-14 border-0"
+                                ></iframe>
                             {/if}
                         </div>
                     {/if}

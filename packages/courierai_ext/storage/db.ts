@@ -9,6 +9,7 @@ import type {
     StoredChat,
     StoredMessage,
 } from '@courierai/shared';
+import { log } from '../debug';
 import { bytesToBase64 } from './encoding';
 
 interface IdbUsage {
@@ -18,7 +19,6 @@ interface IdbUsage {
 
 const DB_NAME = 'courierai';
 const DB_VERSION = 14;
-const LOG = '[courierai:ext]';
 
 const STORE_MESSAGES = 'chat_messages';
 const STORE_META = 'chat_meta';
@@ -72,7 +72,7 @@ function openDb(): Promise<IDBDatabase> {
             db.createObjectStore(STORE_FILE_META, { keyPath: 'hash' });
         };
         req.onsuccess = () => {
-            console.log(LOG, 'IndexedDB opened');
+            log.info('IndexedDB opened');
             resolve(req.result);
         };
         req.onerror = () => reject(req.error);
@@ -162,8 +162,7 @@ async function ensureFileRef(
     freshBlob?: Blob
 ): Promise<void> {
     const existing = (await reqAsPromise(stores.fileMetaStore.get(hash))) as
-        | FileMetaRecord
-        | undefined;
+        FileMetaRecord | undefined;
     const blobKey = await reqAsPromise(stores.filesStore.getKey(hash));
     if (blobKey === undefined) {
         if (freshBlob) {
@@ -200,8 +199,7 @@ async function unlistChatFromHashes(
     const refs: ProviderFileRef[] = [];
     for (const hash of hashes) {
         const rec = (await reqAsPromise(stores.fileMetaStore.get(hash))) as
-            | FileMetaRecord
-            | undefined;
+            FileMetaRecord | undefined;
         if (!rec) continue;
         const chats = rec.chats.filter((c) => c !== chatId);
         if (chats.length === rec.chats.length) continue;
@@ -242,8 +240,7 @@ async function reconcileChatFileRefs(
         cursorReq.onerror = () => reject(cursorReq.error);
     });
     const meta = (await reqAsPromise(stores.chatMetaStore.get(chatId))) as
-        | ChatMeta
-        | undefined;
+        ChatMeta | undefined;
     for (const d of meta?.draftAttachments ?? []) {
         if (hashes.has(d.hash)) remaining.add(d.hash);
     }
@@ -271,21 +268,15 @@ function freshBlobsFromHydrated(msg: HydratedStoredMessage): Map<string, Blob> {
 export async function dbPutMessage(
     msg: HydratedStoredMessage
 ): Promise<ProviderFileRef[]> {
-    console.log(LOG, 'db: put message', msg.chatId, msg.message.id);
+    log.info('db: put message', msg.chatId, msg.message.id);
     const freshBlobs = freshBlobsFromHydrated(msg);
     const db = await getDb();
     const { tx, stores } = fileTx(db);
 
     const meta = (await reqAsPromise(stores.chatMetaStore.get(msg.chatId))) as
-        | ChatMeta
-        | undefined;
+        ChatMeta | undefined;
     if (!meta) {
-        console.log(
-            LOG,
-            'db: chat gone, skipping put',
-            msg.chatId,
-            msg.message.id
-        );
+        log.info('db: chat gone, skipping put', msg.chatId, msg.message.id);
         tx.abort();
         return [];
     }
@@ -322,7 +313,7 @@ export async function dbDeleteMessage(
     chatId: string,
     messageId: string
 ): Promise<ProviderFileRef[]> {
-    console.log(LOG, 'db: delete message', chatId, messageId);
+    log.info('db: delete message', chatId, messageId);
     const db = await getDb();
     const { tx, stores } = fileTx(db);
 
@@ -347,7 +338,7 @@ export async function dbDeleteMessagesAfter(
     chatId: string,
     lastKeptId: string
 ): Promise<ProviderFileRef[]> {
-    console.log(LOG, 'db: delete messages after', chatId, lastKeptId);
+    log.info('db: delete messages after', chatId, lastKeptId);
     const db = await getDb();
     const { tx, stores } = fileTx(db);
 
@@ -355,7 +346,7 @@ export async function dbDeleteMessagesAfter(
         stores.messagesStore.get([chatId, lastKeptId])
     )) as StoredMessage | undefined;
     if (!boundary) {
-        console.log(LOG, 'db: boundary message missing, nothing to truncate');
+        log.info('db: boundary message missing, nothing to truncate');
         await txDone(tx);
         return [];
     }
@@ -397,13 +388,12 @@ export async function dbDeleteMessagesAfter(
 }
 
 export async function dbSaveMeta(meta: ChatMeta): Promise<void> {
-    console.log(LOG, 'db: save meta', meta.id);
+    log.info('db: save meta', meta.id);
     const db = await getDb();
     const tx = db.transaction(STORE_META, 'readwrite');
     const store = tx.objectStore(STORE_META);
     const existing = (await reqAsPromise(store.get(meta.id))) as
-        | ChatMeta
-        | undefined;
+        ChatMeta | undefined;
     store.put({
         ...meta,
         draftAttachments: existing?.draftAttachments,
@@ -418,8 +408,7 @@ export async function dbGetMeta(chatId: string): Promise<ChatMeta | undefined> {
     const db = await getDb();
     const tx = db.transaction(STORE_META, 'readonly');
     return (await reqAsPromise(tx.objectStore(STORE_META).get(chatId))) as
-        | ChatMeta
-        | undefined;
+        ChatMeta | undefined;
 }
 
 export async function dbSetContainer(
@@ -428,13 +417,12 @@ export async function dbSetContainer(
     containerExpiresAt: string | undefined,
     containerFileIds: string[] | undefined
 ): Promise<void> {
-    console.log(LOG, 'db: set container', chatId, containerId);
+    log.info('db: set container', chatId, containerId);
     const db = await getDb();
     const tx = db.transaction(STORE_META, 'readwrite');
     const store = tx.objectStore(STORE_META);
     const meta = (await reqAsPromise(store.get(chatId))) as
-        | ChatMeta
-        | undefined;
+        ChatMeta | undefined;
     if (!meta) {
         await txDone(tx);
         return;
@@ -449,12 +437,11 @@ export async function dbStageDraftAttachment(
     base64: string
 ): Promise<void> {
     const hash = attachment.hash;
-    console.log(LOG, 'db: stage draft attachment', chatId, hash);
+    log.info('db: stage draft attachment', chatId, hash);
     const db = await getDb();
     const { tx, stores } = fileTx(db);
     const meta = (await reqAsPromise(stores.chatMetaStore.get(chatId))) as
-        | ChatMeta
-        | undefined;
+        ChatMeta | undefined;
     if (!meta) {
         tx.abort();
         throw new Error(`Chat ${chatId} not found for draft attachment`);
@@ -481,12 +468,11 @@ export async function dbRemoveDraftAttachment(
     chatId: string,
     key: string
 ): Promise<ProviderFileRef[]> {
-    console.log(LOG, 'db: remove draft attachment', chatId, key);
+    log.info('db: remove draft attachment', chatId, key);
     const db = await getDb();
     const { tx, stores } = fileTx(db);
     const meta = (await reqAsPromise(stores.chatMetaStore.get(chatId))) as
-        | ChatMeta
-        | undefined;
+        ChatMeta | undefined;
     const target = meta?.draftAttachments?.find((d) => d.hash === key);
     if (!meta || !target) {
         await txDone(tx);
@@ -508,12 +494,11 @@ export async function dbRemoveDraftAttachment(
 export async function dbClearDraftAttachments(
     chatId: string
 ): Promise<ProviderFileRef[]> {
-    console.log(LOG, 'db: clear draft attachments', chatId);
+    log.info('db: clear draft attachments', chatId);
     const db = await getDb();
     const { tx, stores } = fileTx(db);
     const meta = (await reqAsPromise(stores.chatMetaStore.get(chatId))) as
-        | ChatMeta
-        | undefined;
+        ChatMeta | undefined;
     if (!meta || !meta.draftAttachments?.length) {
         await txDone(tx);
         return [];
@@ -529,14 +514,13 @@ export async function dbClearDraftAttachments(
 }
 
 export async function dbDeleteChat(chatId: string): Promise<ProviderFileRef[]> {
-    console.log(LOG, 'db: delete chat', chatId);
+    log.info('db: delete chat', chatId);
     const db = await getDb();
     const { tx, stores } = fileTx(db);
     const refs: ProviderFileRef[] = [];
     const hashes = new Set<string>();
     const meta = (await reqAsPromise(stores.chatMetaStore.get(chatId))) as
-        | ChatMeta
-        | undefined;
+        ChatMeta | undefined;
     for (const d of meta?.draftAttachments ?? []) {
         hashes.add(d.hash);
     }
@@ -566,7 +550,7 @@ export async function dbDeleteChat(chatId: string): Promise<ProviderFileRef[]> {
 }
 
 export async function dbClearChats(): Promise<void> {
-    console.log(LOG, 'db: clear chats');
+    log.info('db: clear chats');
     const db = await getDb();
     const { tx, stores } = fileTx(db);
     stores.messagesStore.clear();
@@ -594,7 +578,7 @@ export async function dbClearChats(): Promise<void> {
 }
 
 export async function dbWipeAll(): Promise<void> {
-    console.log(LOG, 'db: wipe all');
+    log.info('db: wipe all');
     const db = await getDb();
     const { tx, stores } = fileTx(db);
     stores.messagesStore.clear();
@@ -611,7 +595,7 @@ export async function dbLoadChatMetas(): Promise<ChatMeta[]> {
         const req = tx.objectStore(STORE_META).getAll();
         req.onsuccess = () => {
             const metas = req.result as ChatMeta[];
-            console.log(LOG, 'db: load chat metas', `${metas.length} chats`);
+            log.info('db: load chat metas', `${metas.length} chats`);
             resolve(metas);
         };
         req.onerror = () => reject(req.error);
@@ -639,19 +623,6 @@ async function loadMessagesForChat(
     });
 }
 
-export async function dbLoadChats(): Promise<StoredChat[]> {
-    const db = await getDb();
-    const metas = await dbLoadChatMetas();
-    const chats = await Promise.all(
-        metas.map(async (meta) => ({
-            id: meta.id,
-            messages: await loadMessagesForChat(db, meta.id),
-        }))
-    );
-    console.log(LOG, 'db: load chats', `${chats.length} chats`);
-    return chats;
-}
-
 export async function dbLoadChatsByIds(ids: string[]): Promise<StoredChat[]> {
     if (ids.length === 0) return [];
     const db = await getDb();
@@ -661,7 +632,7 @@ export async function dbLoadChatsByIds(ids: string[]): Promise<StoredChat[]> {
             messages: await loadMessagesForChat(db, id),
         }))
     );
-    console.log(LOG, 'db: load chats by ids', `${chats.length} chats`);
+    log.info('db: load chats by ids', `${chats.length} chats`);
     return chats;
 }
 
@@ -672,11 +643,11 @@ export async function dbLoadChat(chatId: string): Promise<StoredChat | null> {
         tx.objectStore(STORE_META).get(chatId)
     )) as ChatMeta | undefined;
     if (!meta) {
-        console.log(LOG, 'db: load chat', chatId, 'not found');
+        log.info('db: load chat', chatId, 'not found');
         return null;
     }
     const messages = await loadMessagesForChat(db, chatId);
-    console.log(LOG, 'db: load chat', chatId, `(${messages.length} messages)`);
+    log.info('db: load chat', chatId, `(${messages.length} messages)`);
     return { id: chatId, messages };
 }
 
@@ -703,7 +674,7 @@ export async function dbGetStorageUsage(): Promise<IdbUsage> {
     const estimate = await navigator.storage.estimate();
     const total = estimate.usage ?? 0;
     const chatHistoryBytes = Math.max(0, total - filesBytes);
-    console.log(LOG, 'db: storage usage', {
+    log.info('db: storage usage', {
         chatHistoryBytes,
         filesBytes,
         total,
@@ -757,7 +728,7 @@ export async function dbListLocalFiles(): Promise<LocalFileInfo[]> {
 }
 
 export async function dbDeleteStoredFile(hash: string): Promise<string[]> {
-    console.log(LOG, 'db: delete stored file', hash);
+    log.info('db: delete stored file', hash);
     const db = await getDb();
     const { tx, stores } = fileTx(db);
     const affected = new Set<string>();
@@ -775,8 +746,7 @@ export async function dbDeleteStoredFile(hash: string): Promise<string[]> {
     }
 
     const rec = (await reqAsPromise(stores.fileMetaStore.get(hash))) as
-        | FileMetaRecord
-        | undefined;
+        FileMetaRecord | undefined;
     for (const chatId of rec?.chats ?? []) affected.add(chatId);
     stores.filesStore.delete(hash);
 
@@ -801,8 +771,7 @@ export async function dbGetFileFacts(
     for (const hash of hashes) {
         const blobKey = await reqAsPromise(filesStore.getKey(hash));
         const rec = (await reqAsPromise(fileMetaStore.get(hash))) as
-            | FileMetaRecord
-            | undefined;
+            FileMetaRecord | undefined;
         const entry = rec?.providers[provider];
         facts[hash] = {
             local: blobKey !== undefined,
@@ -853,8 +822,7 @@ export async function dbRecordProviderFile(
     const tx = db.transaction(STORE_FILE_META, 'readwrite');
     const store = tx.objectStore(STORE_FILE_META);
     const existing = (await reqAsPromise(store.get(hash))) as
-        | FileMetaRecord
-        | undefined;
+        FileMetaRecord | undefined;
     const rec: FileMetaRecord = existing ?? {
         hash,
         filename,

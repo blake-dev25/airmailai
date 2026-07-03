@@ -14,6 +14,26 @@ function readVersion(): string {
     return '0.0.0.1';
 }
 
+function readLogLevel(): string {
+    if (process.env.COURIERAI_LOG_LEVEL) {
+        return process.env.COURIERAI_LOG_LEVEL;
+    }
+    let env: string;
+    try {
+        env = readFileSync(join(__dirname, '../..', '.env'), 'utf-8');
+    } catch {
+        return 'errors';
+    }
+    for (const line of env.split('\n')) {
+        const eq = line.indexOf('=');
+        if (eq < 0) continue;
+        if (line.slice(0, eq).trim() === 'COURIERAI_LOG_LEVEL') {
+            return line.slice(eq + 1).trim();
+        }
+    }
+    return 'errors';
+}
+
 function readLegalVersion(): string {
     const hash = createHash('sha256');
     const legalDir = join(__dirname, 'static/legal');
@@ -43,6 +63,7 @@ export default defineConfig({
     define: {
         __APP_VERSION__: JSON.stringify(readVersion()),
         __LEGAL_VERSION__: JSON.stringify(readLegalVersion()),
+        __LOG_LEVEL__: JSON.stringify(readLogLevel()),
     },
     plugins: [tailwindcss(), svelte()],
     build: {

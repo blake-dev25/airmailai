@@ -23,8 +23,10 @@ import { GoogleGenAI } from '@google/genai';
 import OpenAI from 'openai';
 import {
     fetchAnthropic,
+    parseAnthropicOverview,
     printAnthropicSummary,
     printAnthropicWarnings,
+    scrapeAnthropicOverviewRaw,
 } from './update-model-list/anthropic';
 import {
     type OpenAIPipelineResult,
@@ -55,11 +57,12 @@ import {
 } from './update-model-list/shared';
 import {
     ANTHROPIC_OVERRIDES,
+    ANTHROPIC_TOOLS_LATEST,
     GOOGLE_OVERRIDES,
     OPENAI_OVERRIDES,
     type ModelOverride,
+    applyOverride,
 } from './update-model-list/overrides';
-import { sortLevels } from './update-model-list/shared';
 import { updateTiersFile } from './update-model-list/tiers';
 
 function overridesForProvider(provider: string): Record<string, ModelOverride> {
@@ -78,38 +81,15 @@ function reapplyOverrides(provider: string, models: DerivedModel[]): void {
     }
     for (const m of models) {
         const o = byAliasOrId.get(m.id);
-        if (!o) continue;
-        if (o.idAlias) m.id = o.idAlias;
-        if (o.name !== undefined) m.name = o.name;
-        if (o.contextWindow !== undefined) m.contextWindow = o.contextWindow;
-        if (o.maxOutputTokens !== undefined)
-            m.maxOutputTokens = o.maxOutputTokens;
-        if (o.temperatureMax !== undefined) m.temperatureMax = o.temperatureMax;
-        if (o.defaultTemperature !== undefined)
-            m.defaultTemperature = o.defaultTemperature;
-        if (o.knowledgeCutoff !== undefined)
-            m.knowledgeCutoff = o.knowledgeCutoff;
-        if (o.thinking) {
-            const adaptive = o.thinking.adaptive ?? m.thinking?.adaptive;
-            m.thinking = {
-                levels: sortLevels(o.thinking.levels),
-                defaultLevel: o.thinking.defaultLevel,
-                ...(adaptive ? { adaptive } : {}),
-            };
+        if (o) applyOverride(m, o);
+        if (provider === 'anthropic' && !m.tools) {
+            m.tools = ANTHROPIC_TOOLS_LATEST;
         }
-        if (o.thinkingExtraLevels && m.thinking) {
-            m.thinking.levels = sortLevels([
-                ...m.thinking.levels,
-                ...o.thinkingExtraLevels,
-            ]);
-        }
-        if (o.tools) m.tools = o.tools;
     }
 }
 
 const WRITE = process.argv.includes('--write');
 const VERBOSE = process.argv.includes('--verbose');
-const RETRIEVE_TEST = process.argv.includes('--retrieve-test');
 const MODEL_TEST_IDX = process.argv.indexOf('--model-test');
 const MODEL_TEST_PROVIDER =
     MODEL_TEST_IDX >= 0 ? process.argv[MODEL_TEST_IDX + 1] : undefined;
@@ -123,6 +103,7 @@ const GOOGLE_SCRAPE_TEST_ID =
     GOOGLE_SCRAPE_TEST_IDX >= 0
         ? process.argv[GOOGLE_SCRAPE_TEST_IDX + 1]
         : undefined;
+const ANTHROPIC_SCRAPE_TEST = process.argv.includes('--anthropic-scrape-test');
 
 const PROVIDER_FLAGS = new Set(
     process.argv.filter((a) =>
@@ -171,7 +152,8 @@ async function writeFromFiles(paths: string[]): Promise<void> {
     }
 
     const tiersPath = resolve(MODELS_DIR, 'tiers.ts');
-    let tiersText = await Bun.file(tiersPath).text();
+    const originalTiersText = await Bun.file(tiersPath).text();
+    let tiersText = originalTiersText;
     const newTiersIds: string[] = [];
     const staleByProvider: Array<{
         provider: string;
@@ -213,8 +195,12 @@ async function writeFromFiles(paths: string[]): Promise<void> {
         }
     }
 
-    await Bun.write(tiersPath, tiersText);
-    console.log(`✓ wrote ${tiersPath}`);
+    if (tiersText !== originalTiersText) {
+        await Bun.write(tiersPath, tiersText);
+        console.log(`✓ wrote ${tiersPath}`);
+    } else {
+        console.log('tiers.ts unchanged');
+    }
 }
 
 type ModelTestProvider = 'anthropic' | 'openai' | 'google';
@@ -312,38 +298,7 @@ async function modelTest(
     );
 }
 
-async function retrieveTest(): Promise<void> {
-    const anthropicKey = process.env.ANTHROPIC_API_KEY;
-    const openaiKey = process.env.OPENAI_API_KEY;
-    const googleKey = process.env.GOOGLE_API_KEY;
-    const openrouterKey = process.env.OPENROUTER_API_KEY;
-    if (!anthropicKey) throw new Error('ANTHROPIC_API_KEY missing from .env');
-    if (!openaiKey) throw new Error('OPENAI_API_KEY missing from .env');
-    if (!googleKey) throw new Error('GOOGLE_API_KEY missing from .env');
-    if (!openrouterKey) throw new Error('OPENROUTER_API_KEY missing from .env');
-
-    const a = new Anthropic({ apiKey: anthropicKey });
-    const o = new OpenAI({ apiKey: openaiKey });
-    const g = new GoogleGenAI({ apiKey: googleKey });
-
-    console.log('--- Anthropic models.retrieve("claude-opus-4-7") ---');
-    const aModel = await a.models.retrieve('claude-opus-4-7');
-    console.log(JSON.stringify(aModel, null, 2));
-
-    console.log('\n--- OpenAI models.retrieve("gpt-5.5-pro") ---');
-    const oModel = await o.models.retrieve('gpt-5.5-pro');
-    console.log(JSON.stringify(oModel, null, 2));
-
-    console.log('\n--- Google models.get("gemini-2.5-flash") ---');
-    const gModel = await g.models.get({ model: 'gemini-2.5-flash' });
-    console.log(JSON.stringify(gModel, null, 2));
-}
-
 async function main(): Promise<void> {
-    if (RETRIEVE_TEST) {
-        await retrieveTest();
-        return;
-    }
     if (MODEL_TEST_IDX >= 0) {
         if (!isModelTestProvider(MODEL_TEST_PROVIDER) || !MODEL_TEST_ID) {
             throw new Error(
@@ -366,6 +321,14 @@ async function main(): Promise<void> {
             GOOGLE_SCRAPE_TEST_ID,
             scrapeGoogleDocsRaw,
             parseGoogleDoc
+        );
+        return;
+    }
+    if (ANTHROPIC_SCRAPE_TEST) {
+        await runScrapeTest(
+            'models-overview',
+            () => scrapeAnthropicOverviewRaw(),
+            (_id, md) => Object.fromEntries(parseAnthropicOverview(md))
         );
         return;
     }
@@ -445,7 +408,8 @@ async function main(): Promise<void> {
     }
 
     const tiersPath = resolve(MODELS_DIR, 'tiers.ts');
-    let tiersText = await Bun.file(tiersPath).text();
+    const originalTiersText = await Bun.file(tiersPath).text();
+    let tiersText = originalTiersText;
     const newTiersIds: string[] = [];
     const staleByProvider: Array<{
         provider: string;
@@ -487,7 +451,7 @@ async function main(): Promise<void> {
         }
     }
 
-    const tiersChanged = newTiersIds.length > 0;
+    const tiersChanged = tiersText !== originalTiersText;
     if (newTiersIds.length > 0) {
         console.log(
             `\nAdding ${newTiersIds.length} new id(s) to tiers.ts as 'legacy':`

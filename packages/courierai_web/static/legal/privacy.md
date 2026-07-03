@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Last updated:** June 12, 2026
+**Last updated:** July 1, 2026
 
 ## The short version
 
@@ -178,11 +178,10 @@ rights.
 ## Security
 
 Your API keys stay in browser-managed extension storage, not on servers
-operated by us. By default, they remain only in the browser profile
-where you saved them. If you enable API-key sync, your browser may keep
-a synced copy through your browser account so other signed-in browsers
-can restore it. When you make a request, the relevant key is sent over
-HTTPS only to the provider you chose.
+operated by us. They remain only in the browser profile where you saved
+them: keys are kept in the extension's local (non-synced) storage and
+are never included in browser sync. When you make a request, the
+relevant key is sent over HTTPS only to the provider you chose.
 
 You should treat any API key as a sensitive credential. If you suspect
 a key has been compromised, revoke it in the provider's dashboard.

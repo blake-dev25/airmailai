@@ -23,6 +23,8 @@ export type CourierAIPart =
     | CourierAIToolPart
     | CourierAISourceUrlPart
     | CourierAISourceDocumentPart
+    | CourierAICitationPart
+    | CourierAIGoogleSearchSuggestionsPart
     | CourierAIFilePart;
 
 export interface CourierAITextPart {
@@ -68,8 +70,22 @@ export interface CourierAISourceDocumentPart {
     sourceId: string;
     title?: string;
     mediaType?: string;
+    hash?: string;
+}
+
+export interface CourierAICitationPart {
+    type: 'citation';
+    sourceId: string;
+    textIndex: number;
+    textEnd: number;
+    textStart?: number;
     citedText?: string;
     location?: { kind: 'page' | 'char'; start: number; end: number };
+}
+
+export interface CourierAIGoogleSearchSuggestionsPart {
+    type: 'google-search-suggestions';
+    html: string;
 }
 
 export interface CourierAIFilePart {
@@ -135,9 +151,18 @@ export type CourierAIChunk =
           sourceId: string;
           title?: string;
           mediaType?: string;
+          hash?: string;
+      }
+    | {
+          type: 'citation';
+          sourceId: string;
+          textId: string;
+          textStart?: number;
+          textEnd?: number;
           citedText?: string;
           location?: { kind: 'page' | 'char'; start: number; end: number };
       }
+    | { type: 'google-search-suggestions'; html: string }
     | {
           type: 'file';
           filename: string;
@@ -194,7 +219,6 @@ export interface TurnStartRequest {
     system?: string;
     params?: Record<string, unknown>;
     meta: ChatMeta;
-    history: StoredMessage[];
     assistantMessageId: string;
 }
 
@@ -218,7 +242,6 @@ export type BroadcastEvent =
           chatId: string;
           sourceTabId: string;
           meta: ChatMeta;
-          history: StoredMessage[];
           assistantMessageId: string;
       }
     | {
@@ -231,6 +254,8 @@ export type BroadcastEvent =
     | { type: 'turn-aborted'; chatId: string }
     | { type: 'turn-truncate'; chatId: string; charLen: number }
     | { type: 'files-changed'; chatIds: string[] }
+    | { type: 'meta-changed'; meta: ChatMeta }
+    | { type: 'chat-deleted'; chatId: string }
     | { type: 'chats-cleared' };
 
 export interface BroadcastRegisterRequest {
@@ -241,8 +266,7 @@ export interface BroadcastKeepaliveRequest {
     type: 'keepalive';
 }
 export type BroadcastRequest =
-    | BroadcastRegisterRequest
-    | BroadcastKeepaliveRequest;
+    BroadcastRegisterRequest | BroadcastKeepaliveRequest;
 
 export interface UserSettings {
     theme: string;
@@ -370,7 +394,7 @@ export type StorageRequest =
     | { type: 'has_keys'; providers: string[] }
     | { type: 'save_settings'; settings: Partial<UserSettings> }
     | { type: 'load_settings' }
-    | { type: 'save_meta'; meta: ChatMeta }
+    | { type: 'save_meta'; meta: ChatMeta; sourceTabId?: string }
     | {
           type: 'stage_draft_attachment';
           chatId: string;
@@ -383,9 +407,8 @@ export type StorageRequest =
     | { type: 'put_message'; message: HydratedStoredMessage }
     | { type: 'delete_message'; chatId: string; messageId: string }
     | { type: 'delete_messages_after'; chatId: string; lastKeptId: string }
-    | { type: 'delete_chat'; chatId: string }
+    | { type: 'delete_chat'; chatId: string; sourceTabId?: string }
     | { type: 'load_chat_metas' }
-    | { type: 'load_chats' }
     | { type: 'load_chats_by_ids'; ids: string[] }
     | { type: 'load_chat'; chatId: string }
     | { type: 'load_openrouter_models' }
@@ -399,8 +422,8 @@ export type StorageRequest =
           sourceTabId: string;
       }
     | { type: 'get_storage_usage' }
-    | { type: 'clear_chats'; sourceTabId: string }
-    | { type: 'clear_all'; sourceTabId: string };
+    | { type: 'clear_chats'; sourceTabId?: string }
+    | { type: 'clear_all'; sourceTabId?: string };
 
 export interface StorageUsage {
     localSettingsBytes: number;

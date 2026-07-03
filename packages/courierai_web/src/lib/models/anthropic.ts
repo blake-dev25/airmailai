@@ -7,17 +7,43 @@ export const ANTHROPIC: ProviderOption = {
     name: 'Anthropic',
     models: [
         {
+            id: 'claude-sonnet-5',
+            name: 'Claude Sonnet 5',
+            params: {
+                contextWindow: 1000000,
+                maxOutputTokens: 128000,
+                defaultMaxTokens: 8192,
+                knowledgeCutoff: 'Jan 2026',
+                thinking: {
+                    levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
+                    defaultLevel: 'high',
+                    adaptive: 'required',
+                },
+            },
+            tools: {
+                webSearch: 'web_search_20260209',
+                webFetch: 'web_fetch_20260209',
+                codeExecution: 'code_execution_20260120',
+            },
+        },
+        {
             id: 'claude-fable-5',
             name: 'Claude Fable 5',
             params: {
                 contextWindow: 1000000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
+                knowledgeCutoff: 'Jan 2026',
                 thinking: {
                     levels: ['low', 'medium', 'high', 'xhigh', 'max'],
                     defaultLevel: 'high',
                     adaptive: 'required',
                 },
+            },
+            tools: {
+                webSearch: 'web_search_20260209',
+                webFetch: 'web_fetch_20260209',
+                codeExecution: 'code_execution_20260120',
             },
         },
         {
@@ -113,6 +139,7 @@ export const ANTHROPIC: ProviderOption = {
                 defaultMaxTokens: 8192,
                 temperatureMax: 1,
                 defaultTemperature: 1,
+                knowledgeCutoff: 'May 2025',
                 thinking: {
                     levels: ['none', 'low', 'medium', 'high'],
                     defaultLevel: 'high',
@@ -154,6 +181,7 @@ export const ANTHROPIC: ProviderOption = {
                 defaultMaxTokens: 8192,
                 temperatureMax: 1,
                 defaultTemperature: 1,
+                knowledgeCutoff: 'Jan 2025',
                 thinking: {
                     levels: ['none', 'low', 'medium', 'high'],
                     defaultLevel: 'none',
@@ -174,46 +202,7 @@ export const ANTHROPIC: ProviderOption = {
                 defaultMaxTokens: 8192,
                 temperatureMax: 1,
                 defaultTemperature: 1,
-                thinking: {
-                    levels: ['none', 'low', 'medium', 'high'],
-                    defaultLevel: 'none',
-                },
-            },
-            tools: {
-                webSearch: 'web_search_20250305',
-                webFetch: 'web_fetch_20250910',
-                codeExecution: 'code_execution_20250825',
-            },
-        },
-        {
-            id: 'claude-opus-4-20250514',
-            name: 'Claude Opus 4',
-            params: {
-                contextWindow: 200000,
-                maxOutputTokens: 32000,
-                defaultMaxTokens: 8192,
-                temperatureMax: 1,
-                defaultTemperature: 1,
-                thinking: {
-                    levels: ['none', 'low', 'medium', 'high'],
-                    defaultLevel: 'none',
-                },
-            },
-            tools: {
-                webSearch: 'web_search_20250305',
-                webFetch: 'web_fetch_20250910',
-                codeExecution: 'code_execution_20250825',
-            },
-        },
-        {
-            id: 'claude-sonnet-4-20250514',
-            name: 'Claude Sonnet 4',
-            params: {
-                contextWindow: 1000000,
-                maxOutputTokens: 64000,
-                defaultMaxTokens: 8192,
-                temperatureMax: 1,
-                defaultTemperature: 1,
+                knowledgeCutoff: 'Jan 2025',
                 thinking: {
                     levels: ['none', 'low', 'medium', 'high'],
                     defaultLevel: 'none',

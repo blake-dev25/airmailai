@@ -81,7 +81,8 @@ const MONTH_ABBR: Record<string, string> = {
 
 export function parseGoogleDoc(id: string, md: string): ScrapedGoogle {
     const hasTextOutput = /\*\*Output\*\*\s+Text\b/.test(md);
-    const thinkingSupported = /\*\*Thinking\*\*\s+Supported\b/.test(md);
+    const thinkingSupported =
+        /\*\*(?:Thinking|\[Thinking\]\([^)]*\))\*\*\s+Supported\b/.test(md);
     const koMatch = md.match(/Knowledge cutoff\s+([A-Z][a-z]+ \d{4})/);
     const knowledgeCutoff = koMatch
         ? koMatch[1].replace(/^[A-Z][a-z]+/, (m) => MONTH_ABBR[m] ?? m)
@@ -112,6 +113,7 @@ function deriveGoogle(
         supportsOpenRouterParam(info, 'reasoning')
     ) {
         thinking = fallbackReasoningThinking();
+        notes.push('thinking supported but no levels - generic fallback used');
     }
 
     if (m.inputTokenLimit == null && info?.contextWindow == null) {

@@ -1,9 +1,13 @@
 <script lang="ts">
+    import type { CitationAnchor } from './citations';
     import { reportAppError } from './errorStore.svelte';
     import { initMarkdown, isHighlighterReady } from './markdown.svelte';
     import { streamingMarkdown } from './markdown-stream';
 
-    let { content }: { content: string } = $props();
+    let {
+        content,
+        citations,
+    }: { content: string; citations?: CitationAnchor[] } = $props();
 
     let hasCodeBlock = $derived(content.includes('```'));
 
@@ -22,7 +26,11 @@
 
 <div
     class="prose prose-sm max-w-none font-(family-name:--font-message)"
-    use:streamingMarkdown={{ content, highlighterReady: isHighlighterReady() }}
+    use:streamingMarkdown={{
+        content,
+        highlighterReady: isHighlighterReady(),
+        citations,
+    }}
 ></div>
 
 <style>
@@ -133,5 +141,37 @@
         border-top: 1px solid var(--color-border);
         font-size: 0.8em;
         color: var(--color-fg-muted);
+    }
+
+    :global(.prose .cite-group) {
+        display: inline-flex;
+        gap: 3px;
+        margin-left: 1px;
+        line-height: 1;
+        vertical-align: super;
+        font-size: 0.7em;
+    }
+
+    :global(.prose .cite-marker) {
+        background: none;
+        border: none;
+        padding: 0;
+        font: inherit;
+        line-height: inherit;
+        color: var(--color-fg-muted);
+        font-weight: 500;
+        text-decoration: none;
+        cursor: default;
+        transition: color 0.1s;
+    }
+
+    :global(.prose a.cite-marker),
+    :global(.prose button.cite-marker) {
+        cursor: pointer;
+    }
+
+    :global(.prose a.cite-marker:hover),
+    :global(.prose button.cite-marker:hover) {
+        color: var(--color-accent-fg);
     }
 </style>

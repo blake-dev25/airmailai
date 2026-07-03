@@ -1,3 +1,4 @@
+import type { StorageRequest, StorageResponse } from '@courierai/shared';
 import { CACHE_KEY } from '../../openrouter-models';
 
 const statusEl = document.getElementById('status')!;
@@ -43,6 +44,22 @@ btnExport.addEventListener('click', async () => {
     setStatus('Exported.');
 });
 
+async function runClear(request: StorageRequest, successMessage: string) {
+    setLoading(true);
+    setStatus('');
+    const res: StorageResponse | undefined =
+        await chrome.runtime.sendMessage(request);
+    setLoading(false);
+    if (res?.type === 'saved') {
+        setStatus(successMessage);
+    } else {
+        setStatus(
+            res?.type === 'error' ? res.message : 'Something went wrong.',
+            true
+        );
+    }
+}
+
 btnClearChats.addEventListener('click', async () => {
     if (
         !confirm(
@@ -50,15 +67,7 @@ btnClearChats.addEventListener('click', async () => {
         )
     )
         return;
-    setLoading(true);
-    setStatus('');
-    const res = await chrome.runtime.sendMessage({ type: 'admin_clear_chats' });
-    setLoading(false);
-    if (res?.ok) {
-        setStatus('Chat history deleted.');
-    } else {
-        setStatus(res?.message ?? 'Something went wrong.', true);
-    }
+    await runClear({ type: 'clear_chats' }, 'Chat history deleted.');
 });
 
 btnClearAll.addEventListener('click', async () => {
@@ -68,13 +77,5 @@ btnClearAll.addEventListener('click', async () => {
         )
     )
         return;
-    setLoading(true);
-    setStatus('');
-    const res = await chrome.runtime.sendMessage({ type: 'admin_clear_all' });
-    setLoading(false);
-    if (res?.ok) {
-        setStatus('All local storage deleted.');
-    } else {
-        setStatus(res?.message ?? 'Something went wrong.', true);
-    }
+    await runClear({ type: 'clear_all' }, 'All local storage deleted.');
 });

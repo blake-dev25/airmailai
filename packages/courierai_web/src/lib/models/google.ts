@@ -22,11 +22,6 @@ export const GOOGLE: ProviderOption = {
                     adaptive: 'optional',
                 },
             },
-            tools: {
-                webSearch: true,
-                webFetch: true,
-                codeExecution: true,
-            },
         },
         {
             id: 'gemini-2.5-pro',
@@ -43,11 +38,6 @@ export const GOOGLE: ProviderOption = {
                     defaultLevel: 'medium',
                     adaptive: 'optional',
                 },
-            },
-            tools: {
-                webSearch: true,
-                webFetch: true,
-                codeExecution: true,
             },
         },
         {
@@ -82,11 +72,6 @@ export const GOOGLE: ProviderOption = {
                     defaultLevel: 'high',
                 },
             },
-            tools: {
-                webSearch: true,
-                webFetch: true,
-                codeExecution: true,
-            },
         },
         {
             id: 'gemini-3.1-pro-preview',
@@ -102,11 +87,6 @@ export const GOOGLE: ProviderOption = {
                     levels: ['low', 'medium', 'high'],
                     defaultLevel: 'high',
                 },
-            },
-            tools: {
-                webSearch: true,
-                webFetch: true,
-                codeExecution: true,
             },
         },
         {

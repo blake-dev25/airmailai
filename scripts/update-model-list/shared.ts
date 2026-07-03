@@ -1,15 +1,11 @@
 import { resolve } from 'node:path';
 import TurndownService from 'turndown';
-import type { ModelTools } from '../../packages/courierai_web/src/lib/models/types';
+import type {
+    ModelTools,
+    ThinkingLevel,
+} from '../../packages/courierai_web/src/lib/models/types';
 
-export type ThinkingLevel =
-    | 'none'
-    | 'minimal'
-    | 'low'
-    | 'medium'
-    | 'high'
-    | 'max'
-    | 'xhigh';
+export type { ThinkingLevel };
 
 export interface DerivedThinking {
     levels: ThinkingLevel[];

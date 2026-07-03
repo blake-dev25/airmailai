@@ -6,7 +6,7 @@
         "dev": "wxt",
         "typecheck": "wxt prepare && tsc --noEmit",
         "build": "wxt build",
-        "zip": "WXT_ALLOW_LOCALHOST=false WXT_DEBUG_API_LOGGING=false wxt zip"
+        "zip": "WXT_ALLOW_LOCALHOST=false COURIERAI_LOG_LEVEL=errors wxt zip"
     },
     "dependencies": {
         "@anthropic-ai/sdk": "^0.100.1",

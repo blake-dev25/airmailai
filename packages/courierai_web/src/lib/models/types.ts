@@ -1,11 +1,5 @@
 export type ThinkingLevel =
-    | 'none'
-    | 'minimal'
-    | 'low'
-    | 'medium'
-    | 'high'
-    | 'max'
-    | 'xhigh';
+    'none' | 'minimal' | 'low' | 'medium' | 'high' | 'max' | 'xhigh';
 
 export type ModelTier = 'latest' | 'previous' | 'legacy';
 

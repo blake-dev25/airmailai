@@ -277,8 +277,12 @@ Usage:
   bun scripts/get-provider-files.ts --provider <name>           list one provider
   bun scripts/get-provider-files.ts --provider <name> --delete <file_id>
   bun scripts/get-provider-files.ts --provider <name> --delete-all
+  bun scripts/get-provider-files.ts --provider <name> --download <file_id> [--out <path>]
+  bun scripts/get-provider-files.ts --provider <name> --upload <path> [--purpose <p>]
 
 --delete-all requires --provider; it never deletes across all providers at once.
+--download: anthropic + openai only (google's Files API is metadata-only).
+--upload: anthropic + openai only; --purpose defaults to user_data (openai only).
 
 Providers: anthropic | openai | google   (openrouter has no Files API yet)
 Keys read from .env: ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY`);

@@ -11,10 +11,9 @@ export const MODEL_TIERS: Record<string, ModelTier> = {
     'claude-opus-4-6': 'legacy',
     'claude-opus-4-7': 'previous',
     'claude-opus-4-8': 'latest',
-    'claude-opus-4-20250514': 'legacy',
-    'claude-sonnet-4-5-20250929': 'previous',
-    'claude-sonnet-4-6': 'latest',
-    'claude-sonnet-4-20250514': 'legacy',
+    'claude-sonnet-4-5-20250929': 'legacy',
+    'claude-sonnet-4-6': 'previous',
+    'claude-sonnet-5': 'latest',
     // openai
     'gpt-3.5-turbo': 'legacy',
     'gpt-4': 'legacy',

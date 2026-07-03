@@ -20,6 +20,7 @@
     import Square from '@lucide/svelte/icons/square';
     import Star from '@lucide/svelte/icons/star';
     import Trash from '@lucide/svelte/icons/trash';
+    import Upload from '@lucide/svelte/icons/upload';
     import X from '@lucide/svelte/icons/x';
 
     type IconName =
@@ -44,7 +45,8 @@
         | 'spinner'
         | 'star'
         | 'stop'
-        | 'trash';
+        | 'trash'
+        | 'upload';
 
     interface Props {
         name: IconName;
@@ -85,6 +87,7 @@
         star: Star,
         stop: Square,
         trash: Trash,
+        upload: Upload,
     } as const;
 
     const DEFAULT_SIZE: Record<IconName, number> = {
@@ -110,6 +113,7 @@
         star: 11,
         stop: 14,
         trash: 12,
+        upload: 14,
     };
 
     let Component = $derived(ICONS[name]);

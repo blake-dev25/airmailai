@@ -221,6 +221,10 @@ export async function* streamOpenRouter(
     let mode: 'text' | 'reasoning' | null = null;
     let currentId = '';
     let counter = 0;
+    let currentTextLen = 0;
+    let currentItemBase = 0;
+    let lastTextItemId = '';
+    const seenSourceIds = new Set<string>();
     let completedResponse: unknown;
     let stopReason: CourierAIMessageMetadata['stopReason'];
 
@@ -235,9 +239,55 @@ export async function* streamOpenRouter(
                         yield { type: 'reasoning-end', id: currentId };
                     currentId = `text-${counter++}`;
                     mode = 'text';
+                    currentTextLen = 0;
+                    lastTextItemId = '';
                     yield { type: 'text-start', id: currentId };
                 }
+                if (event.itemId !== lastTextItemId) {
+                    lastTextItemId = event.itemId;
+                    currentItemBase = currentTextLen;
+                }
+                currentTextLen += event.delta.length;
                 yield { type: 'text-delta', id: currentId, delta: event.delta };
+            } else if (event.type === 'response.output_text.annotation.added') {
+                const ann = event.annotation as {
+                    type?: string;
+                    url?: string;
+                    title?: string;
+                    startIndex?: number;
+                    endIndex?: number;
+                };
+                if (
+                    ann.type === 'url_citation' &&
+                    typeof ann.url === 'string'
+                ) {
+                    if (!seenSourceIds.has(ann.url)) {
+                        seenSourceIds.add(ann.url);
+                        yield {
+                            type: 'source-url',
+                            sourceId: ann.url,
+                            url: ann.url,
+                            ...(typeof ann.title === 'string' && ann.title
+                                ? { title: ann.title }
+                                : {}),
+                        };
+                    }
+                    if (mode === 'text' && event.itemId === lastTextItemId) {
+                        yield {
+                            type: 'citation',
+                            sourceId: ann.url,
+                            textId: currentId,
+                            ...(typeof ann.startIndex === 'number' &&
+                            typeof ann.endIndex === 'number'
+                                ? {
+                                      textStart:
+                                          currentItemBase + ann.startIndex,
+                                      textEnd: currentItemBase + ann.endIndex,
+                                  }
+                                : {}),
+                        };
+                    }
+                }
             } else if (event.type === 'response.reasoning_summary_text.delta') {
                 if (mode !== 'reasoning') {
                     if (mode === 'text')
@@ -274,9 +324,9 @@ export async function* streamOpenRouter(
         else if (mode === 'reasoning')
             yield { type: 'reasoning-end', id: currentId };
 
-        const citedUrls = new Set<string>();
         for (const s of collectUrlCitations(completedResponse)) {
-            citedUrls.add(s.url);
+            if (seenSourceIds.has(s.url)) continue;
+            seenSourceIds.add(s.url);
             yield {
                 type: 'source-url',
                 sourceId: s.url,
@@ -285,7 +335,8 @@ export async function* streamOpenRouter(
             };
         }
         for (const url of collectFetchedUrls(completedResponse)) {
-            if (citedUrls.has(url)) continue;
+            if (seenSourceIds.has(url)) continue;
+            seenSourceIds.add(url);
             yield { type: 'source-url', sourceId: url, url };
         }
 

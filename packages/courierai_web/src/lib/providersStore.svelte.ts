@@ -7,7 +7,7 @@ import { reportAppError } from './errorStore.svelte';
 import { loadOpenRouterModels } from './extension';
 import { settingsStore } from './settingsStore.svelte';
 
-const LOG = '[courierai:web]';
+import { log } from './log';
 
 class ProvidersStore {
     providers = $state<ProviderOption[]>(PROVIDERS);
@@ -25,7 +25,7 @@ class ProvidersStore {
         this.providers = this.providers.map((p) =>
             p.id === 'openrouter' ? built : p
         );
-        console.log(LOG, 'openrouter hydrated', `${raw.length} models`);
+        log.info('openrouter hydrated', `${raw.length} models`);
     }
 
     hasOpenRouterModels(): boolean {

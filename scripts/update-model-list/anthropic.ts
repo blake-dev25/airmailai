@@ -11,7 +11,78 @@ import {
     probeErrorCode,
     sortLevels,
 } from './shared';
-import { ANTHROPIC_OVERRIDES } from './overrides';
+import {
+    ANTHROPIC_OVERRIDES,
+    ANTHROPIC_TOOLS_LATEST,
+    applyOverride,
+} from './overrides';
+
+const ANTHROPIC_MODELS_OVERVIEW_URL =
+    'https://platform.claude.com/docs/en/about-claude/models/overview.md';
+
+// *** The overview page is served as markdown directly - no turndown pass
+// like the OpenAI/Google scrapers (turndown would mangle the pipe tables).
+export async function scrapeAnthropicOverviewRaw(): Promise<{
+    url: string;
+    status: number;
+    markdown: string | null;
+}> {
+    const res = await fetch(ANTHROPIC_MODELS_OVERVIEW_URL);
+    return {
+        url: ANTHROPIC_MODELS_OVERVIEW_URL,
+        status: res.status,
+        markdown: res.ok ? await res.text() : null,
+    };
+}
+
+export function parseAnthropicOverview(md: string): Map<string, string> {
+    const cutoffs = new Map<string, string>();
+    let ids: string[] = [];
+    let aliases: string[] = [];
+    for (const line of md.split('\n')) {
+        if (!/^\s*\|/.test(line)) continue;
+        const cells = line.split('|').map((c) => c.trim());
+        const label = cells[1]?.replace(/\*\*/g, '').trim();
+        const values = cells.slice(2, -1);
+        if (label === 'Claude API ID') {
+            ids = values;
+            aliases = [];
+        } else if (label === 'Claude API alias') {
+            aliases = values;
+        } else if (label === 'Reliable knowledge cutoff') {
+            values.forEach((v, i) => {
+                const cutoff = v.match(/[A-Z][a-z]{2} \d{4}/)?.[0];
+                if (!cutoff) return;
+                if (ids[i]) cutoffs.set(ids[i], cutoff);
+                if (aliases[i]) cutoffs.set(aliases[i], cutoff);
+            });
+        }
+    }
+    return cutoffs;
+}
+
+async function fetchAnthropicCutoffs(): Promise<Map<string, string>> {
+    console.log('scraping Anthropic models overview for knowledge cutoffs');
+    try {
+        const { status, markdown } = await scrapeAnthropicOverviewRaw();
+        if (!markdown) {
+            console.log(`⚠ overview scrape failed (HTTP ${status})`);
+            return new Map();
+        }
+        const cutoffs = parseAnthropicOverview(markdown);
+        if (cutoffs.size === 0) {
+            console.log(
+                '⚠ overview page parsed to 0 cutoffs - page layout may have changed'
+            );
+        } else {
+            console.log(`got ${cutoffs.size} cutoff entries from overview`);
+        }
+        return cutoffs;
+    } catch (e) {
+        console.log(`⚠ overview scrape failed: ${(e as Error).message}`);
+        return new Map();
+    }
+}
 
 export async function fetchAnthropic(): Promise<DerivedModel[]> {
     console.log('starting Anthropic polling');
@@ -19,9 +90,17 @@ export async function fetchAnthropic(): Promise<DerivedModel[]> {
     if (!key) throw new Error('ANTHROPIC_API_KEY missing from .env');
     const client = new Anthropic({ apiKey: key });
 
+    const cutoffs = await fetchAnthropicCutoffs();
     const out: DerivedModel[] = [];
     for await (const m of client.models.list({ limit: 1000 })) {
-        out.push(applyAnthropicOverrides(deriveAnthropic(m)));
+        const d = deriveAnthropic(m);
+        const o = ANTHROPIC_OVERRIDES[d.id];
+        if (o) applyOverride(d, o);
+        if (!d.knowledgeCutoff) {
+            const cutoff = cutoffs.get(d.id);
+            if (cutoff) d.knowledgeCutoff = cutoff;
+        }
+        out.push(d);
     }
     console.log(
         `starting Anthropic 404 polling (${out.length} models, ${MODEL_PROBE_DELAY_MS / 1000}s spacing)`
@@ -119,33 +198,9 @@ function deriveAnthropic(m: Anthropic.ModelInfo): DerivedModel {
         ...(samplingParamsRemoved
             ? {}
             : { temperatureMax: 1, defaultTemperature: 1 }),
+        tools: ANTHROPIC_TOOLS_LATEST,
         notes,
     };
-}
-
-function applyAnthropicOverrides(d: DerivedModel): DerivedModel {
-    const o = ANTHROPIC_OVERRIDES[d.id];
-    if (!o) return d;
-    if (o.idAlias) d.id = o.idAlias;
-    if (o.knowledgeCutoff) d.knowledgeCutoff = o.knowledgeCutoff;
-    if (o.contextWindow !== undefined) d.contextWindow = o.contextWindow;
-    if (o.maxOutputTokens !== undefined) d.maxOutputTokens = o.maxOutputTokens;
-    if (o.thinking) {
-        const adaptive = o.thinking.adaptive ?? d.thinking?.adaptive;
-        d.thinking = {
-            levels: sortLevels(o.thinking.levels),
-            defaultLevel: o.thinking.defaultLevel,
-            ...(adaptive ? { adaptive } : {}),
-        };
-    }
-    if (o.thinkingExtraLevels && d.thinking) {
-        d.thinking.levels = sortLevels([
-            ...d.thinking.levels,
-            ...o.thinkingExtraLevels,
-        ]);
-    }
-    if (o.tools) d.tools = o.tools;
-    return d;
 }
 
 export function printAnthropicSummary(
