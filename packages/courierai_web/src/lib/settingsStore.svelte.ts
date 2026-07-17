@@ -56,15 +56,11 @@ const SETTING_VALIDATORS: {
     theme: (v) => typeof v === 'string' && THEMES.some((t) => t.id === v),
     fontSizeIndex: isIntInRange(0, FONT_SIZES.length - 1),
     chatWidth: isNumInRange(0, 100),
-    smoothTextMode: isOneOf(
-        'smooth',
-        'boost-on-complete',
-        'dump-on-complete',
-        'raw'
-    ),
+    smoothTextMode: isOneOf('smooth', 'raw'),
     submitKeystroke: isOneOf('enter', 'ctrl+enter'),
     modelTier: isOneOf('latest', 'previous', 'legacy'),
     autoscrollMode: isOneOf('pin-user-message', 'pin-bottom', 'off'),
+    chatSortOrder: isOneOf('modified', 'created'),
     enableWebSearch: isBool,
     enableWebFetch: isBool,
     enableCodeExecution: isBool,
@@ -93,14 +89,13 @@ class SettingsStore {
     theme = $state('airmail-warm');
     fontSizeIndex = $state(getDefaultFontSizeIndex());
     chatWidth = $state(0);
-    smoothTextMode = $state<
-        'smooth' | 'boost-on-complete' | 'dump-on-complete' | 'raw'
-    >('smooth');
+    smoothTextMode = $state<'smooth' | 'raw'>('smooth');
     submitKeystroke = $state<'enter' | 'ctrl+enter'>('enter');
     modelTier = $state<ModelTier>('latest');
     autoscrollMode = $state<'pin-user-message' | 'pin-bottom' | 'off'>(
         'pin-user-message'
     );
+    chatSortOrder = $state<'modified' | 'created'>('modified');
     enableWebSearch = $state(false);
     enableWebFetch = $state(false);
     enableCodeExecution = $state(false);
@@ -180,6 +175,7 @@ class SettingsStore {
                     submitKeystroke: this.submitKeystroke,
                     modelTier: this.modelTier,
                     autoscrollMode: this.autoscrollMode,
+                    chatSortOrder: this.chatSortOrder,
                     enableWebSearch: this.enableWebSearch,
                     enableWebFetch: this.enableWebFetch,
                     enableCodeExecution: this.enableCodeExecution,
@@ -221,17 +217,25 @@ class SettingsStore {
     }
 
     async load(): Promise<void> {
-        let settings: Partial<UserSettings>;
-        try {
-            settings = await loadFromExt();
-        } catch (err) {
-            reportAppError(
-                'settings load failed',
-                "Couldn't load settings",
-                err
-            );
-            return;
+        let settings: Partial<UserSettings> | null = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+                settings = await loadFromExt();
+                break;
+            } catch (err) {
+                if (attempt === 3) {
+                    reportAppError(
+                        'settings load failed after 3 attempts',
+                        "Couldn't load settings",
+                        err
+                    );
+                    return;
+                }
+                log.warn(`settings load attempt ${attempt} failed`, err);
+                await new Promise((r) => setTimeout(r, 300 * attempt));
+            }
         }
+        if (settings === null) return;
         log.info('settings loaded', settings);
 
         const setSetting: {
@@ -257,6 +261,9 @@ class SettingsStore {
             },
             autoscrollMode: (v) => {
                 this.autoscrollMode = v;
+            },
+            chatSortOrder: (v) => {
+                this.chatSortOrder = v;
             },
             enableWebSearch: (v) => {
                 this.enableWebSearch = v;

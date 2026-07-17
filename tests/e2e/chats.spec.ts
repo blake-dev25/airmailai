@@ -32,6 +32,7 @@ test('deleting a chat removes it from the sidebar and storage', async ({
     courierai,
 }) => {
     await courierai.goto();
+    courierai.page.on('dialog', (dialog) => void dialog.accept());
 
     await courierai.send('Say the word apples and nothing else.');
     await courierai.newChatButton().click();

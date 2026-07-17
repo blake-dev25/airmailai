@@ -32,14 +32,32 @@ await $`bun run build:web`
     .cwd(root)
     .env({ ...process.env, COURIERAI_LOG_LEVEL: 'errors' });
 
+const version = (await Bun.file(join(root, 'VERSION')).text()).trim();
+const versionName = (await Bun.file(join(root, 'VERSION_NAME')).text()).trim();
+await Bun.write(
+    join(dist, 'version.json'),
+    JSON.stringify({ version: versionName })
+);
+
+const changelog = await Bun.file(join(dist, 'changelog.md')).text();
+const changelogTopEntry = changelog.match(/^## (.+)$/m)?.[1]?.trim();
+if (changelogTopEntry !== version) {
+    console.warn(
+        `\n!!! WARNING: changelog.md top entry (${changelogTopEntry ?? 'none'}) does not match version ${version} - add an entry before deploying? !!!\n`
+    );
+}
+
 console.log('\n> S3 sync /assets/* (immutable long cache)...');
 await $`aws s3 sync ${dist}/assets/ s3://${BUCKET}/assets/ --cache-control ${LONG_CACHE} --no-progress`;
 
 console.log('\n> S3 cp /legal/* (text/markdown)...');
 await $`aws s3 cp ${dist}/legal/ s3://${BUCKET}/legal/ --recursive --cache-control ${SHORT_CACHE} --content-type "text/markdown; charset=utf-8" --no-progress`;
 
+console.log('\n> S3 cp /changelog.md (text/markdown)...');
+await $`aws s3 cp ${dist}/changelog.md s3://${BUCKET}/changelog.md --cache-control ${SHORT_CACHE} --content-type "text/markdown; charset=utf-8" --no-progress`;
+
 console.log('\n> S3 sync HTML/root (short cache, --delete)...');
-await $`aws s3 sync ${dist}/ s3://${BUCKET}/ --exclude "assets/*" --exclude "legal/*" --cache-control ${SHORT_CACHE} --delete --no-progress`;
+await $`aws s3 sync ${dist}/ s3://${BUCKET}/ --exclude "assets/*" --exclude "legal/*" --exclude "changelog.md" --cache-control ${SHORT_CACHE} --delete --no-progress`;
 
 console.log('\n> CloudFront invalidation...');
 const invalidation =

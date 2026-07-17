@@ -8,9 +8,10 @@ import {
     type ModelTier,
 } from './constants';
 import { reportAppError } from './errorStore.svelte';
-import { waitForExtension } from './extension';
+import { getExtensionVersion, waitForExtension } from './extension';
 import { providersStore } from './providersStore.svelte';
 import { settingsStore } from './settingsStore.svelte';
+import { versionCheck } from './versionCheck.svelte';
 
 import { log } from './log';
 
@@ -92,6 +93,12 @@ class AppLifecycle {
         log.info('extension detected:', detected);
 
         if (detected) {
+            const extVersion = getExtensionVersion();
+            versionCheck.checkExtAtStartup(
+                extVersion.version,
+                extVersion.versionName
+            );
+
             providersStore.hydrateOpenRouter().catch((err) => {
                 reportAppError(
                     'openrouter hydrate failed',
@@ -99,11 +106,16 @@ class AppLifecycle {
                     err
                 );
             });
+            providersStore.refreshSavedKeys().catch((err) => {
+                reportAppError(
+                    'saved key check failed',
+                    "Couldn't check saved API keys",
+                    err
+                );
+            });
 
-            await Promise.all([
-                settingsStore.load(),
-                chatStore.loadInitialPage(),
-            ]);
+            await settingsStore.load();
+            await chatStore.loadInitialPage();
 
             settingsStore.applyToolDefaults(providersStore.selectedModel);
 

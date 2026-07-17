@@ -7,6 +7,7 @@ export interface Chat {
     title: string;
     messages: CourierAIMessage[];
     createdAt: number;
+    lastMessageAt?: number;
     systemPrompt: string;
     providerId: string;
     modelId: string;

@@ -85,11 +85,13 @@ async function seedExtension(
         webSearch,
         webFetch,
         codeExec,
+        fileUploads,
     }: {
         withKeys: boolean;
         webSearch: boolean;
         webFetch: boolean;
         codeExec: boolean;
+        fileUploads: boolean;
     }
 ): Promise<void> {
     const local: Record<string, unknown> = withKeys ? apiKeysFromEnv() : {};
@@ -100,15 +102,22 @@ async function seedExtension(
             fetchedAt: Date.now(),
         };
     }
+    // *** Seeded settings must stay self-consistent with DEFAULT_MODEL, like a
+    // real stored profile: the app's boot defaults come from the picker's
+    // default model (Sonnet 5, thinking 'high'), and a bare modelId seed would
+    // leave that thinking level active on Haiku.
     const settings: Record<string, unknown> = {
         legalAcceptedVersion: legalVersion(),
         smoothTextMode: 'raw',
         providerId: DEFAULT_PROVIDER,
         modelId: DEFAULT_MODEL,
+        thinkingLevel: 'none',
+        adaptiveThinking: false,
     };
     if (webSearch) settings.enableWebSearch = true;
     if (webFetch) settings.enableWebFetch = true;
     if (codeExec) settings.enableCodeExecution = true;
+    if (fileUploads) settings.enableFileUploads = true;
     await sw.evaluate(
         async ({ local, settings }) => {
             if (Object.keys(local).length)
@@ -135,6 +144,7 @@ interface StoredMsg {
             url?: string;
             title?: string;
             name?: string;
+            filename?: string;
         }[];
         metadata?: { createdAt?: number };
     };
@@ -318,7 +328,7 @@ export class CourierAI {
         await msg.getByRole('button', { name: 'Edit' }).click();
         const editor = msg.getByRole('textbox');
         await editor.fill(newText);
-        await msg.getByRole('button', { name: 'Save' }).click();
+        await msg.getByRole('button', { name: 'Save', exact: true }).click();
     }
 
     async editUser(newText: string): Promise<void> {
@@ -327,13 +337,13 @@ export class CourierAI {
         await msg.getByRole('button', { name: 'Edit' }).click();
         const editor = msg.getByRole('textbox');
         await editor.fill(newText);
-        await msg.getByRole('button', { name: 'Save' }).click();
+        await msg.getByRole('button', { name: 'Save', exact: true }).click();
     }
 
     async expandCode(): Promise<void> {
         await this.assistantMessages()
             .last()
-            .getByRole('button', { name: 'Code' })
+            .getByRole('button', { name: 'Code', exact: true })
             .click();
     }
 
@@ -357,6 +367,20 @@ export class CourierAI {
     async closeSettings(): Promise<void> {
         await this.page.mouse.click(5, 5);
         await expect(this.settingsDialog()).toBeHidden();
+    }
+
+    async attachFile(file: {
+        name: string;
+        mimeType: string;
+        buffer: Buffer;
+    }): Promise<void> {
+        await this.page
+            .getByRole('region', { name: 'Chat' })
+            .locator('input[type="file"]')
+            .setInputFiles(file);
+        await expect(
+            this.page.getByRole('button', { name: 'Remove attachment' })
+        ).toBeVisible({ timeout: QUICK_TIMEOUT });
     }
 
     async compose(text: string): Promise<void> {
@@ -443,6 +467,17 @@ export class CourierAI {
             .map((p) => p.title ?? '');
     }
 
+    async persistedFileNames(
+        role: 'user' | 'assistant',
+        chatId?: string
+    ): Promise<string[]> {
+        return (await this.chatMessages(role, chatId)).flatMap((m) =>
+            m.message.parts
+                .filter((p) => p.type === 'file')
+                .map((p) => p.filename ?? '')
+        );
+    }
+
     async persistedToolNames(chatId?: string): Promise<string[]> {
         const last = (await this.chatMessages('assistant', chatId)).at(-1);
         if (!last) return [];
@@ -485,6 +520,7 @@ interface CourierAIOptions {
     seedWebSearchEnabled: boolean;
     seedWebFetchEnabled: boolean;
     seedCodeExecEnabled: boolean;
+    seedFileUploadsEnabled: boolean;
 }
 
 interface CourierAIFixtures {
@@ -499,6 +535,7 @@ export const test = base.extend<CourierAIOptions & CourierAIFixtures>({
     seedWebSearchEnabled: [false, { option: true }],
     seedWebFetchEnabled: [false, { option: true }],
     seedCodeExecEnabled: [false, { option: true }],
+    seedFileUploadsEnabled: [false, { option: true }],
     // eslint-disable-next-line no-empty-pattern
     context: async ({}, use) => {
         // *** '' = ephemeral profile, auto-removed on close. headed: MV3 extensions
@@ -558,6 +595,7 @@ export const test = base.extend<CourierAIOptions & CourierAIFixtures>({
             seedWebSearchEnabled,
             seedWebFetchEnabled,
             seedCodeExecEnabled,
+            seedFileUploadsEnabled,
         },
         use
     ) => {
@@ -566,6 +604,7 @@ export const test = base.extend<CourierAIOptions & CourierAIFixtures>({
             webSearch: seedWebSearchEnabled,
             webFetch: seedWebFetchEnabled,
             codeExec: seedCodeExecEnabled,
+            fileUploads: seedFileUploadsEnabled,
         });
         await use(new CourierAI(page, serviceWorker));
     },

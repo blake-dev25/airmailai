@@ -304,6 +304,7 @@ export async function* streamAnthropic(
 
     const effort: Effort | undefined =
         thinkingEnabled &&
+        adaptiveThinking &&
         (thinkingLevel === 'low' ||
             thinkingLevel === 'medium' ||
             thinkingLevel === 'high' ||
@@ -359,6 +360,7 @@ export async function* streamAnthropic(
                 replicas,
                 docFiles
             ),
+            cache_control: { type: 'ephemeral' },
             ...(args.system ? { system: args.system } : {}),
             ...(args.params.temperature !== undefined
                 ? { temperature: args.params.temperature as number }

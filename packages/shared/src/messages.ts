@@ -11,6 +11,7 @@ export interface DraftAttachment extends DraftAttachmentMeta {
 
 export interface CourierAIMessageMetadata {
     createdAt: number;
+    model?: string;
     tokens?: { input: number; output: number };
     stopReason?: 'stop' | 'length' | 'refusal' | 'content-filter' | 'error';
 }
@@ -220,6 +221,7 @@ export interface TurnStartRequest {
     params?: Record<string, unknown>;
     meta: ChatMeta;
     assistantMessageId: string;
+    assistantCreatedAt: number;
 }
 
 export interface TurnStopRequest {
@@ -237,12 +239,14 @@ export type ExtensionStreamEvent =
     | { type: 'error'; source: StreamErrorSource; message: string };
 
 export type BroadcastEvent =
+    | { type: 'ext-hello'; version: string }
     | {
           type: 'turn-start';
           chatId: string;
           sourceTabId: string;
           meta: ChatMeta;
           assistantMessageId: string;
+          assistantCreatedAt: number;
       }
     | {
           type: 'turn-chunk';
@@ -250,7 +254,12 @@ export type BroadcastEvent =
           chunk: CourierAIChunk;
       }
     | { type: 'turn-done'; chatId: string }
-    | { type: 'turn-error'; chatId: string; message: string }
+    | {
+          type: 'turn-error';
+          chatId: string;
+          message: string;
+          source?: StreamErrorSource;
+      }
     | { type: 'turn-aborted'; chatId: string }
     | { type: 'turn-truncate'; chatId: string; charLen: number }
     | { type: 'files-changed'; chatIds: string[] }
@@ -272,10 +281,11 @@ export interface UserSettings {
     theme: string;
     fontSizeIndex: number;
     chatWidth: number;
-    smoothTextMode: 'smooth' | 'boost-on-complete' | 'dump-on-complete' | 'raw';
+    smoothTextMode: 'smooth' | 'raw';
     submitKeystroke: 'enter' | 'ctrl+enter';
     modelTier: 'latest' | 'previous' | 'legacy';
     autoscrollMode: 'pin-user-message' | 'pin-bottom' | 'off';
+    chatSortOrder: 'modified' | 'created';
     enableWebSearch: boolean;
     enableWebFetch: boolean;
     enableCodeExecution: boolean;
@@ -302,6 +312,7 @@ const SETTINGS_KEY_MAP: { [K in keyof UserSettings]: 0 } = {
     submitKeystroke: 0,
     modelTier: 0,
     autoscrollMode: 0,
+    chatSortOrder: 0,
     enableWebSearch: 0,
     enableWebFetch: 0,
     enableCodeExecution: 0,
@@ -327,6 +338,7 @@ export interface ChatMeta {
     id: string;
     title: string;
     createdAt: number;
+    lastMessageAt?: number;
     providerId: string;
     modelId: string;
     temperature: number;
@@ -392,6 +404,7 @@ export type StorageRequest =
     | { type: 'save_key'; provider: string; apiKey: string }
     | { type: 'clear_key'; provider: string }
     | { type: 'has_keys'; providers: string[] }
+    | { type: 'test_key'; provider: string }
     | { type: 'save_settings'; settings: Partial<UserSettings> }
     | { type: 'load_settings' }
     | { type: 'save_meta'; meta: ChatMeta; sourceTabId?: string }
@@ -436,6 +449,7 @@ export interface StorageUsage {
 export type StorageResponse =
     | { type: 'saved'; warning?: string }
     | { type: 'has_keys'; saved: Record<string, boolean> }
+    | { type: 'key_test'; ok: boolean; message?: string }
     | { type: 'settings'; settings: Partial<UserSettings> }
     | { type: 'chat_metas'; metas: ChatMeta[] }
     | { type: 'chats'; chats: StoredChat[] }

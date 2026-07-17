@@ -41,10 +41,10 @@
         <button
             type="button"
             class="mt-2 cursor-pointer rounded-md border-0 bg-accent-bg px-6 py-2 text-sm font-medium text-on-accent-bg transition-colors hover:bg-accent-bg-hover hover:text-on-accent-bg-hover"
-            onclick={onlookaround}>Let me look around first</button
+            onclick={onlookaround}>Try the Demo</button
         >
         <p class="-mt-1 text-xs text-fg-muted">
-            (text/settings will not be saved)
+            (chats/settings will not be saved in demo mode)
         </p>
     {:else if variant === 'unsupported-browser'}
         <p class="m-0 text-sm leading-normal text-fg-muted">
@@ -58,10 +58,10 @@
         <button
             type="button"
             class="mt-2 cursor-pointer rounded-md border-0 bg-accent-bg px-6 py-2 text-sm font-medium text-on-accent-bg transition-colors hover:bg-accent-bg-hover hover:text-on-accent-bg-hover"
-            onclick={onlookaround}>Let me look around first</button
+            onclick={onlookaround}>Try the Demo</button
         >
         <p class="-mt-1 text-xs text-fg-muted">
-            (text/settings will not be saved)
+            (chats/settings will not be saved in demo mode)
         </p>
     {:else}
         <p class="m-0 text-sm leading-normal text-fg-muted">

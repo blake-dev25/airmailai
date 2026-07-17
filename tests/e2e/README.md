@@ -45,6 +45,12 @@ bun run test --ui          # interactive (time-travel DOM snapshots)
 - **No-key tests:** a spec can opt out of key seeding with
   `test.use({ seedApiKeys: false })` to exercise the "No API key saved" error
   path with zero API cost (see `errors.spec.ts`).
+- **Feature seeding:** server tools and file uploads default off in the app,
+  so specs opt in via `test.use({ seedWebSearchEnabled: true })` /
+  `seedWebFetchEnabled` / `seedCodeExecEnabled` / `seedFileUploadsEnabled`.
+- **Native dialogs:** destructive actions (chat delete, clear storage) go
+  through `confirm()`. Playwright dismisses dialogs by default, so specs that
+  exercise them register `page.on('dialog', (d) => void d.accept())` first.
 - **OpenRouter catalog:** the fixture pre-seeds the extension's
   `openrouter_models_cache` (a one-model fixture) alongside the keys, so app
   boot serves the catalog from cache instead of doing a live `GET /models/user`

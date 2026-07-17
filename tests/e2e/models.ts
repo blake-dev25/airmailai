@@ -7,7 +7,7 @@ export const PROVIDER_MODELS = {
     anthropic: {
         label: 'Anthropic',
         chat: 'claude-haiku-4-5',
-        tools: 'claude-sonnet-4-6',
+        tools: 'claude-sonnet-5',
     },
     openai: {
         label: 'OpenAI',

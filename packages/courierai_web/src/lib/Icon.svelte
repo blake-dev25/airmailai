@@ -1,6 +1,7 @@
 <script lang="ts">
     import Check from '@lucide/svelte/icons/check';
     import ChevronDown from '@lucide/svelte/icons/chevron-down';
+    import CircleAlert from '@lucide/svelte/icons/circle-alert';
     import ChevronRight from '@lucide/svelte/icons/chevron-right';
     import Copy from '@lucide/svelte/icons/copy';
     import Download from '@lucide/svelte/icons/download';
@@ -27,6 +28,7 @@
         | 'check'
         | 'chevron-down'
         | 'chevron-right'
+        | 'circle-alert'
         | 'close'
         | 'copy'
         | 'download'
@@ -68,6 +70,7 @@
         check: Check,
         'chevron-down': ChevronDown,
         'chevron-right': ChevronRight,
+        'circle-alert': CircleAlert,
         close: X,
         copy: Copy,
         download: Download,
@@ -94,6 +97,7 @@
         check: 15,
         'chevron-down': 14,
         'chevron-right': 12,
+        'circle-alert': 13,
         close: 10,
         copy: 12,
         download: 12,

@@ -418,7 +418,7 @@ const MIME_BY_EXTENSION: Record<string, string> = {
     '.list': 'text/plain',
     '.log': 'text/plain',
     '.lua': 'text/x-lua',
-    '.m4a': 'audio/mp3',
+    '.m4a': 'audio/aac',
     '.markdown': 'text/plain',
     '.md': 'text/plain',
     '.mht': 'message/rfc822',

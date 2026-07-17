@@ -1,6 +1,9 @@
 # local notes/docs
 CLAUDE.md
 *.txt
+!packages/courierai_web/static/legal/third-party-licenses.txt
+!packages/courierai_ext/public/third-party-licenses.txt
+collab/
 
 # dependencies
 node_modules/
@@ -13,7 +16,6 @@ dist-ssr/
 *.zip
 VERSION
 VERSION_NAME
-build-counter.json
 
 # logs
 logs/
@@ -25,12 +27,13 @@ logs/
 !.env.example
 *.local
 
-# os/editor/etc
+# os/editor/ai/etc
 .DS_Store
 Thumbs.db
 .vscode/
 .claude/
 .codex/
+.agents/
 
 # deploy scratch/etc
 .deploy-tmp/

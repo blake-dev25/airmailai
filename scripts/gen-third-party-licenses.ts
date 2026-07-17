@@ -1,5 +1,8 @@
-// *** Generates THIRD_PARTY_LICENSES at the repo root from the runtime
-// dependencies actually bundled into the shipped web app + extension. Walks
+// *** Generates the third-party license notices from the runtime dependencies
+// actually bundled into the shipped web app + extension, writing identical
+// copies to the repo root (THIRD_PARTY_LICENSES), the website
+// (static/legal/third-party-licenses.txt), and the extension package
+// (public/third-party-licenses.txt). Walks
 // the `dependencies` (not devDependencies) of courierai_web + courierai_ext,
 // drops the workspace package (@courierai/shared), reads each
 // installed package's license + copyright from its package.json + LICENSE
@@ -17,7 +20,14 @@
 import { resolve } from 'node:path';
 
 const ROOT = resolve(import.meta.dir, '..');
-const OUT = resolve(ROOT, 'THIRD_PARTY_LICENSES');
+const OUTPUTS = [
+    resolve(ROOT, 'THIRD_PARTY_LICENSES'),
+    resolve(
+        ROOT,
+        'packages/courierai_web/static/legal/third-party-licenses.txt'
+    ),
+    resolve(ROOT, 'packages/courierai_ext/public/third-party-licenses.txt'),
+];
 const WRITE = process.argv.includes('--write');
 
 const BUNDLED_PACKAGES = ['courierai_web', 'courierai_ext'];
@@ -45,6 +55,66 @@ interface Attribution {
     licenseText: string;
     notice: string | null;
 }
+
+// *** Canonical SPDX license bodies, substituted when a package declares a
+// license in package.json but ships no LICENSE file in its npm tarball. The
+// package's copyright line is preserved in its attribution block above the
+// texts.
+const KNOWN_LICENSE_TEXTS: Record<string, string> = {
+    MIT: [
+        'MIT License',
+        '',
+        'Permission is hereby granted, free of charge, to any person obtaining a copy',
+        'of this software and associated documentation files (the "Software"), to deal',
+        'in the Software without restriction, including without limitation the rights',
+        'to use, copy, modify, merge, publish, distribute, sublicense, and/or sell',
+        'copies of the Software, and to permit persons to whom the Software is',
+        'furnished to do so, subject to the following conditions:',
+        '',
+        'The above copyright notice and this permission notice shall be included in',
+        'all copies or substantial portions of the Software.',
+        '',
+        'THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR',
+        'IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,',
+        'FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE',
+        'AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER',
+        'LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,',
+        'OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE',
+        'SOFTWARE.',
+    ].join('\n'),
+};
+
+// *** Attributions for third-party works vendored directly into the source
+// (not installed via npm), so the node_modules walk can't discover them.
+const VENDORED_ATTRIBUTIONS: Attribution[] = [
+    {
+        name: 'Solarized (color palette)',
+        license: 'MIT',
+        copyright: 'Copyright (c) 2011 Ethan Schoonover',
+        licenseText: [
+            'Copyright (c) 2011 Ethan Schoonover',
+            '',
+            'Permission is hereby granted, free of charge, to any person obtaining a copy',
+            'of this software and associated documentation files (the "Software"), to deal',
+            'in the Software without restriction, including without limitation the rights',
+            'to use, copy, modify, merge, publish, distribute, sublicense, and/or sell',
+            'copies of the Software, and to permit persons to whom the Software is',
+            'furnished to do so, subject to the following conditions:',
+            '',
+            'The above copyright notice and this permission notice shall be included in',
+            'all copies or substantial portions of the Software.',
+            '',
+            'THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR',
+            'IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,',
+            'FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE',
+            'AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER',
+            'LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,',
+            'OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN',
+            'THE SOFTWARE.',
+        ].join('\n'),
+        notice: null,
+    },
+];
 
 async function readJson<T>(path: string): Promise<T | null> {
     const file = Bun.file(path);
@@ -132,12 +202,18 @@ async function buildAttribution(name: string): Promise<Attribution> {
     const json = (await readJson<PkgJson>(resolve(dir, 'package.json')))!;
     const licenseText = await readLicenseText(dir);
     const declared = json.license ?? 'UNKNOWN';
+    const license = LICENSE_ELECTIONS[declared] ?? declared;
+    const resolvedText = licenseText ?? KNOWN_LICENSE_TEXTS[license];
+    if (!resolvedText) {
+        throw new Error(
+            `Package "${name}" ships no LICENSE file and declares "${declared}", which has no entry in KNOWN_LICENSE_TEXTS.`
+        );
+    }
     return {
         name,
-        license: LICENSE_ELECTIONS[declared] ?? declared,
+        license,
         copyright: deriveCopyright(licenseText, authorName(json.author)),
-        licenseText:
-            licenseText ?? '(no LICENSE file shipped with this package)',
+        licenseText: resolvedText,
         notice: await readNoticeText(dir),
     };
 }
@@ -198,17 +274,22 @@ function render(attributions: Attribution[]): string {
 
 async function main(): Promise<void> {
     const names = await collectDepNames();
-    const attributions = await Promise.all(names.map(buildAttribution));
+    const attributions = [
+        ...(await Promise.all(names.map(buildAttribution))),
+        ...VENDORED_ATTRIBUTIONS,
+    ].sort((a, b) => a.name.localeCompare(b.name));
 
-    console.log(`Resolved ${attributions.length} runtime dependencies:`);
+    console.log(`Resolved ${attributions.length} attributions:`);
     for (const a of attributions) {
         console.log(`  ${a.name} - ${a.license}`);
     }
 
     const content = render(attributions);
     if (WRITE) {
-        await Bun.write(OUT, content);
-        console.log(`\nWrote ${content.length} bytes to ${OUT}`);
+        for (const out of OUTPUTS) {
+            await Bun.write(out, content);
+            console.log(`Wrote ${content.length} bytes to ${out}`);
+        }
     } else {
         console.log(
             '\n(dry run - pass --write to update THIRD_PARTY_LICENSES)'

@@ -3,12 +3,20 @@
     import { appLifecycle } from './appLifecycle.svelte';
     import { chatStore } from './chatStore.svelte';
     import Icon from './Icon.svelte';
+    import { providersStore } from './providersStore.svelte';
     import SettingsPopover from './SettingsPopover.svelte';
     import StampLogo from './StampLogo.svelte';
     import { settingsStore } from './settingsStore.svelte';
     import type { Chat } from './types';
 
     let showSettings = $state(false);
+    let showKeyPrompt = $derived(
+        appLifecycle.initialized &&
+            !chatStore.demoMode &&
+            providersStore.savedKeys !== null &&
+            !providersStore.hasAnyKey &&
+            !showSettings
+    );
     let historyHovered = $state(false);
     let searchValue = $state('');
     let listRef = $state<VList<Chat> | undefined>(undefined);
@@ -23,14 +31,23 @@
         { format: 'sillytavern', label: 'SillyTavern JSONL' },
     ];
 
+    const LOAD_MORE_THRESHOLD_PX = 300;
+
     function maybeLoadMore() {
         if (!listRef || !chatStore.hasMoreChats || chatStore.isLoadingMore)
             return;
         const offset = listRef.getScrollOffset();
         const total = listRef.getScrollSize();
         const viewport = listRef.getViewportSize();
-        if (total - offset - viewport < viewport * 1.5) chatStore.loadMore();
+        if (total - offset - viewport < LOAD_MORE_THRESHOLD_PX)
+            chatStore.loadMore();
     }
+
+    $effect(() => {
+        if (chatStore.chats.length === 0) return;
+        const frame = requestAnimationFrame(maybeLoadMore);
+        return () => cancelAnimationFrame(frame);
+    });
 
     function highlightSnippet(raw: string, query: string): string {
         const q = query.toLowerCase();
@@ -112,7 +129,7 @@
         'block text-sm text-fg overflow-hidden text-ellipsis whitespace-nowrap';
 </script>
 
-<svelte:window onclick={() => closeMenu()} />
+<svelte:window onclick={() => closeMenu()} onresize={maybeLoadMore} />
 
 <aside
     class="sidebar w-64 shrink-0 flex flex-col bg-canvas border-r border-border overflow-hidden select-none [&_input]:select-text"
@@ -182,7 +199,10 @@
             Files
         </button>
         <div
-            class="flex items-center gap-2 w-full px-2.5 py-1.75 bg-canvas border border-border rounded-lg box-border opacity-45 transition-[opacity,border-color] duration-150 focus-within:opacity-100 focus-within:border-fg-muted"
+            class={[
+                'flex items-center gap-2 w-full px-2.5 py-1.75 bg-canvas border border-border rounded-lg box-border transition-[opacity,border-color] duration-150 focus-within:opacity-100 focus-within:border-fg-muted',
+                !searchValue && 'opacity-45',
+            ]}
         >
             <Icon name="search" class="search-icon" />
             <input
@@ -341,7 +361,7 @@
                 <div class="flex-1 min-h-0">
                     <VList
                         bind:this={listRef}
-                        data={chatStore.chats}
+                        data={chatStore.sortedChats}
                         getKey={(c) => c.id}
                         itemSize={32}
                         onscroll={maybeLoadMore}
@@ -429,7 +449,16 @@
         </nav>
     {/if}
 
-    <div class="shrink-0 px-3 py-3.25 border-t border-border">
+    <div class="relative shrink-0 px-3 py-3.25 border-t border-border">
+        {#if showKeyPrompt}
+            <button
+                type="button"
+                class="key-prompt absolute bottom-full left-3 right-3 mb-2.5 px-3 py-2.5 bg-accent-bg text-on-accent-bg border-0 rounded-lg text-sm font-medium text-left cursor-pointer z-20 shadow-[0_4px_16px_rgba(0,0,0,0.18)] animate-fade-up hover:underline"
+                onclick={() => (showSettings = true)}
+            >
+                Add an API key here to get started
+            </button>
+        {/if}
         <button
             type="button"
             class={[
@@ -522,7 +551,10 @@
             class="flex items-center gap-2 w-full px-2.5 py-1.75 bg-transparent border-0 rounded text-sm font-sans text-fg cursor-pointer text-left transition-[background-color,color] duration-100 hover:bg-canvas hover:text-accent-fg"
             onclick={(e) => {
                 e.stopPropagation();
-                chatStore.remove(openMenuChat!.id);
+                const chat = openMenuChat!;
+                if (!confirm(`Delete "${chat.title}"? Cannot be undone.`))
+                    return;
+                chatStore.remove(chat.id);
                 closeMenu();
             }}
         >
@@ -539,6 +571,15 @@
 <style>
     :global(.search-icon) {
         color: var(--color-fg);
+    }
+
+    .key-prompt::after {
+        content: '';
+        position: absolute;
+        top: 100%;
+        left: 24px;
+        border: 6px solid transparent;
+        border-top-color: var(--color-accent-bg);
     }
 
     .history.search-mode::-webkit-scrollbar {

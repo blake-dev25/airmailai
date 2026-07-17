@@ -44,6 +44,7 @@ import {
     listGoogleFiles,
     uploadGoogleFile,
 } from '../providers/google-files';
+import { testProviderKey } from '../providers/key-test';
 import { streamProvider } from '../providers/stream';
 import {
     dbClearChats,
@@ -79,6 +80,21 @@ const API_KEY_PREFIX = 'apiKey_';
 const inflightTurns = new Set<string>();
 
 const broadcastPorts = new Map<chrome.runtime.Port, string | undefined>();
+
+const streamPorts = new Set<chrome.runtime.Port>();
+let pendingUpdateVersion: string | null = null;
+
+function releaseStreamPort(port: chrome.runtime.Port): void {
+    streamPorts.delete(port);
+    maybeApplyPendingUpdate();
+}
+
+function maybeApplyPendingUpdate(): void {
+    if (pendingUpdateVersion === null) return;
+    if (streamPorts.size > 0) return;
+    log.info('applying pending extension update', pendingUpdateVersion);
+    chrome.runtime.reload();
+}
 
 function broadcast(event: BroadcastEvent, skipTabId?: string) {
     for (const [port, tabId] of broadcastPorts) {
@@ -284,6 +300,28 @@ async function handleStorage(
             }
             log.info('-> storage response: has_keys', saved);
             return { type: 'has_keys', saved };
+        }
+        case 'test_key': {
+            assertKnownProvider(message.provider);
+            const apiKey = await readApiKey(message.provider);
+            if (!apiKey) {
+                return {
+                    type: 'key_test',
+                    ok: false,
+                    message: `No API key saved for ${message.provider}.`,
+                };
+            }
+            const result = await testProviderKey(message.provider, apiKey);
+            log.info(
+                '-> storage response: key_test',
+                message.provider,
+                result.ok
+            );
+            return {
+                type: 'key_test',
+                ok: result.ok,
+                ...(result.message ? { message: result.message } : {}),
+            };
         }
         case 'save_settings': {
             const filtered = Object.fromEntries(
@@ -718,6 +756,12 @@ function dispatchStorage(
 export default defineBackground(() => {
     log.info('background ready');
 
+    chrome.runtime.onUpdateAvailable.addListener((details) => {
+        log.info('extension update available', details.version);
+        pendingUpdateVersion = details.version;
+        maybeApplyPendingUpdate();
+    });
+
     chrome.runtime.onMessage.addListener(
         (message: StorageRequest, _sender, sendResponse) => {
             if (message.type !== 'clear_chats' && message.type !== 'clear_all')
@@ -738,6 +782,15 @@ export default defineBackground(() => {
             port.onMessage.addListener((msg: BroadcastRequest) => {
                 if (msg.type === 'register') {
                     broadcastPorts.set(port, msg.sourceTabId);
+                    const hello: BroadcastEvent = {
+                        type: 'ext-hello',
+                        version: chrome.runtime.getManifest().version,
+                    };
+                    try {
+                        port.postMessage(hello);
+                    } catch {
+                        broadcastPorts.delete(port);
+                    }
                     return;
                 }
                 if (msg.type === 'keepalive') return;
@@ -754,6 +807,7 @@ export default defineBackground(() => {
         }
 
         log.info('turn port connected');
+        streamPorts.add(port);
         const controller = new AbortController();
         type Disposition =
             | 'pending'
@@ -783,6 +837,7 @@ export default defineBackground(() => {
                 if (lockedChatId) inflightTurns.delete(lockedChatId);
             }
             controller.abort();
+            releaseStreamPort(port);
         });
 
         port.onMessage.addListener(async (msg: TurnRequest) => {
@@ -815,6 +870,7 @@ export default defineBackground(() => {
                     message: 'Conversation active in another tab.',
                 });
                 if (portOpen) port.disconnect();
+                releaseStreamPort(port);
                 return;
             }
             inflightTurns.add(msg.chatId);
@@ -830,6 +886,7 @@ export default defineBackground(() => {
                     sourceTabId: msg.sourceTabId,
                     meta: msg.meta,
                     assistantMessageId: msg.assistantMessageId,
+                    assistantCreatedAt: msg.assistantCreatedAt,
                 },
                 msg.sourceTabId
             );
@@ -838,7 +895,7 @@ export default defineBackground(() => {
                 id: msg.assistantMessageId,
                 role: 'assistant',
                 parts: [],
-                metadata: { createdAt: Date.now() },
+                metadata: { createdAt: msg.assistantCreatedAt },
             });
 
             let capturedContainerId: string | undefined;
@@ -1026,7 +1083,8 @@ export default defineBackground(() => {
                         id: assistantMessageId,
                         role: 'assistant',
                         metadata: {
-                            createdAt: Date.now(),
+                            createdAt: msg.assistantCreatedAt,
+                            model: `${msg.provider}/${msg.model}`,
                             ...(assembled.metadata.tokens
                                 ? { tokens: assembled.metadata.tokens }
                                 : {}),
@@ -1116,6 +1174,7 @@ export default defineBackground(() => {
                                 type: 'turn-error',
                                 chatId: lockedChatId,
                                 message: inStreamErrorText,
+                                source: errorSource,
                             },
                             msg.sourceTabId
                         );
@@ -1134,6 +1193,7 @@ export default defineBackground(() => {
 
                 if (lockedChatId) inflightTurns.delete(lockedChatId);
                 if (portOpen) port.disconnect();
+                releaseStreamPort(port);
             }
         });
     });

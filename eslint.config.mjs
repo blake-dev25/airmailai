@@ -23,7 +23,6 @@ export default defineConfig(
             '**/*.zip',
             '**/VERSION',
             '**/VERSION_NAME',
-            '**/build-counter.json',
             '**/logs/**',
             '**/*.log*',
         ],

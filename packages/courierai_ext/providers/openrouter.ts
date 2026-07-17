@@ -206,6 +206,9 @@ export async function* streamOpenRouter(
         responsesRequest: {
             model: args.model,
             input,
+            ...(args.model.startsWith('anthropic/')
+                ? { cacheControl: { type: 'ephemeral' as const } }
+                : {}),
             ...(args.system ? { instructions: args.system } : {}),
             maxOutputTokens: maxTokens,
             ...(args.params.temperature !== undefined

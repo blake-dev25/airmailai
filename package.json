@@ -38,6 +38,7 @@
         "dev:web": "bun scripts/gen-version.ts && bun run check && NO_COLOR=1 bun run --filter courierai_web typecheck && NO_COLOR=1 bun run --filter courierai_web dev",
         "dev:ext": "bun run check && NO_COLOR=1 bun run --filter courierai_ext build",
         "gen:logo": "bun scripts/gen-logo.ts",
+        "gen:og": "bun scripts/gen-og-card.ts",
         "test": "playwright test"
     },
     "workspaces": [

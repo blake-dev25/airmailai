@@ -1,10 +1,9 @@
-export type SmoothMode =
-    'smooth' | 'boost-on-complete' | 'dump-on-complete' | 'raw';
+export type SmoothMode = 'smooth' | 'raw';
 
-const DRAIN_CHARS_PER_SEC = 300;
-const DRAIN_CHARS_PER_SEC_BOOST = 600;
+const DRAIN_MIN_CHARS_PER_SEC_STREAMING = 30;
+const DRAIN_MIN_CHARS_PER_SEC_COMPLETE = 300;
+const DRAIN_GAP_MULTIPLIER = 2;
 const MAX_TICK_ELAPSED_MS = 1000;
-const SNAP_GAP_CHARS = 2000;
 
 export interface SmoothTextOpts {
     mode: () => SmoothMode;
@@ -39,10 +38,13 @@ export function createSmoothText(opts: SmoothTextOpts) {
         if (display.length < target.length) {
             const elapsed = now - lastTime;
             if (lastTime > 0 && elapsed < MAX_TICK_ELAPSED_MS) {
-                const rate =
-                    opts.mode() === 'boost-on-complete' && !opts.streaming()
-                        ? DRAIN_CHARS_PER_SEC_BOOST
-                        : DRAIN_CHARS_PER_SEC;
+                const gap = target.length - display.length;
+                const rate = Math.max(
+                    gap * DRAIN_GAP_MULTIPLIER,
+                    opts.streaming()
+                        ? DRAIN_MIN_CHARS_PER_SEC_STREAMING
+                        : DRAIN_MIN_CHARS_PER_SEC_COMPLETE
+                );
                 accum += (elapsed / 1000) * rate;
                 const step = Math.floor(accum);
                 accum -= step;
@@ -84,12 +86,6 @@ export function createSmoothText(opts: SmoothTextOpts) {
             const firstChunk = target.length === 0 && opts.streaming();
             if (grew || firstChunk) {
                 target = raw;
-                if (firstChunk && target.length > SNAP_GAP_CHARS) {
-                    cancelRaf();
-                    resetTiming();
-                    display = target;
-                    return;
-                }
                 if (rafId === null && display.length < target.length) {
                     rafId = requestAnimationFrame(tick);
                 }
@@ -100,13 +96,6 @@ export function createSmoothText(opts: SmoothTextOpts) {
                 target = raw;
                 opts.onReset?.();
             }
-        },
-        flushIfComplete() {
-            if (opts.streaming()) return;
-            if (display.length >= target.length) return;
-            cancelRaf();
-            resetTiming();
-            display = target;
         },
         snapToDisplay() {
             cancelRaf();

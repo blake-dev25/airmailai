@@ -1,15 +1,20 @@
 import type { BroadcastEvent } from '@courierai/shared';
 import { chatStore } from './chatStore.svelte';
 import { subscribeToBroadcast, tabId } from './extension';
+import { versionCheck } from './versionCheck.svelte';
 
 function handleBroadcastEvent(event: BroadcastEvent): void {
     switch (event.type) {
+        case 'ext-hello':
+            versionCheck.reportExtVersion(event.version);
+            return;
         case 'turn-start':
             if (event.sourceTabId === tabId) return;
             chatStore.applyRemoteTurnStart(
                 event.chatId,
                 event.meta,
-                event.assistantMessageId
+                event.assistantMessageId,
+                event.assistantCreatedAt
             );
             return;
         case 'turn-chunk':
@@ -19,7 +24,11 @@ function handleBroadcastEvent(event: BroadcastEvent): void {
             chatStore.applyRemoteTurnDone(event.chatId);
             return;
         case 'turn-error':
-            chatStore.applyRemoteTurnError(event.chatId, event.message);
+            chatStore.applyRemoteTurnError(
+                event.chatId,
+                event.message,
+                event.source
+            );
             return;
         case 'turn-aborted':
             chatStore.applyRemoteTurnAborted(event.chatId);
@@ -43,7 +52,7 @@ function handleBroadcastEvent(event: BroadcastEvent): void {
 }
 
 async function handleBroadcastReconnect(): Promise<void> {
-    await chatStore.refreshActiveFromIDB();
+    await chatStore.reconcileFromIDB();
 }
 
 export function startBroadcastBridge(): () => void {

@@ -4,7 +4,7 @@ test('Stop halts mid-stream, keeps partial, and persists the chopped answer', as
     courierai,
 }) => {
     await courierai.goto();
-    await courierai.setModelById('claude-sonnet-4-6');
+    await courierai.setModelById('claude-sonnet-5');
     await courierai.setThinkingNone();
 
     let partial = '';

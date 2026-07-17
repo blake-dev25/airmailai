@@ -266,6 +266,17 @@
         }
     }
 
+    let contextUsed = $derived(
+        chatStore.activeTokens
+            ? chatStore.activeTokens.input + chatStore.activeTokens.output
+            : null
+    );
+    let contextNearLimit = $derived(
+        contextUsed !== null &&
+            !!currentModel &&
+            contextUsed > currentModel.params.contextWindow * 0.9
+    );
+
     let modelTools = $derived(currentModel?.tools);
     let webSearchSupported = $derived(!!modelTools?.webSearch);
     let webFetchSupported = $derived(!!modelTools?.webFetch);
@@ -623,6 +634,28 @@
                                         be included when using Web Search.</span
                                     >
                                 </span>
+                            {:else if settingsStore.providerId === 'anthropic'}
+                                <span
+                                    class="info-icon relative flex items-center text-fg-muted opacity-60 cursor-default hover:opacity-100"
+                                    aria-label="Anthropic web search requirement"
+                                >
+                                    <Icon name="info" />
+                                    <span
+                                        class="info-tooltip hidden absolute bottom-full left-1/2 -translate-x-1/2 pb-1.5 z-10"
+                                    >
+                                        <span
+                                            class="block w-55 px-2.5 py-2 bg-surface-raised border border-border rounded-[7px] text-xs leading-normal text-fg font-normal shadow-[0_4px_16px_oklch(0%_0_0/15%)]"
+                                            >Anthropic requires web search to be
+                                            turned on in <a
+                                                href="https://platform.claude.com/settings/privacy"
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                class="text-accent-fg hover:underline"
+                                                >org settings</a
+                                            >.</span
+                                        >
+                                    </span>
+                                </span>
                             {/if}
                         </div>
                         <button
@@ -714,16 +747,23 @@
             <div class={detailRowClass}>
                 <span class={detailLabelClass}>Context Window</span>
                 <span
-                    class={detailValueClass}
+                    class={[
+                        detailValueClass,
+                        contextNearLimit &&
+                            'text-accent-fg! inline-flex items-center gap-1',
+                    ]}
                     data-testid="context-window-usage"
+                    title={contextNearLimit
+                        ? "This conversation is approaching the model's context limit."
+                        : undefined}
                 >
                     {#if !appLifecycle.initialized || !currentModel}
                         &nbsp;
-                    {:else if chatStore.activeTokens}
-                        {(
-                            chatStore.activeTokens.input +
-                            chatStore.activeTokens.output
-                        ).toLocaleString()} / {currentModel.params.contextWindow.toLocaleString()}
+                    {:else if contextUsed !== null}
+                        {contextUsed.toLocaleString()} / {currentModel.params.contextWindow.toLocaleString()}
+                        {#if contextNearLimit}
+                            <Icon name="circle-alert" size={12} />
+                        {/if}
                     {:else}
                         {currentModel.params.contextWindow.toLocaleString()}
                     {/if}

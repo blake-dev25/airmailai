@@ -54,22 +54,24 @@ let _db: IDBDatabase | null = null;
 function openDb(): Promise<IDBDatabase> {
     return new Promise((resolve, reject) => {
         const req = indexedDB.open(DB_NAME, DB_VERSION);
-        req.onupgradeneeded = () => {
+        req.onupgradeneeded = (event) => {
             const db = req.result;
-            for (const name of Array.from(db.objectStoreNames)) {
-                db.deleteObjectStore(name);
+            if (event.oldVersion < 14) {
+                for (const name of Array.from(db.objectStoreNames)) {
+                    db.deleteObjectStore(name);
+                }
+                const messages = db.createObjectStore(STORE_MESSAGES, {
+                    keyPath: ['chatId', 'message.id'],
+                });
+                messages.createIndex(
+                    INDEX_CHAT_ORDER,
+                    ['chatId', 'message.metadata.createdAt', 'message.id'],
+                    { unique: false }
+                );
+                db.createObjectStore(STORE_META, { keyPath: 'id' });
+                db.createObjectStore(STORE_FILES, { keyPath: 'hash' });
+                db.createObjectStore(STORE_FILE_META, { keyPath: 'hash' });
             }
-            const messages = db.createObjectStore(STORE_MESSAGES, {
-                keyPath: ['chatId', 'message.id'],
-            });
-            messages.createIndex(
-                INDEX_CHAT_ORDER,
-                ['chatId', 'message.metadata.createdAt', 'message.id'],
-                { unique: false }
-            );
-            db.createObjectStore(STORE_META, { keyPath: 'id' });
-            db.createObjectStore(STORE_FILES, { keyPath: 'hash' });
-            db.createObjectStore(STORE_FILE_META, { keyPath: 'hash' });
         };
         req.onsuccess = () => {
             log.info('IndexedDB opened');
@@ -269,6 +271,11 @@ export async function dbPutMessage(
     msg: HydratedStoredMessage
 ): Promise<ProviderFileRef[]> {
     log.info('db: put message', msg.chatId, msg.message.id);
+    if (!Number.isFinite(msg.message.metadata?.createdAt)) {
+        throw new Error(
+            `Message ${msg.message.id} has no valid createdAt - refusing to persist`
+        );
+    }
     const freshBlobs = freshBlobsFromHydrated(msg);
     const db = await getDb();
     const { tx, stores } = fileTx(db);
@@ -279,6 +286,10 @@ export async function dbPutMessage(
         log.info('db: chat gone, skipping put', msg.chatId, msg.message.id);
         tx.abort();
         return [];
+    }
+    const msgCreatedAt = msg.message.metadata.createdAt;
+    if (msgCreatedAt > (meta.lastMessageAt ?? 0)) {
+        stores.chatMetaStore.put({ ...meta, lastMessageAt: msgCreatedAt });
     }
 
     const prior = (await reqAsPromise(
@@ -394,8 +405,13 @@ export async function dbSaveMeta(meta: ChatMeta): Promise<void> {
     const store = tx.objectStore(STORE_META);
     const existing = (await reqAsPromise(store.get(meta.id))) as
         ChatMeta | undefined;
+    const lastMessageAt = Math.max(
+        existing?.lastMessageAt ?? 0,
+        meta.lastMessageAt ?? 0
+    );
     store.put({
         ...meta,
+        ...(lastMessageAt ? { lastMessageAt } : {}),
         draftAttachments: existing?.draftAttachments,
         containerId: existing?.containerId,
         containerExpiresAt: existing?.containerExpiresAt,

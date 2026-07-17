@@ -36,9 +36,27 @@ export const tabId = crypto.randomUUID();
 import { log } from './log';
 const KEEPALIVE_MS = 20_000;
 
-let extensionId: string | null =
-    document.documentElement.dataset.courieraiExtId ?? null;
+let extensionId: string | null = null;
+let extensionVersion: string | null = null;
+let extensionVersionName: string | null = null;
+
+function readDomMarkers(): void {
+    const dataset = document.documentElement.dataset;
+    if (!dataset.courieraiExtId) return;
+    extensionId = dataset.courieraiExtId;
+    extensionVersion = dataset.courieraiExtVersion ?? null;
+    extensionVersionName = dataset.courieraiExtVersionName ?? null;
+}
+
+readDomMarkers();
 if (extensionId) log.info('extension ID from DOM marker', extensionId);
+
+export function getExtensionVersion(): {
+    version: string | null;
+    versionName: string | null;
+} {
+    return { version: extensionVersion, versionName: extensionVersionName };
+}
 
 window.addEventListener('message', (e: MessageEvent) => {
     if (
@@ -46,7 +64,11 @@ window.addEventListener('message', (e: MessageEvent) => {
         typeof e.data.id === 'string'
     ) {
         extensionId = e.data.id;
-        log.info('extension ID received', extensionId);
+        if (typeof e.data.version === 'string')
+            extensionVersion = e.data.version;
+        if (typeof e.data.versionName === 'string')
+            extensionVersionName = e.data.versionName;
+        log.info('extension ID received', extensionId, extensionVersion);
     }
 });
 
@@ -56,14 +78,14 @@ const DETECT_PING_INTERVAL_MS = 150;
 // *** TODO(static-id): once the extension is published to the Chrome Web Store its
 // ID is static. Replace this READY/PING handshake with a hardcoded extension
 // ID + direct chrome.runtime.sendMessage probe (which also wakes the service
-// worker), and delete the extension's content script.
+// worker), and delete the extension's content script. The probe response must
+// keep reporting the extension version and versionName.
 export function waitForExtension(): Promise<boolean> {
     if (extensionId) return Promise.resolve(true);
     return new Promise((resolve) => {
         const deadline = Date.now() + DETECT_TIMEOUT_MS;
         const tick = () => {
-            const marker = document.documentElement.dataset.courieraiExtId;
-            if (marker) extensionId = marker;
+            readDomMarkers();
             if (extensionId) {
                 resolve(true);
                 return;
@@ -126,6 +148,19 @@ export async function checkApiKeys(
 ): Promise<Record<string, boolean>> {
     const response = await sendStorageMessage({ type: 'has_keys', providers });
     if (response.type === 'has_keys') return response.saved;
+    throw new Error(`Unexpected response: ${response.type}`);
+}
+
+export async function testApiKey(
+    provider: string
+): Promise<{ ok: boolean; message?: string }> {
+    const response = await sendStorageMessage({ type: 'test_key', provider });
+    if (response.type === 'key_test') {
+        return {
+            ok: response.ok,
+            ...(response.message ? { message: response.message } : {}),
+        };
+    }
     throw new Error(`Unexpected response: ${response.type}`);
 }
 

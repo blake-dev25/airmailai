@@ -2,17 +2,18 @@
     import type { StorageUsage } from '@courierai/shared';
     import { chatStore } from './chatStore.svelte';
     import { PROVIDERS, THEMES } from './constants';
-    import { reportAppError } from './errorStore.svelte';
+    import { formatErr, reportAppError } from './errorStore.svelte';
     import {
-        checkApiKeys,
         clearAllChats,
         clearAllStorage,
         clearApiKey,
         getStorageUsage,
         saveApiKey,
+        testApiKey,
         waitForExtension,
     } from './extension';
     import Icon from './Icon.svelte';
+    import MarkdownMessage from './MarkdownMessage.svelte';
     import { providersStore } from './providersStore.svelte';
     import { settingsStore } from './settingsStore.svelte';
 
@@ -32,6 +33,8 @@
         "Google runs code in a temporary sandbox with no persistent storage - nothing is stored on Google's servers to manage or delete.";
     const PROVIDER_FILE_STORAGE_INFO =
         'When turned on, stores uploaded files on provider servers. This can save tokens in multi-turn conversations. When turned off, files are sent and processed every turn, but are not stored on provider servers. See provider API documentation for details.';
+    const SMOOTH_TEXT_INFO =
+        'Changes how AI messages are displayed. Smooth animates text in at a steady pace; raw displays chunks exactly as they arrive.';
     const OPENROUTER_PDF_INFO =
         'Controls how PDFs are processed in OpenRouter chats. "Provider native only" sends the PDF to the model provider and nowhere else, but only works with models that support PDF input. The Cloudflare and Mistral options parse the PDF into text first, which lets any model read PDFs but routes the file contents through that third party. Mistral OCR bills per page to your OpenRouter account; Cloudflare parsing is free.';
     const FILE_UPLOADS_WARNING =
@@ -88,6 +91,29 @@
         if (storageUsage === null && !storageLoading) refreshStorageUsage();
     }
 
+    let changelogMd = $state<string | null>(null);
+    let changelogLoading = $state(false);
+    let changelogError = $state<string | null>(null);
+
+    async function loadChangelog() {
+        changelogLoading = true;
+        changelogError = null;
+        try {
+            const res = await fetch('/changelog.md');
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            changelogMd = await res.text();
+        } catch (err) {
+            changelogError = `Couldn't load the changelog: ${formatErr(err)}`;
+        } finally {
+            changelogLoading = false;
+        }
+    }
+
+    function openChangelogTab() {
+        activeTab = 'changelog';
+        if (changelogMd === null && !changelogLoading) loadChangelog();
+    }
+
     function formatBytes(bytes: number): string {
         if (bytes < 1024) return `${bytes} B`;
         if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -133,7 +159,8 @@
             localStorage.removeItem('courierai-show-branding');
             localStorage.removeItem('courierai-message-font');
             chatStore.resetLocal();
-            savedKeys = Object.fromEntries(PROVIDERS.map((p) => [p.id, false]));
+            providersStore.markAllKeysCleared();
+            keyTests = {};
             await refreshStorageUsage();
         } catch (err) {
             reportAppError(
@@ -197,26 +224,36 @@
         Object.fromEntries(PROVIDERS.map((p) => [p.id, '']))
     );
 
-    let savedKeys = $state<Record<string, boolean>>(
-        Object.fromEntries(PROVIDERS.map((p) => [p.id, false]))
-    );
+    $effect(() => {
+        waitForExtension().then(() => {
+            providersStore.refreshSavedKeys().catch((err) => {
+                reportAppError(
+                    'checkApiKeys failed',
+                    "Couldn't read saved API keys",
+                    err
+                );
+            });
+        });
+    });
 
-    async function refreshSavedKeys() {
-        await waitForExtension();
+    type KeyTestStatus = 'testing' | 'ok' | 'fail';
+    let keyTests = $state<Record<string, KeyTestStatus | undefined>>({});
+    let keyTestError = $state<string | null>(null);
+
+    async function handleTest(provider: { id: string; name: string }) {
+        keyTests = { ...keyTests, [provider.id]: 'testing' };
+        keyTestError = null;
+        let result: { ok: boolean; message?: string };
         try {
-            savedKeys = await checkApiKeys(PROVIDERS.map((p) => p.id));
+            result = await testApiKey(provider.id);
         } catch (err) {
-            reportAppError(
-                'checkApiKeys failed',
-                "Couldn't read saved API keys",
-                err
-            );
+            result = { ok: false, message: formatErr(err) };
+        }
+        keyTests = { ...keyTests, [provider.id]: result.ok ? 'ok' : 'fail' };
+        if (!result.ok) {
+            keyTestError = `${provider.name}: ${result.message ?? 'key check failed'}`;
         }
     }
-
-    $effect(() => {
-        refreshSavedKeys();
-    });
 
     async function handleSave(providerId: string) {
         const key = keyInputs[providerId].trim();
@@ -245,7 +282,7 @@
             return;
         }
         keyInputs[providerId] = '';
-        savedKeys[providerId] = true;
+        keyTests = { ...keyTests, [providerId]: undefined };
         providersStore.onApiKeySaved(providerId);
     }
 
@@ -260,7 +297,7 @@
             );
             return;
         }
-        savedKeys[providerId] = false;
+        keyTests = { ...keyTests, [providerId]: undefined };
         providersStore.onApiKeyCleared(providerId);
     }
 
@@ -284,7 +321,13 @@
         'toggle-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200';
 
     const tdBase = 'py-2 px-3 text-fg align-middle';
+
+    function onWindowKeydown(e: KeyboardEvent) {
+        if (e.key === 'Escape') onclose();
+    }
 </script>
+
+<svelte:window onkeydown={onWindowKeydown} />
 
 <div
     class="fixed inset-0 z-49 bg-black/30"
@@ -336,7 +379,7 @@
         <button
             type="button"
             class={[tabBase, activeTab === 'changelog' && tabActive]}
-            onclick={() => (activeTab = 'changelog')}
+            onclick={openChangelogTab}
         >
             Changelog
         </button>
@@ -389,7 +432,7 @@
                                     !isLast && 'border-b border-border',
                                 ]}
                             >
-                                {#if savedKeys[provider.id]}
+                                {#if providersStore.savedKeys?.[provider.id]}
                                     <Icon name="check" class="icon-check" />
                                 {:else}
                                     <Icon
@@ -438,10 +481,39 @@
                                     <button
                                         type="button"
                                         class="shrink-0 px-2.5 py-1.25 border border-border rounded-md text-xs font-medium cursor-pointer whitespace-nowrap transition-[background-color,opacity] duration-150 disabled:opacity-[0.35] disabled:cursor-not-allowed bg-surface-raised text-fg enabled:hover:bg-surface-sunken"
-                                        disabled={!savedKeys[provider.id]}
+                                        disabled={!providersStore.savedKeys?.[
+                                            provider.id
+                                        ]}
                                         onclick={() => handleClear(provider.id)}
                                     >
                                         Clear
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class={[
+                                            'shrink-0 w-13 px-1 py-1.25 border rounded-md text-xs font-medium cursor-pointer whitespace-nowrap transition-[background-color,opacity,color,border-color] duration-150 disabled:opacity-[0.35] disabled:cursor-not-allowed bg-surface-raised enabled:hover:bg-surface-sunken [&_svg]:mx-auto',
+                                            keyTests[provider.id] === 'ok'
+                                                ? 'text-[#4caf6e]! border-[#4caf6e]!'
+                                                : keyTests[provider.id] ===
+                                                    'fail'
+                                                  ? 'text-accent-fg! border-accent-fg!'
+                                                  : 'text-fg border-border',
+                                        ]}
+                                        disabled={!providersStore.savedKeys?.[
+                                            provider.id
+                                        ] ||
+                                            keyTests[provider.id] === 'testing'}
+                                        onclick={() => handleTest(provider)}
+                                    >
+                                        {#if keyTests[provider.id] === 'testing'}
+                                            <Icon name="spinner" />
+                                        {:else if keyTests[provider.id] === 'ok'}
+                                            Valid
+                                        {:else if keyTests[provider.id] === 'fail'}
+                                            Invalid
+                                        {:else}
+                                            Test
+                                        {/if}
                                     </button>
                                 </div>
                             </td>
@@ -449,6 +521,14 @@
                     {/each}
                 </tbody>
             </table>
+            {#if keyTestError}
+                <p
+                    class="m-0 -mt-2 px-3 text-xs text-accent-fg wrap-break-word"
+                    role="alert"
+                >
+                    {keyTestError}
+                </p>
+            {/if}
         </div>
 
         <div
@@ -783,9 +863,10 @@
                     />
                 </div>
                 <p class="m-0 text-xs text-fg-muted">
-                    Export downloads a readable YAML backup of all chats. Import
-                    accepts CourierAI backups, plus single-chat Markdown, LM
-                    Studio JSON, and SillyTavern JSONL files.
+                    Export downloads a readable YAML backup of all chats
+                    (uploaded files are not included). Import accepts CourierAI
+                    backups, plus single-chat Markdown, LM Studio JSON, and
+                    SillyTavern JSONL files.
                 </p>
             </div>
             <div class="flex gap-2">
@@ -822,33 +903,34 @@
                     <label for="smooth-text-mode" class={labelClass}
                         >Smooth Text Rendering</label
                     >
-                    <span
-                        class="info-icon relative flex items-center text-fg-muted opacity-60 cursor-default hover:opacity-100"
-                        aria-label="About smooth text rendering"
-                    >
-                        <Icon name="info" />
-                        <span
-                            class="info-tooltip hidden absolute bottom-[calc(100%+6px)] left-1/2 -translate-x-1/2 w-55 px-2.5 py-2 bg-surface-raised border border-border rounded-[7px] text-xs leading-normal text-fg font-normal shadow-[0_4px_16px_oklch(0%_0_0/15%)] pointer-events-none z-10"
-                            >Changes how AI messages are displayed. Sorted from
-                            slow/pretty to fast/less pretty.</span
-                        >
-                    </span>
+                    {@render toolInfo(
+                        'About smooth text rendering',
+                        SMOOTH_TEXT_INFO
+                    )}
                 </div>
                 <select
                     id="smooth-text-mode"
                     class={selectClass}
                     bind:value={settingsStore.smoothTextMode}
                 >
-                    <option value="smooth">Normal rendering</option>
-                    <option value="boost-on-complete"
-                        >Fast rendering upon message completion</option
-                    >
-                    <option value="dump-on-complete"
-                        >Render all text upon message completion</option
-                    >
+                    <option value="smooth">Smooth rendering</option>
                     <option value="raw"
                         >Render text chunks as streamed from API</option
                     >
+                </select>
+            </div>
+            <div class={[rowBase, themeRow]}>
+                <label for="chat-sort-order" class={labelClass}
+                    >Sort Chats By</label
+                >
+                <select
+                    id="chat-sort-order"
+                    class={selectClass}
+                    bind:value={settingsStore.chatSortOrder}
+                    onchange={() => void chatStore.applySortOrderChange()}
+                >
+                    <option value="modified">Last updated</option>
+                    <option value="created">Date created</option>
                 </select>
             </div>
             <div class={[rowBase, themeRow]}>
@@ -924,7 +1006,8 @@
                     >
                     {@render toolInfo(
                         'About OpenRouter PDF processing',
-                        OPENROUTER_PDF_INFO
+                        OPENROUTER_PDF_INFO,
+                        true
                     )}
                 </div>
                 <select
@@ -942,6 +1025,15 @@
                     <option value="mistral-ocr">Mistral-OCR (paid)</option>
                 </select>
             </div>
+            <p class="m-0 mt-auto pt-2 text-xs text-fg-muted text-center">
+                CourierAI is made possible by <a
+                    href="/legal/third-party-licenses.txt"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="inline-flex items-center gap-0.5 text-accent-fg no-underline hover:underline"
+                    >open source software<Icon name="external-link" /></a
+                >.
+            </p>
         </div>
 
         <div
@@ -951,23 +1043,28 @@
             ]}
             aria-hidden={activeTab !== 'changelog'}
         >
-            <h3 class="text-sm font-semibold text-fg m-0 py-1">
-                v{__APP_VERSION__}
-            </h3>
-            <p class="text-sm text-fg m-0 py-1">TODO - add changelog</p>
+            {#if changelogError}
+                <p class="text-sm text-accent-fg m-0 py-1">{changelogError}</p>
+            {:else if changelogMd === null}
+                <p class="text-sm text-fg m-0 py-1">Loading...</p>
+            {:else}
+                <MarkdownMessage content={changelogMd} />
+            {/if}
         </div>
     </div>
 </div>
 
-{#snippet toolInfo(label: string, text: string)}
+{#snippet toolInfo(label: string, text: string, above: boolean = false)}
     <span
         class="info-icon relative flex items-center text-fg-muted opacity-60 cursor-default hover:opacity-100"
         aria-label={label}
     >
         <Icon name="info" />
         <span
-            class="info-tooltip hidden absolute top-[calc(100%+6px)] left-1/2 -translate-x-1/2 w-72 px-2.5 py-2 bg-surface-raised border border-border rounded-[7px] text-xs leading-normal text-fg font-normal shadow-[0_4px_16px_oklch(0%_0_0/15%)] pointer-events-none z-10"
-            >{text}</span
+            class={[
+                'info-tooltip hidden absolute left-0 w-72 px-2.5 py-2 bg-surface-raised border border-border rounded-[7px] text-xs leading-normal text-fg font-normal shadow-[0_4px_16px_oklch(0%_0_0/15%)] pointer-events-none z-10',
+                above ? 'bottom-[calc(100%+6px)]' : 'top-[calc(100%+6px)]',
+            ]}>{text}</span
         >
     </span>
 {/snippet}

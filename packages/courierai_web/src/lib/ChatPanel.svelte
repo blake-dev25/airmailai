@@ -24,6 +24,7 @@
     import { createChatScroll } from './chatScroll.svelte';
     import { createSmoothText } from './smoothText.svelte';
     import { messageText } from './types';
+    import { versionCheck } from './versionCheck.svelte';
 
     let systemExpanded = $state(false);
     const expandedThinking = new SvelteSet<string>();
@@ -189,14 +190,10 @@
     });
 
     $effect(() => {
-        if (settingsStore.smoothTextMode !== 'dump-on-complete') return;
-        if (chatStore.isActiveStreaming) return;
-        smooth.flushIfComplete();
-    });
-
-    $effect(() => {
         const idx = chatStore.highlightMessageIndex;
         if (idx == null) return;
+        if (chatStore.chatLoading || chatStore.activeMessages.length <= idx)
+            return;
         let cancelled = false;
         tick().then(() => {
             requestAnimationFrame(() => {
@@ -205,6 +202,7 @@
                     `[data-msg-index="${idx}"]`
                 ) as HTMLElement | null;
                 if (!el) return;
+                chatStore.highlightMessageIndex = null;
                 el.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 el.classList.add('search-highlight');
                 setTimeout(() => el.classList.remove('search-highlight'), 1500);
@@ -454,7 +452,19 @@
             }
 
             setProcessingProgress(id, 100);
-            await chatStore.addDraftAttachment(draftAtt, data);
+            const attachedChatId = await chatStore.addDraftAttachment(
+                draftAtt,
+                data
+            );
+            if (!isCurrent()) {
+                if (attachedChatId) {
+                    await chatStore.removeDraftAttachment(
+                        draftAtt.hash,
+                        attachedChatId
+                    );
+                }
+                return;
+            }
             removeProcessingAttachment(id);
         } catch (error) {
             if (!isCurrent()) return;
@@ -597,6 +607,23 @@
         if (idx !== -1) chatStore.editMessage(idx, text);
     }
 
+    function saveEditAndResend() {
+        if (editingMessageId === null) return;
+        const idx = chatStore.activeMessages.findIndex(
+            (m) => m.id === editingMessageId
+        );
+        editingMessageId = null;
+        const text = editingText;
+        editingText = '';
+        if (idx === -1) return;
+        chatStore.editMessage(idx, text);
+        if (chatStore.demoMode) {
+            appLifecycle.requestExtension();
+            return;
+        }
+        chatStore.retry(idx);
+    }
+
     function cancelEdit() {
         editingMessageId = null;
         editingText = '';
@@ -695,7 +722,7 @@
         >
             <div
                 bind:this={messagesContentEl}
-                class="[--narrow-chat-width:744px] mx-auto px-5 py-7 flex flex-col gap-7 min-h-full box-border"
+                class="[--narrow-chat-width:744px] mx-auto px-5 py-7 flex flex-col min-h-full box-border"
                 style="max-width: min(100vw, calc(744px + (100vw - 744px) * {settingsStore.chatWidth /
                     100}));"
             >
@@ -750,7 +777,8 @@
                             {displayContent}
                             {fileStatuses}
                             isStreaming={chatStore.isActiveStreaming}
-                            {isLastStreaming}
+                            isLastStreaming={isLastStreaming ||
+                                displayContent !== messageContent}
                             editing={editingMessage?.id === message.id}
                             bind:editingText
                             {editingDims}
@@ -766,6 +794,7 @@
                             onstartedit={(content, bubbleEl) =>
                                 startEdit(message.id, content, bubbleEl)}
                             onsaveedit={saveEdit}
+                            onsaveresend={saveEditAndResend}
                             oncanceledit={cancelEdit}
                             onthinkingtoggle={() => {
                                 if (expandedThinking.has(message.id))
@@ -811,6 +840,34 @@
             </button>
         {/if}
     </div>
+
+    {#if versionCheck.notice}
+        <div
+            class="shrink-0 flex items-center gap-3 px-4 py-2 text-sm text-fg border-t border-border bg-canvas"
+            role="status"
+        >
+            <span class="min-w-0 flex-1 wrap-break-word"
+                >{versionCheck.notice.message}</span
+            >
+            {#if versionCheck.notice.refresh}
+                <button
+                    type="button"
+                    class="shrink-0 px-2.5 py-1 text-xs bg-surface-sunken border border-border rounded-md text-fg cursor-pointer transition-[background-color] duration-150 hover:bg-border"
+                    onclick={() => location.reload()}
+                >
+                    Refresh
+                </button>
+            {/if}
+            <button
+                type="button"
+                class="shrink-0 flex items-center justify-center w-6 h-6 p-0 bg-transparent border-0 rounded-md text-fg cursor-pointer opacity-70 transition-[opacity,background-color] duration-150 hover:opacity-100 hover:bg-surface-sunken"
+                onclick={() => versionCheck.dismiss()}
+                aria-label="Dismiss update notice"
+            >
+                <Icon name="close" />
+            </button>
+        </div>
+    {/if}
 
     {#if errorStore.appError}
         <div

@@ -6,7 +6,6 @@
     import { PROVIDERS } from './constants';
     import { reportAppError } from './errorStore.svelte';
     import {
-        checkApiKeys,
         deleteStoredFile,
         getFileBlob,
         listLocalFiles,
@@ -14,6 +13,7 @@
     } from './extension';
     import { formatFileSize, triggerBlobDownload } from './files';
     import Icon from './Icon.svelte';
+    import { providersStore } from './providersStore.svelte';
 
     const FILES_API_PROVIDERS = new Set(['anthropic', 'google', 'openai']);
     const GB = 1024 ** 3;
@@ -32,8 +32,7 @@
 
     let localFiles = $state<LocalFileInfo[] | null>(null);
     let localError = $state(false);
-    let keysLoaded = $state(false);
-    let savedKeys = $state<Record<string, boolean>>({});
+    let keysChecked = $state(false);
     let providerFiles = $state<Record<string, ProviderFileInfo[] | null>>({});
     let providerError = $state<Record<string, boolean>>({});
     let busyKey = $state<string | null>(null);
@@ -71,7 +70,7 @@
 
     async function loadProviders() {
         try {
-            savedKeys = await checkApiKeys(PROVIDERS.map((p) => p.id));
+            await providersStore.refreshSavedKeys();
         } catch (err) {
             reportAppError(
                 'checkApiKeys failed',
@@ -80,11 +79,11 @@
             );
             return;
         } finally {
-            keysLoaded = true;
+            keysChecked = true;
         }
         for (const provider of PROVIDERS) {
             if (!FILES_API_PROVIDERS.has(provider.id)) continue;
-            if (!savedKeys[provider.id]) continue;
+            if (!providersStore.savedKeys?.[provider.id]) continue;
             void loadProviderFiles(provider.id);
         }
     }
@@ -290,10 +289,11 @@
 
             {#each PROVIDERS as provider (provider.id)}
                 {@const files = providerFiles[provider.id] ?? []}
+                {@const keySaved = !!providersStore.savedKeys?.[provider.id]}
                 {@const ready =
                     FILES_API_PROVIDERS.has(provider.id) &&
-                    keysLoaded &&
-                    savedKeys[provider.id] &&
+                    keysChecked &&
+                    keySaved &&
                     providerFiles[provider.id] != null &&
                     !providerError[provider.id]}
                 {@const max = PROVIDER_STORAGE_MAX_BYTES[provider.id]}
@@ -342,9 +342,9 @@
                     </div>
                     {#if !FILES_API_PROVIDERS.has(provider.id)}
                         <p class="text-sm text-fg-muted">No files API</p>
-                    {:else if !keysLoaded}
+                    {:else if !keysChecked}
                         {@render loading()}
-                    {:else if !savedKeys[provider.id]}
+                    {:else if !keySaved}
                         <p class="text-sm text-fg-muted">No API key</p>
                     {:else if providerFiles[provider.id] == null}
                         {@render loading()}

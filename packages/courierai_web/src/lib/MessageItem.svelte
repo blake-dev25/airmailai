@@ -10,6 +10,7 @@
     } from './files';
     import Icon from './Icon.svelte';
     import MarkdownMessage from './MarkdownMessage.svelte';
+    import MessageImage from './MessageImage.svelte';
     import {
         messageCodeExecutions,
         messageThinking,
@@ -36,6 +37,7 @@
         onhoverleave,
         onstartedit,
         onsaveedit,
+        onsaveresend,
         oncanceledit,
         onthinkingtoggle,
         onsourcestoggle,
@@ -64,6 +66,7 @@
         onhoverleave: () => void;
         onstartedit: (content: string, bubbleEl: HTMLElement | null) => void;
         onsaveedit: () => void;
+        onsaveresend: () => void;
         oncanceledit: () => void;
         onthinkingtoggle: () => void;
         onsourcestoggle: () => void;
@@ -107,6 +110,18 @@
         return fileStatuses[c.hash] ?? 'local';
     }
 
+    const RASTER_TYPES = new Set([
+        'image/png',
+        'image/jpeg',
+        'image/gif',
+        'image/webp',
+    ]);
+    const imageChips = $derived(
+        chips.filter(
+            (c) => RASTER_TYPES.has(c.mediaType) && chipStatus(c) === 'local'
+        )
+    );
+
     function chipUnavailableText(status: FileAvailability): string | null {
         if (status === 'expired') {
             return "This file's provider copy has expired and it will not be sent with future messages.";
@@ -149,8 +164,26 @@
         return null;
     });
 
+    let copied = $state(false);
+    let copiedTimer: ReturnType<typeof setTimeout> | null = null;
+
     async function copyMessage(content: string) {
-        await navigator.clipboard.writeText(content);
+        try {
+            await navigator.clipboard.writeText(content);
+        } catch (err) {
+            reportAppError(
+                'clipboard write failed',
+                "Couldn't copy to clipboard",
+                err
+            );
+            return;
+        }
+        copied = true;
+        if (copiedTimer !== null) clearTimeout(copiedTimer);
+        copiedTimer = setTimeout(() => {
+            copied = false;
+            copiedTimer = null;
+        }, 1500);
     }
 
     async function openDocSource(hash: string) {
@@ -251,7 +284,7 @@
 {/snippet}
 
 <div
-    class={['flex', isUser ? 'justify-end' : 'justify-start']}
+    class={['flex pb-7', isUser ? 'justify-end' : 'justify-start']}
     data-msg-index={index}
     data-msg-role={message.role}
     role="group"
@@ -268,6 +301,13 @@
         ]}
     >
         {#if isUser}
+            {#if imageChips.length}
+                <div class="flex flex-wrap gap-1.5 justify-end">
+                    {#each imageChips as c (c.key)}
+                        <MessageImage hash={c.hash} filename={c.filename} />
+                    {/each}
+                </div>
+            {/if}
             {#if chips.length}
                 <div class="flex flex-wrap gap-1.5 justify-end">
                     {#each chips as c (c.key)}
@@ -276,11 +316,6 @@
                 </div>
             {/if}
         {:else}
-            {#if isLastStreaming && !messageContent && !thinking}
-                <div class="flex items-center px-3.5 py-2.5 text-fg-muted">
-                    <Icon name="spinner" size={16} />
-                </div>
-            {/if}
             {#if thinking}
                 <div class="border border-border rounded-lg overflow-hidden">
                     <button
@@ -288,9 +323,6 @@
                         class="flex items-center gap-1.5 w-full px-2.5 py-1.5 bg-transparent border-0 text-fg font-sans text-xs font-medium opacity-60 cursor-pointer text-left transition-opacity duration-150 hover:opacity-100"
                         onclick={onthinkingtoggle}
                     >
-                        {#if isLastStreaming && !messageContent}
-                            <Icon name="spinner" />
-                        {/if}
                         <span>Thinking</span>
                         <Icon
                             name="chevron-right"
@@ -322,6 +354,14 @@
                     class="{editBtnBase} bg-accent-3-bg text-on-accent-3-bg hover:bg-accent-3-bg-hover hover:text-on-accent-3-bg-hover"
                     onclick={onsaveedit}>Save</button
                 >
+                {#if isUser}
+                    <button
+                        type="button"
+                        class="{editBtnBase} bg-surface-sunken text-fg border! border-border! enabled:hover:bg-border disabled:opacity-[0.35] disabled:cursor-not-allowed"
+                        onclick={onsaveresend}
+                        disabled={isStreaming}>Save &amp; resend</button
+                    >
+                {/if}
                 <button
                     type="button"
                     class="{editBtnBase} bg-surface-sunken text-fg border! border-border! hover:bg-border"
@@ -339,6 +379,19 @@
                         content={markedContent}
                         citations={citationView.anchors}
                     />
+                    {#if imageChips.length}
+                        <div
+                            class="mt-2 pt-2 border-t border-current/15 flex flex-wrap gap-1.5"
+                        >
+                            {#each imageChips as c (c.key)}
+                                <MessageImage
+                                    hash={c.hash}
+                                    filename={c.filename}
+                                    streaming={isLastStreaming}
+                                />
+                            {/each}
+                        </div>
+                    {/if}
                     {#if chips.length}
                         <div
                             class="mt-2 pt-2 border-t border-current/15 flex flex-wrap gap-1.5"
@@ -500,6 +553,12 @@
             {/if}
         {/if}
 
+        {#if isLastStreaming && !isUser}
+            <div class="flex items-center px-1 text-fg-muted">
+                <Icon name="spinner" size={16} />
+            </div>
+        {/if}
+
         {#if stopNotice && !isLastStreaming && !editing}
             <div class="flex items-center gap-1.5 px-1 text-xs text-fg-muted">
                 <Icon name="info" />
@@ -536,9 +595,9 @@
                     type="button"
                     class={msgActionBtnClass}
                     onclick={() => copyMessage(messageContent)}
-                    aria-label="Copy"
+                    aria-label={copied ? 'Copied!' : 'Copy'}
                 >
-                    <Icon name="copy" />
+                    <Icon name={copied ? 'check' : 'copy'} size={12} />
                 </button>
                 <button
                     type="button"

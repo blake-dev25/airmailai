@@ -1,4 +1,5 @@
 import type { CourierAIMessage } from '@courierai/shared';
+import { advanceFence, type FenceState } from './markdown-fences';
 
 export const CITE_SENTINEL = String.fromCharCode(0xe000);
 
@@ -123,25 +124,23 @@ export function buildCitationView(msg: CourierAIMessage): CitationView {
 
 function unsafePositions(text: string): (pos: number) => boolean {
     const fences: Array<{ start: number; end: number }> = [];
-    let inFence = false;
+    let fence: FenceState | null = null;
     let fenceStart = 0;
     let lineStart = 0;
     while (lineStart <= text.length) {
         const lineEnd = text.indexOf('\n', lineStart);
         const end = lineEnd === -1 ? text.length : lineEnd;
-        if (text.slice(lineStart, end).trimStart().startsWith('```')) {
-            if (inFence) {
-                fences.push({ start: fenceStart, end });
-                inFence = false;
-            } else {
-                inFence = true;
-                fenceStart = lineStart;
-            }
+        const next = advanceFence(fence, text.slice(lineStart, end));
+        if (fence === null && next !== null) {
+            fenceStart = lineStart;
+        } else if (fence !== null && next === null) {
+            fences.push({ start: fenceStart, end });
         }
+        fence = next;
         if (lineEnd === -1) break;
         lineStart = lineEnd + 1;
     }
-    if (inFence) fences.push({ start: fenceStart, end: text.length });
+    if (fence !== null) fences.push({ start: fenceStart, end: text.length });
     return (pos) => {
         for (const f of fences) {
             if (pos > f.start && pos < f.end) return true;

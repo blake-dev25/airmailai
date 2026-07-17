@@ -2,6 +2,7 @@ import type { CitationAnchor } from './citations';
 import { reportAppError } from './errorStore.svelte';
 import { getFileBlob } from './extension';
 import { openBlobInNewTab } from './files';
+import { advanceFence, type FenceState } from './markdown-fences';
 import { renderMarkdown } from './markdown.svelte';
 
 export interface StreamingMarkdownParams {
@@ -18,7 +19,7 @@ export function streamingMarkdown(
     let stableSource = '';
     let lastHighlighterReady = initial.highlighterReady;
     let scanLineStart = 0;
-    let scanInFence = false;
+    let scanFence: FenceState | null = null;
     let latestSplit = 0;
 
     const headEl = document.createElement('div');
@@ -28,7 +29,7 @@ export function streamingMarkdown(
 
     function resetScan() {
         scanLineStart = 0;
-        scanInFence = false;
+        scanFence = null;
         latestSplit = 0;
     }
 
@@ -36,10 +37,10 @@ export function streamingMarkdown(
         let i = content.indexOf('\n', scanLineStart);
         while (i !== -1) {
             const line = content.slice(scanLineStart, i);
-            if (line === '' && !scanInFence && scanLineStart > 0) {
+            if (line === '' && scanFence === null && scanLineStart > 0) {
                 latestSplit = i + 1;
             }
-            if (line.startsWith('```')) scanInFence = !scanInFence;
+            scanFence = advanceFence(scanFence, line);
             scanLineStart = i + 1;
             i = content.indexOf('\n', scanLineStart);
         }
