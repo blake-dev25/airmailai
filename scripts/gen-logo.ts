@@ -18,13 +18,17 @@ const BAR_SPACING = 17;
 const REACH = 0.25;
 const BAR_LEN = 42;
 const BAR_COUNT = 4;
-const C_SIZE = 86;
-const C_NUDGE_X = -3;
-const C_NUDGE_Y = 2;
-const C_BASELINE_SHIFT_EM = 0.34;
+const TEXT = 'AirmailAI';
+const TEXT_SIZE = 16;
+const SMALL_CAPS_SCALE = 0.75;
+const TEXT_RADIUS = 28;
+const LETTER_SPACING = 0.5;
+const BULLET_DISTANCE = 32;
+const BULLET_SIZE = 4;
+const INNER_R = 21;
 const BARS_COLOR = '#c14227';
 const CIRCLE_COLOR = '#26214d';
-const C_COLOR = '#26214d';
+const TEXT_COLOR = '#26214d';
 const BG_COLOR = '#f0e1c3';
 const PNG_SIZES = [16, 32, 48, 64, 128, 180, 192, 256, 512, 1024];
 const EXT_ICON_SIZES = [16, 32, 48, 128];
@@ -44,7 +48,7 @@ const EXT_PUBLIC_DIR = join(
 );
 
 const ATTRIBUTION =
-    'AirmailAI stamp logo. The C glyph is traced from Lora SemiBold, (c) The Lora Project Authors, licensed under the SIL Open Font License 1.1.';
+    'AirmailAI postmark logo. Lettering traced from Lora SemiBold, (c) The Lora Project Authors, licensed under the SIL Open Font License 1.1.';
 
 function wavePath(y: number): string {
     const x0 = CX - R - BAR_LEN + BAR_NUDGE_X;
@@ -81,10 +85,56 @@ async function fetchLoraSemiBold(): Promise<ArrayBuffer> {
 
 const font = parse(await fetchLoraSemiBold());
 
-const advance = font.getAdvanceWidth('C', C_SIZE);
-const baselineX = CX + C_NUDGE_X - advance / 2;
-const baselineY = CY + C_NUDGE_Y + C_BASELINE_SHIFT_EM * C_SIZE;
-const cPathData = font.getPath('C', baselineX, baselineY, C_SIZE).toPathData(2);
+type ArcGlyph = { pathData: string; x: number; y: number; rotDeg: number };
+
+function arcGlyphs(): ArcGlyph[] {
+    const chars = [...TEXT].map((ch) => {
+        const small = /[a-z]/.test(ch);
+        const size = small ? TEXT_SIZE * SMALL_CAPS_SCALE : TEXT_SIZE;
+        const glyphChar = ch.toUpperCase();
+        return {
+            glyphChar,
+            size,
+            advance: font.getAdvanceWidth(glyphChar, size),
+        };
+    });
+    const total =
+        chars.reduce((sum, c) => sum + c.advance, 0) +
+        LETTER_SPACING * (chars.length - 1);
+    const glyphs: ArcGlyph[] = [];
+    let s = -total / 2;
+    for (const c of chars) {
+        const sCenter = s + c.advance / 2;
+        const theta = -Math.PI / 2 + sCenter / TEXT_RADIUS;
+        glyphs.push({
+            pathData: font
+                .getPath(c.glyphChar, -c.advance / 2, 0, c.size)
+                .toPathData(2),
+            x: CX + TEXT_RADIUS * Math.cos(theta),
+            y: CY + TEXT_RADIUS * Math.sin(theta),
+            rotDeg: (theta * 180) / Math.PI + 90,
+        });
+        s += c.advance + LETTER_SPACING;
+    }
+    return glyphs;
+}
+
+const glyphs = arcGlyphs();
+
+function textArcs(color: string, indent: string): string {
+    const paths = glyphs
+        .map(
+            (g) =>
+                `${indent}        <path transform="translate(${g.x.toFixed(2)} ${g.y.toFixed(2)}) rotate(${g.rotDeg.toFixed(2)})" d="${g.pathData}" />`
+        )
+        .join('\n');
+    return `${indent}<g fill="${color}">
+${paths}
+${indent}</g>
+${indent}<g fill="${color}" transform="rotate(180 ${CX} ${CY})">
+${paths}
+${indent}</g>`;
+}
 
 const barYs = Array.from(
     { length: BAR_COUNT },
@@ -97,7 +147,7 @@ const squareX = CX + R + STROKE / 2 + 6 - VIEW;
 function logoBody(
     circleColor: string,
     circleFill: string,
-    cColor: string,
+    textColor: string,
     barsColor: string,
     indent: string
 ): string {
@@ -106,17 +156,20 @@ function logoBody(
         .join('\n');
     return `${indent}<g transform="translate(${-squareX} 0) rotate(${ROTATION} ${CX} ${CY})">
 ${indent}    <circle cx="${CX}" cy="${CY}" r="${R}" fill="${circleFill}" stroke="${circleColor}" stroke-width="${STROKE}" />
-${indent}    <path id="font-lora-c" fill="${cColor}" d="${cPathData}" />
+${indent}    <circle cx="${CX}" cy="${CY}" r="${INNER_R}" fill="none" stroke="${circleColor}" stroke-width="${STROKE}" />
+${indent}    <circle cx="${CX - BULLET_DISTANCE}" cy="${CY}" r="${BULLET_SIZE}" fill="${textColor}" />
+${indent}    <circle cx="${CX + BULLET_DISTANCE}" cy="${CY}" r="${BULLET_SIZE}" fill="${textColor}" />
 ${indent}    <g fill="none" stroke="${barsColor}" stroke-width="${STROKE}" stroke-linecap="round">
 ${bars}
 ${indent}    </g>
+${textArcs(textColor, `${indent}    `)}
 ${indent}</g>`;
 }
 
 const staticSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${VIEW} ${VIEW}">
     <title>AirmailAI</title>
     <desc>${ATTRIBUTION}</desc>
-${logoBody(CIRCLE_COLOR, BG_COLOR, C_COLOR, BARS_COLOR, '    ')}
+${logoBody(CIRCLE_COLOR, BG_COLOR, TEXT_COLOR, BARS_COLOR, '    ')}
 </svg>
 `;
 
