@@ -1,8 +1,8 @@
 # AirmailAI
 
-The lightweight, security-first, privacy-focused BYOK LLM chat app.
+Fast. Secure. Private.
 
-**[airmailai.net](https://airmailai.net)** · [FAQ](https://airmailai.net/faq/) · [@AirmailAIapp](https://x.com/AirmailAIapp)
+**[airmailai.net](https://airmailai.net)** · [FAQ](https://airmailai.net/faq/) · [@airmailai](https://x.com/airmailai)
 
 AirmailAI lets you chat with frontier models from multiple providers using your own API keys. No accounts, no subscriptions, no markup - you pay providers for exactly the tokens you use.
 
