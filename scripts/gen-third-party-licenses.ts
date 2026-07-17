@@ -3,8 +3,8 @@
 // copies to the repo root (THIRD_PARTY_LICENSES), the website
 // (static/legal/third-party-licenses.txt), and the extension package
 // (public/third-party-licenses.txt). Walks
-// the `dependencies` (not devDependencies) of courierai_web + courierai_ext,
-// drops the workspace package (@courierai/shared), reads each
+// the `dependencies` (not devDependencies) of airmailai_web + airmailai_ext,
+// drops the workspace package (@airmailai/shared), reads each
 // installed package's license + copyright from its package.json + LICENSE
 // file, and emits one attribution block per package followed by the full text
 // of every distinct license referenced.
@@ -24,13 +24,13 @@ const OUTPUTS = [
     resolve(ROOT, 'THIRD_PARTY_LICENSES'),
     resolve(
         ROOT,
-        'packages/courierai_web/static/legal/third-party-licenses.txt'
+        'packages/airmailai_web/static/legal/third-party-licenses.txt'
     ),
-    resolve(ROOT, 'packages/courierai_ext/public/third-party-licenses.txt'),
+    resolve(ROOT, 'packages/airmailai_ext/public/third-party-licenses.txt'),
 ];
 const WRITE = process.argv.includes('--write');
 
-const BUNDLED_PACKAGES = ['courierai_web', 'courierai_ext'];
+const BUNDLED_PACKAGES = ['airmailai_web', 'airmailai_ext'];
 
 // *** For dual/multi-licensed packages (SPDX "X OR Y"), the licensee picks which
 // terms to comply with. We record our choice here so the attribution states a
@@ -129,7 +129,7 @@ async function collectDepNames(): Promise<string[]> {
             resolve(ROOT, 'packages', pkg, 'package.json')
         );
         for (const dep of Object.keys(json?.dependencies ?? {})) {
-            if (dep.startsWith('@courierai/')) continue;
+            if (dep.startsWith('@airmailai/')) continue;
             names.add(dep);
         }
     }
@@ -220,11 +220,11 @@ async function buildAttribution(name: string): Promise<Attribution> {
 
 function render(attributions: Attribution[]): string {
     const lines: string[] = [];
-    lines.push('CourierAI Third-Party Licenses');
+    lines.push('AirmailAI Third-Party Licenses');
     lines.push('==============================');
     lines.push('');
     lines.push(
-        'CourierAI bundles the following third-party software at runtime. Each'
+        'AirmailAI bundles the following third-party software at runtime. Each'
     );
     lines.push(
         'entry lists the package, its copyright owner, and the license it ships'

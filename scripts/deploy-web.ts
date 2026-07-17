@@ -7,14 +7,14 @@ function requireEnv(name: string): string {
     return value;
 }
 
-const BUCKET = requireEnv('COURIERAI_WEB_S3_BUCKET');
-const DIST_ID = requireEnv('COURIERAI_WEB_CLOUDFRONT_DISTRIBUTION_ID');
-process.env.AWS_PROFILE = requireEnv('COURIERAI_WEB_AWS_PROFILE');
+const BUCKET = requireEnv('AIRMAILAI_WEB_S3_BUCKET');
+const DIST_ID = requireEnv('AIRMAILAI_WEB_CLOUDFRONT_DISTRIBUTION_ID');
+process.env.AWS_PROFILE = requireEnv('AIRMAILAI_WEB_AWS_PROFILE');
 const SHORT_CACHE = 'public, max-age=300, must-revalidate';
 const LONG_CACHE = 'public, max-age=31536000, immutable';
 
 const root = join(import.meta.dirname, '..');
-const dist = join(root, 'packages/courierai_web/dist');
+const dist = join(root, 'packages/airmailai_web/dist');
 
 console.log(
     `> Verifying AWS credentials (profile ${process.env.AWS_PROFILE})...`
@@ -27,10 +27,10 @@ try {
     );
 }
 
-console.log('> Building courierai_web (gen-version + check + build)...');
+console.log('> Building airmailai_web (gen-version + check + build)...');
 await $`bun run build:web`
     .cwd(root)
-    .env({ ...process.env, COURIERAI_LOG_LEVEL: 'errors' });
+    .env({ ...process.env, AIRMAILAI_LOG_LEVEL: 'errors' });
 
 const version = (await Bun.file(join(root, 'VERSION')).text()).trim();
 const versionName = (await Bun.file(join(root, 'VERSION_NAME')).text()).trim();
@@ -72,4 +72,4 @@ await $`aws cloudfront wait invalidation-completed --distribution-id ${DIST_ID} 
 console.log('\n> Pruning orphan /assets/* (--delete)...');
 await $`aws s3 sync ${dist}/assets/ s3://${BUCKET}/assets/ --cache-control ${LONG_CACHE} --delete --no-progress`;
 
-console.log('\nDeployed: https://courierai.net');
+console.log('\nDeployed: https://airmailai.net');

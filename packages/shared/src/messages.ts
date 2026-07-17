@@ -9,64 +9,64 @@ export interface DraftAttachment extends DraftAttachmentMeta {
     hash: string;
 }
 
-export interface CourierAIMessageMetadata {
+export interface AirmailAIMessageMetadata {
     createdAt: number;
     model?: string;
     tokens?: { input: number; output: number };
     stopReason?: 'stop' | 'length' | 'refusal' | 'content-filter' | 'error';
 }
 
-export type CourierAIToolName = 'web_search' | 'web_fetch' | 'code_execution';
+export type AirmailAIToolName = 'web_search' | 'web_fetch' | 'code_execution';
 
-export type CourierAIPart =
-    | CourierAITextPart
-    | CourierAIReasoningPart
-    | CourierAIToolPart
-    | CourierAISourceUrlPart
-    | CourierAISourceDocumentPart
-    | CourierAICitationPart
-    | CourierAIGoogleSearchSuggestionsPart
-    | CourierAIFilePart;
+export type AirmailAIPart =
+    | AirmailAITextPart
+    | AirmailAIReasoningPart
+    | AirmailAIToolPart
+    | AirmailAISourceUrlPart
+    | AirmailAISourceDocumentPart
+    | AirmailAICitationPart
+    | AirmailAIGoogleSearchSuggestionsPart
+    | AirmailAIFilePart;
 
-export interface CourierAITextPart {
+export interface AirmailAITextPart {
     type: 'text';
     text: string;
     state: 'streaming' | 'done';
 }
 
 // thinking / reasoning summary.
-export interface CourierAIReasoningPart {
+export interface AirmailAIReasoningPart {
     type: 'reasoning';
     text: string;
     state: 'streaming' | 'done';
 }
 
-type CourierAIToolPartBase = {
+type AirmailAIToolPartBase = {
     type: 'tool';
     toolCallId: string;
     state: 'running' | 'done' | 'error';
     errorText?: string;
 };
-export type CourierAIToolPart =
-    | (CourierAIToolPartBase & {
+export type AirmailAIToolPart =
+    | (AirmailAIToolPartBase & {
           name: 'web_search';
           input?: { query?: string };
       })
-    | (CourierAIToolPartBase & { name: 'web_fetch'; input?: { url?: string } })
-    | (CourierAIToolPartBase & {
+    | (AirmailAIToolPartBase & { name: 'web_fetch'; input?: { url?: string } })
+    | (AirmailAIToolPartBase & {
           name: 'code_execution';
           input?: { code?: string };
           output?: { stdout?: string; stderr?: string };
       });
 
-export interface CourierAISourceUrlPart {
+export interface AirmailAISourceUrlPart {
     type: 'source-url';
     sourceId: string;
     url: string;
     title?: string;
 }
 
-export interface CourierAISourceDocumentPart {
+export interface AirmailAISourceDocumentPart {
     type: 'source-document';
     sourceId: string;
     title?: string;
@@ -74,7 +74,7 @@ export interface CourierAISourceDocumentPart {
     hash?: string;
 }
 
-export interface CourierAICitationPart {
+export interface AirmailAICitationPart {
     type: 'citation';
     sourceId: string;
     textIndex: number;
@@ -84,12 +84,12 @@ export interface CourierAICitationPart {
     location?: { kind: 'page' | 'char'; start: number; end: number };
 }
 
-export interface CourierAIGoogleSearchSuggestionsPart {
+export interface AirmailAIGoogleSearchSuggestionsPart {
     type: 'google-search-suggestions';
     html: string;
 }
 
-export interface CourierAIFilePart {
+export interface AirmailAIFilePart {
     type: 'file';
     filename: string;
     mediaType: string;
@@ -103,14 +103,14 @@ export type FileDeleteTarget =
 
 export type FileAvailability = 'local' | 'provider' | 'expired' | 'missing';
 
-export interface CourierAIMessage {
+export interface AirmailAIMessage {
     id: string;
     role: 'user' | 'assistant';
-    parts: CourierAIPart[];
-    metadata: CourierAIMessageMetadata;
+    parts: AirmailAIPart[];
+    metadata: AirmailAIMessageMetadata;
 }
 
-export type CourierAIChunk =
+export type AirmailAIChunk =
     | { type: 'text-start'; id: string }
     | { type: 'text-delta'; id: string; delta: string }
     | { type: 'text-end'; id: string }
@@ -176,11 +176,11 @@ export type CourierAIChunk =
     | {
           type: 'start';
           messageId?: string;
-          metadata?: Partial<CourierAIMessageMetadata>;
+          metadata?: Partial<AirmailAIMessageMetadata>;
       }
     | {
           type: 'finish';
-          metadata?: Partial<CourierAIMessageMetadata>;
+          metadata?: Partial<AirmailAIMessageMetadata>;
           containerId?: string;
           containerExpiresAt?: string;
       };
@@ -188,7 +188,7 @@ export type CourierAIChunk =
 export interface ProviderStreamArgs {
     apiKey: string;
     model: string;
-    messages: CourierAIMessage[];
+    messages: AirmailAIMessage[];
     system?: string;
     params: Record<string, unknown>;
     signal?: AbortSignal;
@@ -197,16 +197,16 @@ export interface ProviderStreamArgs {
 }
 export type ProviderStream = (
     args: ProviderStreamArgs
-) => AsyncIterable<CourierAIChunk>;
+) => AsyncIterable<AirmailAIChunk>;
 
 export interface StoredMessage {
     chatId: string;
-    message: CourierAIMessage;
+    message: AirmailAIMessage;
 }
 
 export interface HydratedStoredMessage {
     chatId: string;
-    message: CourierAIMessage;
+    message: AirmailAIMessage;
     freshBlobs?: Record<string, { mediaType: string; base64: string }>;
 }
 
@@ -216,7 +216,7 @@ export interface TurnStartRequest {
     sourceTabId: string;
     provider: string;
     model: string;
-    messages: CourierAIMessage[];
+    messages: AirmailAIMessage[];
     system?: string;
     params?: Record<string, unknown>;
     meta: ChatMeta;
@@ -234,7 +234,7 @@ export type TurnRequest = TurnStartRequest | TurnStopRequest;
 export type StreamErrorSource = 'api' | 'extension';
 
 export type ExtensionStreamEvent =
-    | { type: 'chunk'; chunk: CourierAIChunk }
+    | { type: 'chunk'; chunk: AirmailAIChunk }
     | { type: 'done' }
     | { type: 'error'; source: StreamErrorSource; message: string };
 
@@ -251,7 +251,7 @@ export type BroadcastEvent =
     | {
           type: 'turn-chunk';
           chatId: string;
-          chunk: CourierAIChunk;
+          chunk: AirmailAIChunk;
       }
     | { type: 'turn-done'; chatId: string }
     | {

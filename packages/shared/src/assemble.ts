@@ -1,25 +1,25 @@
 import type {
-    CourierAIChunk,
-    CourierAIGoogleSearchSuggestionsPart,
-    CourierAIMessage,
-    CourierAIMessageMetadata,
-    CourierAIPart,
-    CourierAIReasoningPart,
-    CourierAITextPart,
-    CourierAIToolPart,
+    AirmailAIChunk,
+    AirmailAIGoogleSearchSuggestionsPart,
+    AirmailAIMessage,
+    AirmailAIMessageMetadata,
+    AirmailAIPart,
+    AirmailAIReasoningPart,
+    AirmailAITextPart,
+    AirmailAIToolPart,
 } from './messages';
 
 export interface MessageAssemblerState {
-    message: CourierAIMessage;
-    textById: Map<string, CourierAITextPart>;
-    textInfoById: Map<string, { part: CourierAITextPart; textIndex: number }>;
-    reasoningById: Map<string, CourierAIReasoningPart>;
-    toolById: Map<string, CourierAIToolPart>;
+    message: AirmailAIMessage;
+    textById: Map<string, AirmailAITextPart>;
+    textInfoById: Map<string, { part: AirmailAITextPart; textIndex: number }>;
+    reasoningById: Map<string, AirmailAIReasoningPart>;
+    toolById: Map<string, AirmailAIToolPart>;
     sourceIds: Set<string>;
 }
 
 export function createMessageAssembler(
-    message: CourierAIMessage
+    message: AirmailAIMessage
 ): MessageAssemblerState {
     return {
         message,
@@ -31,7 +31,7 @@ export function createMessageAssembler(
     };
 }
 
-function pushPart<T extends CourierAIPart>(
+function pushPart<T extends AirmailAIPart>(
     state: MessageAssemblerState,
     part: T
 ): T {
@@ -41,18 +41,18 @@ function pushPart<T extends CourierAIPart>(
 
 function mergeMetadata(
     state: MessageAssemblerState,
-    metadata: Partial<CourierAIMessageMetadata>
+    metadata: Partial<AirmailAIMessageMetadata>
 ): void {
     state.message.metadata = { ...state.message.metadata, ...metadata };
 }
 
-export function applyCourierAIChunk(
+export function applyAirmailAIChunk(
     state: MessageAssemblerState,
-    chunk: CourierAIChunk
+    chunk: AirmailAIChunk
 ): void {
     switch (chunk.type) {
         case 'text-start': {
-            const part = pushPart<CourierAITextPart>(state, {
+            const part = pushPart<AirmailAITextPart>(state, {
                 type: 'text',
                 text: '',
                 state: 'streaming',
@@ -76,7 +76,7 @@ export function applyCourierAIChunk(
             break;
         }
         case 'reasoning-start': {
-            const part = pushPart<CourierAIReasoningPart>(state, {
+            const part = pushPart<AirmailAIReasoningPart>(state, {
                 type: 'reasoning',
                 text: '',
                 state: 'streaming',
@@ -102,7 +102,7 @@ export function applyCourierAIChunk(
                 name: chunk.name,
                 state: 'running',
                 ...(chunk.input ? { input: chunk.input } : {}),
-            } as CourierAIToolPart);
+            } as AirmailAIToolPart);
             state.toolById.set(chunk.toolCallId, part);
             break;
         }
@@ -158,7 +158,7 @@ export function applyCourierAIChunk(
         }
         case 'google-search-suggestions': {
             const existing = state.message.parts.find(
-                (p): p is CourierAIGoogleSearchSuggestionsPart =>
+                (p): p is AirmailAIGoogleSearchSuggestionsPart =>
                     p.type === 'google-search-suggestions'
             );
             if (existing) existing.html = chunk.html;

@@ -35,16 +35,16 @@ const LEGACY_UA =
 
 const STATIC_DIR = join(
     import.meta.dirname,
-    '../packages/courierai_web/static'
+    '../packages/airmailai_web/static'
 );
-const LIB_DIR = join(import.meta.dirname, '../packages/courierai_web/src/lib');
+const LIB_DIR = join(import.meta.dirname, '../packages/airmailai_web/src/lib');
 const EXT_PUBLIC_DIR = join(
     import.meta.dirname,
-    '../packages/courierai_ext/public'
+    '../packages/airmailai_ext/public'
 );
 
 const ATTRIBUTION =
-    'CourierAI stamp logo. The C glyph is traced from Lora SemiBold, (c) The Lora Project Authors, licensed under the SIL Open Font License 1.1.';
+    'AirmailAI stamp logo. The C glyph is traced from Lora SemiBold, (c) The Lora Project Authors, licensed under the SIL Open Font License 1.1.';
 
 function wavePath(y: number): string {
     const x0 = CX - R - BAR_LEN + BAR_NUDGE_X;
@@ -114,14 +114,14 @@ ${indent}</g>`;
 }
 
 const staticSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${VIEW} ${VIEW}">
-    <title>CourierAI</title>
+    <title>AirmailAI</title>
     <desc>${ATTRIBUTION}</desc>
 ${logoBody(CIRCLE_COLOR, BG_COLOR, C_COLOR, BARS_COLOR, '    ')}
 </svg>
 `;
 
-writeFileSync(join(STATIC_DIR, 'courierai-stamp-logo.svg'), staticSvg);
-console.log(`wrote courierai-stamp-logo.svg (${staticSvg.length} bytes)`);
+writeFileSync(join(STATIC_DIR, 'airmailai-stamp-logo.svg'), staticSvg);
+console.log(`wrote airmailai-stamp-logo.svg (${staticSvg.length} bytes)`);
 
 function renderPng(size: number): Buffer {
     return new Resvg(staticSvg, { fitTo: { mode: 'width', value: size } })
@@ -131,7 +131,7 @@ function renderPng(size: number): Buffer {
 
 for (const size of PNG_SIZES) {
     const png = renderPng(size);
-    const name = `courierai-stamp-logo-${size}.png`;
+    const name = `airmailai-stamp-logo-${size}.png`;
     writeFileSync(join(STATIC_DIR, name), png);
     console.log(`wrote ${name} (${png.length} bytes)`);
 }
@@ -149,7 +149,7 @@ const component = `<script lang="ts">
 </script>
 
 <svg viewBox="0 0 ${VIEW} ${VIEW}" width={size} height={size} aria-hidden="true">
-    <title>CourierAI</title>
+    <title>AirmailAI</title>
     <desc>${ATTRIBUTION}</desc>
 ${logoBody('var(--color-fg)', 'none', 'var(--color-fg)', 'var(--color-accent-fg)', '    ')}
 </svg>

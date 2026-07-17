@@ -1,14 +1,14 @@
 import { expect, QUICK_TIMEOUT, test } from './fixtures';
 
 test('Settings popover opens, shows storage, and persists across reopen', async ({
-    courierai,
+    airmailai,
 }) => {
-    await courierai.goto();
+    await airmailai.goto();
 
-    await courierai.openSettings();
+    await airmailai.openSettings();
 
-    await courierai.settingsTab('Local Storage').click();
-    const dialog = courierai.settingsDialog();
+    await airmailai.settingsTab('Local Storage').click();
+    const dialog = airmailai.settingsDialog();
     await expect(dialog.getByText('Device Settings & API Keys')).toBeVisible();
     await expect(
         dialog.getByText('Chat History', { exact: true })
@@ -17,18 +17,18 @@ test('Settings popover opens, shows storage, and persists across reopen', async 
         dialog.getByText(/\d+(\.\d+)?\s(B|KB|MB|GB)/).first()
     ).toBeVisible();
 
-    await courierai.closeSettings();
-    await courierai.openSettings();
+    await airmailai.closeSettings();
+    await airmailai.openSettings();
     await expect(dialog.locator('.icon-check')).toHaveCount(4);
 });
 
 test('clearing an API key removes it and persists across reopen', async ({
-    courierai,
+    airmailai,
 }) => {
-    await courierai.goto();
-    await courierai.openSettings();
+    await airmailai.goto();
+    await airmailai.openSettings();
 
-    const dialog = courierai.settingsDialog();
+    const dialog = airmailai.settingsDialog();
     await expect(dialog.locator('.icon-check')).toHaveCount(4);
 
     const orRow = dialog.locator('tr').filter({ hasText: 'OpenRouter' });
@@ -37,16 +37,16 @@ test('clearing an API key removes it and persists across reopen', async ({
     await expect(orRow.locator('.icon-x')).toBeVisible();
     await expect(dialog.locator('.icon-check')).toHaveCount(3);
 
-    await courierai.closeSettings();
-    await courierai.openSettings();
+    await airmailai.closeSettings();
+    await airmailai.openSettings();
     await expect(dialog.locator('.icon-check')).toHaveCount(3);
 });
 
-test('key test marks a saved working key as Valid', async ({ courierai }) => {
-    await courierai.goto();
-    await courierai.openSettings();
+test('key test marks a saved working key as Valid', async ({ airmailai }) => {
+    await airmailai.goto();
+    await airmailai.openSettings();
 
-    const row = courierai
+    const row = airmailai
         .settingsDialog()
         .locator('tr')
         .filter({ hasText: 'Anthropic' });
@@ -58,12 +58,12 @@ test('key test marks a saved working key as Valid', async ({ courierai }) => {
 });
 
 test('key test marks a bogus key as Invalid with a loud error', async ({
-    courierai,
+    airmailai,
 }) => {
-    await courierai.goto();
-    await courierai.openSettings();
+    await airmailai.goto();
+    await airmailai.openSettings();
 
-    const dialog = courierai.settingsDialog();
+    const dialog = airmailai.settingsDialog();
     const row = dialog.locator('tr').filter({ hasText: 'OpenRouter' });
     await row.getByPlaceholder('Paste key...').fill('sk-or-v1-bogus');
     await row.getByRole('button', { name: 'Save', exact: true }).click();

@@ -11,24 +11,24 @@ for (const key of PROVIDERS) {
     const { label, chat } = PROVIDER_MODELS[key];
 
     test(`${label} multiturn retains context and persists`, async ({
-        courierai,
+        airmailai,
     }) => {
-        await courierai.goto();
-        await courierai.setProvider(label);
-        if (key === 'openrouter') await courierai.waitForOpenRouterCatalog();
-        await courierai.setModelById(chat);
+        await airmailai.goto();
+        await airmailai.setProvider(label);
+        if (key === 'openrouter') await airmailai.waitForOpenRouterCatalog();
+        await airmailai.setModelById(chat);
 
-        await courierai.send('My name is Banana. Remember it.');
-        await courierai.send("What's my name? Reply with just the name.");
+        await airmailai.send('My name is Banana. Remember it.');
+        await airmailai.send("What's my name? Reply with just the name.");
 
-        await courierai.expectAssistantRoundTrip('Banana');
-        await expect(courierai.userMessages()).toHaveCount(2);
-        await expect(courierai.assistantMessages()).toHaveCount(2);
+        await airmailai.expectAssistantRoundTrip('Banana');
+        await expect(airmailai.userMessages()).toHaveCount(2);
+        await expect(airmailai.assistantMessages()).toHaveCount(2);
 
-        await expect(courierai.sendButton()).toBeVisible();
-        await expect(courierai.contextUsage()).toContainText('/');
+        await expect(airmailai.sendButton()).toBeVisible();
+        await expect(airmailai.contextUsage()).toContainText('/');
 
-        const { messages } = await courierai.readDb();
+        const { messages } = await airmailai.readDb();
         expect(messages.filter((m) => m.message.role === 'user')).toHaveLength(
             2
         );

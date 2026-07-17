@@ -1,28 +1,28 @@
 import { expect, test } from './fixtures';
 
 test('Stop halts mid-stream, keeps partial, and persists the chopped answer', async ({
-    courierai,
+    airmailai,
 }) => {
-    await courierai.goto();
-    await courierai.setModelById('claude-sonnet-5');
-    await courierai.setThinkingNone();
+    await airmailai.goto();
+    await airmailai.setModelById('claude-sonnet-5');
+    await airmailai.setThinkingNone();
 
     let partial = '';
 
     await test.step('stop mid-stream keeps partial and reverts the button', async () => {
-        await courierai.compose(
+        await airmailai.compose(
             'Write twelve detailed paragraphs about the history of sailing ships.'
         );
-        await expect(courierai.stopButton()).toBeVisible();
-        await courierai.page.waitForTimeout(2000);
-        await courierai.stopButton().click();
+        await expect(airmailai.stopButton()).toBeVisible();
+        await airmailai.page.waitForTimeout(2000);
+        await airmailai.stopButton().click();
 
-        await expect(courierai.stopButton()).toBeHidden();
-        await expect(courierai.sendButton()).toBeVisible();
+        await expect(airmailai.stopButton()).toBeHidden();
+        await expect(airmailai.sendButton()).toBeVisible();
 
-        partial = await courierai.lastAssistantText();
+        partial = await airmailai.lastAssistantText();
         expect(partial.length).toBeGreaterThan(0);
-        await expect(courierai.assistantMessages()).toHaveCount(1);
+        await expect(airmailai.assistantMessages()).toHaveCount(1);
     });
 
     await test.step('the chopped partial was persisted to the ext IDB', async () => {
@@ -30,16 +30,16 @@ test('Stop halts mid-stream, keeps partial, and persists the chopped answer', as
         await expect
             .poll(
                 async () =>
-                    (await courierai.persistedTexts('assistant')).at(-1) ?? ''
+                    (await airmailai.persistedTexts('assistant')).at(-1) ?? ''
             )
             .toContain(opening);
     });
 
     await test.step('a follow-up turn works normally after stopping', async () => {
-        await courierai.send(
+        await airmailai.send(
             'Repeat the last three words of your previous message, verbatim.'
         );
-        await expect(courierai.assistantMessages()).toHaveCount(2);
+        await expect(airmailai.assistantMessages()).toHaveCount(2);
     });
 
     await test.step('the chopped answer was persisted (echoed back)', async () => {
@@ -50,7 +50,7 @@ test('Stop halts mid-stream, keeps partial, and persists the chopped answer', as
         expect(words.length).toBeGreaterThanOrEqual(3);
         const last3 = words.slice(-3).map((w) => w.toLowerCase());
 
-        const echo = (await courierai.lastAssistantText()).toLowerCase();
+        const echo = (await airmailai.lastAssistantText()).toLowerCase();
         for (const word of last3) expect(echo).toContain(word);
     });
 });

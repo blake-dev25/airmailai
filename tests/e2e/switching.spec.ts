@@ -1,46 +1,46 @@
 import { expect, test } from './fixtures';
 
-test('switching provider repopulates the model list', async ({ courierai }) => {
-    await courierai.goto();
+test('switching provider repopulates the model list', async ({ airmailai }) => {
+    await airmailai.goto();
 
-    await courierai.setProvider('OpenAI');
-    await courierai.modelTrigger().click();
+    await airmailai.setProvider('OpenAI');
+    await airmailai.modelTrigger().click();
 
     await expect(
-        courierai.page.locator('[data-model-id="gpt-5.4-mini"]')
+        airmailai.page.locator('[data-model-id="gpt-5.4-mini"]')
     ).toBeVisible();
     await expect(
-        courierai.page.locator('[data-model-id="claude-haiku-4-5"]')
+        airmailai.page.locator('[data-model-id="claude-haiku-4-5"]')
     ).toHaveCount(0);
 });
 
-test('switching model updates Model Details', async ({ courierai }) => {
-    await courierai.goto();
+test('switching model updates Model Details', async ({ airmailai }) => {
+    await airmailai.goto();
 
-    await expect(courierai.contextUsage()).toContainText('200,000');
-    await expect(courierai.page.getByText('Feb 2025')).toBeVisible();
+    await expect(airmailai.contextUsage()).toContainText('200,000');
+    await expect(airmailai.page.getByText('Feb 2025')).toBeVisible();
 
-    await courierai.setModelById('claude-opus-4-8');
+    await airmailai.setModelById('claude-opus-4-8');
 
-    await expect(courierai.contextUsage()).toContainText('1,000,000');
-    await expect(courierai.page.getByText('Jan 2026')).toBeVisible();
+    await expect(airmailai.contextUsage()).toContainText('1,000,000');
+    await expect(airmailai.page.getByText('Jan 2026')).toBeVisible();
 });
 
 test('switching mid-conversation preserves history and uses the new model', async ({
-    courierai,
+    airmailai,
 }) => {
-    await courierai.goto();
+    await airmailai.goto();
 
-    await courierai.send('My name is Banana. Remember it.');
+    await airmailai.send('My name is Banana. Remember it.');
 
-    await courierai.setProvider('OpenAI');
-    await courierai.setModelById('gpt-5.4-mini');
-    await courierai.send("What's my name? Reply with just the name.");
+    await airmailai.setProvider('OpenAI');
+    await airmailai.setModelById('gpt-5.4-mini');
+    await airmailai.send("What's my name? Reply with just the name.");
 
-    await courierai.expectAssistantRoundTrip('Banana');
-    await expect(courierai.userMessages()).toHaveCount(2);
+    await airmailai.expectAssistantRoundTrip('Banana');
+    await expect(airmailai.userMessages()).toHaveCount(2);
 
-    const { metas } = await courierai.readDb();
+    const { metas } = await airmailai.readDb();
     expect(metas).toHaveLength(1);
     expect(metas[0].modelId).toBe('gpt-5.4-mini');
 });

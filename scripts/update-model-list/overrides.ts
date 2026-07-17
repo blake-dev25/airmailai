@@ -1,7 +1,7 @@
 import type {
     ModelTools,
     ThinkingLevel,
-} from '../../packages/courierai_web/src/lib/models/types';
+} from '../../packages/airmailai_web/src/lib/models/types';
 import { type DerivedModel, sortLevels } from './shared';
 
 interface ThinkingOverride {
@@ -25,7 +25,7 @@ export interface ModelOverride {
     // IS the Anthropic API tool `type` (versioned by date), and /v1/models
     // returns code_execution support as a boolean but not the version string.
     // OpenAI/Google version their server tools globally, so their support is
-    // attached provider-wide in packages/courierai_web/src/lib/models/index.ts.
+    // attached provider-wide in packages/airmailai_web/src/lib/models/index.ts.
     tools?: ModelTools;
 }
 
@@ -108,7 +108,7 @@ export const ANTHROPIC_OVERRIDES: Record<string, ModelOverride> = {
 };
 
 // *** OpenAI's own /models endpoint is barebones, but OpenRouter fills most of the
-// CourierAI model params.
+// AirmailAI model params.
 // *** Pre-gpt-5.1 reasoning models default to medium effort and reject
 // 'none' (per the openai SDK ReasoningEffort docs), so the generic
 // none/low/high fallback would mislabel them - the o-series gets explicit

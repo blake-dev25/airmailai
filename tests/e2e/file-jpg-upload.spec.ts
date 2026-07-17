@@ -11,26 +11,26 @@ const CASES = [
 
 for (const { ext, mime } of CASES) {
     test(`image upload (${ext}): model describes the attached photo`, async ({
-        courierai,
+        airmailai,
     }) => {
         test.setTimeout(120_000);
         const name = `vision-test.${ext}`;
         const buffer = readFileSync(path.join(__dirname, 'files', name));
 
-        await courierai.goto();
-        await courierai.attachFile({ name, mimeType: mime, buffer });
-        await courierai.send(
+        await airmailai.goto();
+        await airmailai.attachFile({ name, mimeType: mime, buffer });
+        await airmailai.send(
             'In a few words, what is the main subject of this image?',
             { turnTimeout: TOOL_TURN_TIMEOUT }
         );
 
-        await courierai.expectAssistantRoundTrip(
+        await airmailai.expectAssistantRoundTrip(
             /sunset|sunrise|ocean|sea|beach|sky|horizon|waves?/i
         );
 
         await expect(
-            courierai.userMessages().first().getByRole('img', { name })
+            airmailai.userMessages().first().getByRole('img', { name })
         ).toBeVisible();
-        expect(await courierai.persistedFileNames('user')).toContain(name);
+        expect(await airmailai.persistedFileNames('user')).toContain(name);
     });
 }

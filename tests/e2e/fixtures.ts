@@ -14,7 +14,7 @@ import path from 'node:path';
 import {
     CACHE_KEY as OPENROUTER_CACHE_KEY,
     CACHE_VERSION as OPENROUTER_CACHE_VERSION,
-} from '../../packages/courierai_ext/openrouter-models';
+} from '../../packages/airmailai_ext/openrouter-models';
 import {
     DEFAULT_MODEL,
     DEFAULT_PROVIDER,
@@ -25,18 +25,18 @@ const ROOT = path.resolve(__dirname, '../..');
 const EXT_PATH = path.join(
     ROOT,
     'packages',
-    'courierai_ext',
+    'airmailai_ext',
     '.output',
     'chrome-mv3'
 );
 const LEGAL_DIR = path.join(
     ROOT,
     'packages',
-    'courierai_web',
+    'airmailai_web',
     'static',
     'legal'
 );
-const BASE_URL = process.env.COURIERAI_BASE_URL ?? 'http://localhost:5173';
+const BASE_URL = process.env.AIRMAILAI_BASE_URL ?? 'http://localhost:5173';
 
 export const QUICK_TIMEOUT = 30_000;
 export const TOOL_TURN_TIMEOUT = 120_000;
@@ -166,7 +166,7 @@ function readExtDb(
 ): Promise<{ metas: StoredMeta[]; messages: StoredMsg[] }> {
     return sw.evaluate(async () => {
         const db = await new Promise<IDBDatabase>((resolve, reject) => {
-            const req = indexedDB.open('courierai');
+            const req = indexedDB.open('airmailai');
             req.onsuccess = () => resolve(req.result);
             req.onerror = () => reject(req.error);
         });
@@ -188,7 +188,7 @@ function readExtDb(
     }) as Promise<{ metas: StoredMeta[]; messages: StoredMsg[] }>;
 }
 
-export class CourierAI {
+export class AirmailAI {
     constructor(
         public readonly page: Page,
         private readonly sw: Worker
@@ -515,7 +515,7 @@ export class CourierAI {
     }
 }
 
-interface CourierAIOptions {
+interface AirmailAIOptions {
     seedApiKeys: boolean;
     seedWebSearchEnabled: boolean;
     seedWebFetchEnabled: boolean;
@@ -523,14 +523,14 @@ interface CourierAIOptions {
     seedFileUploadsEnabled: boolean;
 }
 
-interface CourierAIFixtures {
+interface AirmailAIFixtures {
     context: BrowserContext;
     serviceWorker: Worker;
-    courierai: CourierAI;
+    airmailai: AirmailAI;
     consoleCapture: void;
 }
 
-export const test = base.extend<CourierAIOptions & CourierAIFixtures>({
+export const test = base.extend<AirmailAIOptions & AirmailAIFixtures>({
     seedApiKeys: [true, { option: true }],
     seedWebSearchEnabled: [false, { option: true }],
     seedWebFetchEnabled: [false, { option: true }],
@@ -587,7 +587,7 @@ export const test = base.extend<CourierAIOptions & CourierAIFixtures>({
         },
         { auto: true },
     ],
-    courierai: async (
+    airmailai: async (
         {
             page,
             serviceWorker,
@@ -606,7 +606,7 @@ export const test = base.extend<CourierAIOptions & CourierAIFixtures>({
             codeExec: seedCodeExecEnabled,
             fileUploads: seedFileUploadsEnabled,
         });
-        await use(new CourierAI(page, serviceWorker));
+        await use(new AirmailAI(page, serviceWorker));
     },
 });
 

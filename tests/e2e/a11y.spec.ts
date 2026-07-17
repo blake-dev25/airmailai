@@ -2,11 +2,11 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from './fixtures';
 
 test('main app has no serious/critical accessibility violations', async ({
-    courierai,
+    airmailai,
 }) => {
-    await courierai.goto();
+    await airmailai.goto();
 
-    const results = await new AxeBuilder({ page: courierai.page })
+    const results = await new AxeBuilder({ page: airmailai.page })
         .disableRules(['color-contrast'])
         .analyze();
 

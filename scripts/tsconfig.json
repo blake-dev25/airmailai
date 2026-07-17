@@ -5,7 +5,7 @@
         "module": "ESNext",
         "moduleResolution": "bundler",
         "paths": {
-            "@courierai/shared": ["../packages/shared/src/index.ts"]
+            "@airmailai/shared": ["../packages/shared/src/index.ts"]
         },
         "types": ["node", "bun"],
         "strict": true,
@@ -13,5 +13,5 @@
         "skipLibCheck": true,
         "moduleDetection": "force"
     },
-    "include": ["**/*.ts", "../packages/courierai_ext/globals.d.ts"]
+    "include": ["**/*.ts", "../packages/airmailai_ext/globals.d.ts"]
 }

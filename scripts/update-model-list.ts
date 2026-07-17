@@ -1,12 +1,12 @@
 // *** Fetches each first-party provider's official model list and emits the
-// matching packages/courierai_web/src/lib/models/<provider>.ts file.
+// matching packages/airmailai_web/src/lib/models/<provider>.ts file.
 //
 // OpenRouter is metadata enrichment only. It never decides first-party
 // availability; provider APIs do that, with targeted official-doc scraping
-// filling gaps where APIs/OpenRouter do not expose the fields CourierAI needs.
+// filling gaps where APIs/OpenRouter do not expose the fields AirmailAI needs.
 //
 // Run dry (prints, writes JSON snapshots to scripts/.tmp/ but does not touch
-// packages/courierai_web/src/lib/models/):
+// packages/airmailai_web/src/lib/models/):
 //     bun scripts/update-model-list.ts
 // Run with writes (also still writes snapshots):
 //     bun scripts/update-model-list.ts --write

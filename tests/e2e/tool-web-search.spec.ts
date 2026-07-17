@@ -31,48 +31,48 @@ for (const key of PROVIDERS) {
     const { label, tools } = PROVIDER_MODELS[key];
 
     test(`${label} web search cites sources and re-injects them after edit`, async ({
-        courierai,
+        airmailai,
     }) => {
         test.setTimeout(240_000);
-        await courierai.goto();
-        await courierai.setProvider(label);
-        if (key === 'openrouter') await courierai.waitForOpenRouterCatalog();
-        await courierai.setModelById(tools);
-        await courierai.setChatWebSearch(true);
+        await airmailai.goto();
+        await airmailai.setProvider(label);
+        if (key === 'openrouter') await airmailai.waitForOpenRouterCatalog();
+        await airmailai.setModelById(tools);
+        await airmailai.setChatWebSearch(true);
 
         let turn1Sources: string[] = [];
         let turn1Titles: string[] = [];
 
         await test.step('search runs and renders citations + sources', async () => {
-            await courierai.send(
+            await airmailai.send(
                 'Search the web for a news article published this week and briefly tell me what it says.',
                 { turnTimeout: TOOL_TURN_TIMEOUT }
             );
-            const hrefs = await courierai.assistantSourceHrefs();
+            const hrefs = await airmailai.assistantSourceHrefs();
             expect(hrefs.length).toBeGreaterThan(0);
             expect(hrefs[0]).toMatch(/^https?:\/\//);
 
             await expect
-                .poll(async () => courierai.persistedSourceUrls())
+                .poll(async () => airmailai.persistedSourceUrls())
                 .toEqual(expect.arrayContaining(hrefs));
-            turn1Sources = await courierai.persistedSourceUrls();
-            turn1Titles = await courierai.persistedSourceTitles();
+            turn1Sources = await airmailai.persistedSourceUrls();
+            turn1Titles = await airmailai.persistedSourceTitles();
         });
 
         await test.step('edit the response to strip visible URLs', async () => {
-            await courierai.editAssistant('I completed the search.');
-            expect(await courierai.lastAssistantText()).toContain(
+            await airmailai.editAssistant('I completed the search.');
+            expect(await airmailai.lastAssistantText()).toContain(
                 'I completed the search.'
             );
-            expect(await courierai.persistedSourceUrls()).toEqual(turn1Sources);
+            expect(await airmailai.persistedSourceUrls()).toEqual(turn1Sources);
         });
 
         await test.step('disable search, then recall the URL from context', async () => {
-            await courierai.setChatWebSearch(false);
-            await courierai.send(
+            await airmailai.setChatWebSearch(false);
+            await airmailai.send(
                 'Great. Without searching again, please print one of the previously returned URLs verbatim.'
             );
-            const reply = (await courierai.lastAssistantText()).toLowerCase();
+            const reply = (await airmailai.lastAssistantText()).toLowerCase();
             const keys = [
                 ...turn1Sources.map(urlKey),
                 ...turn1Titles

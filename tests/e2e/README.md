@@ -1,6 +1,6 @@
 # End-to-end tests (Playwright)
 
-Drives the real web app in Chrome with the CourierAI extension loaded, against
+Drives the real web app in Chrome with the AirmailAI extension loaded, against
 real provider APIs. The harness launches Chrome with the unpacked extension
 and seeds a fresh, isolated profile each run.
 
@@ -37,7 +37,7 @@ bun run test --ui          # interactive (time-travel DOM snapshots)
 - **Headed:** runs headed because MV3 extensions don't load in old headless.
 - **Source of truth / round trip:** persistence assertions check _both_ sides -
   the DOM and the extension's IndexedDB (read directly via the service worker).
-  `courierai.expectAssistantRoundTrip()` ties them together: it confirms the
+  `airmailai.expectAssistantRoundTrip()` ties them together: it confirms the
   same reply that rendered also persisted (normalized-equal by default; pass
   `{ mode: 'contains' }` for web-search turns, whose link URLs / Sources UI live
   on only one side). Lower-level helpers: `readDb()`, `persistedTexts()`,

@@ -24,7 +24,7 @@ const letterSpacing = -0.02;
 
 const STATIC_DIR = join(
     import.meta.dirname,
-    '../packages/courierai_web/static'
+    '../packages/airmailai_web/static'
 );
 
 const startI = -Math.ceil(stripeH / pitch) - 1;
@@ -52,7 +52,7 @@ const font = parse(
     )
 );
 
-const probe = font.getPath('CourierAI', 0, 0, fontSize, { letterSpacing });
+const probe = font.getPath('AirmailAI', 0, 0, fontSize, { letterSpacing });
 const bb = probe.getBoundingBox();
 const inkW = bb.x2 - bb.x1;
 
@@ -65,11 +65,11 @@ const logoY = centerY - logoSize / 2;
 const textDx = contentX + logoSize + logoTextGap - bb.x1;
 const textDy = centerY - (bb.y1 + bb.y2) / 2;
 const textPathData = font
-    .getPath('CourierAI', textDx, textDy, fontSize, { letterSpacing })
+    .getPath('AirmailAI', textDx, textDy, fontSize, { letterSpacing })
     .toPathData(2);
 
 const logoSvg = readFileSync(
-    join(STATIC_DIR, 'courierai-stamp-logo.svg'),
+    join(STATIC_DIR, 'airmailai-stamp-logo.svg'),
     'utf-8'
 ).replace(
     '<svg ',
@@ -89,6 +89,6 @@ ${stripePolygons}
 const png = new Resvg(svg, { fitTo: { mode: 'width', value: W } })
     .render()
     .asPng();
-const name = 'courierai-og-1200x630.png';
+const name = 'airmailai-og-1200x630.png';
 writeFileSync(join(STATIC_DIR, name), png);
 console.log(`wrote ${name} (${png.length} bytes)`);

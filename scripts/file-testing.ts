@@ -57,7 +57,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import Anthropic from '@anthropic-ai/sdk';
-import type { CourierAIMessage } from '@courierai/shared';
+import type { AirmailAIMessage } from '@airmailai/shared';
 import {
     type File as GoogleFile,
     FileState,
@@ -65,7 +65,7 @@ import {
     type Part as GooglePart,
 } from '@google/genai';
 import OpenAI, { toFile } from 'openai';
-import { PROVIDERS } from '../packages/courierai_web/src/lib/models';
+import { PROVIDERS } from '../packages/airmailai_web/src/lib/models';
 
 type ProviderName = 'anthropic' | 'google' | 'openai' | 'openrouter';
 type TestName =
@@ -628,12 +628,12 @@ async function testUpload(
         '\n=== TEST upload: does a user PDF attachment reach the model (via streamAnthropic)? ==='
     );
     const { streamAnthropic } =
-        await import('../packages/courierai_ext/providers/anthropic');
+        await import('../packages/airmailai_ext/providers/anthropic');
     const pdfPath = join(import.meta.dirname, '..', '.tmp', 'test_pdf.pdf');
     const bytes = readFileSync(pdfPath);
     const base64 = bytes.toString('base64');
     const hash = `upload-${crypto.randomUUID().slice(0, 8)}`;
-    const message: CourierAIMessage = {
+    const message: AirmailAIMessage = {
         id: crypto.randomUUID(),
         role: 'user',
         parts: [

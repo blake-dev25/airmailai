@@ -3,7 +3,7 @@ import TurndownService from 'turndown';
 import type {
     ModelTools,
     ThinkingLevel,
-} from '../../packages/courierai_web/src/lib/models/types';
+} from '../../packages/airmailai_web/src/lib/models/types';
 
 export type { ThinkingLevel };
 
@@ -78,7 +78,7 @@ export interface ModelProbeResult {
 
 export const MODELS_DIR = resolve(
     import.meta.dir,
-    '../../packages/courierai_web/src/lib/models'
+    '../../packages/airmailai_web/src/lib/models'
 );
 export const SNAPSHOT_DIR = resolve(import.meta.dir, '../.tmp');
 export const OPENROUTER_URL = 'https://openrouter.ai/api/v1/models';

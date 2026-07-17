@@ -1,29 +1,29 @@
 import { expect, QUICK_TIMEOUT, test } from './fixtures';
 
 test('app shell renders: sidebar, config panel, composer', async ({
-    courierai,
+    airmailai,
 }) => {
-    await courierai.goto();
+    await airmailai.goto();
     await expect(
-        courierai.page.getByRole('heading', { name: 'Configuration' })
+        airmailai.page.getByRole('heading', { name: 'Configuration' })
     ).toBeVisible();
-    await expect(courierai.newChatButton()).toBeVisible();
+    await expect(airmailai.newChatButton()).toBeVisible();
     await expect(
-        courierai.page.getByText('Start a conversation')
+        airmailai.page.getByText('Start a conversation')
     ).toBeVisible();
-    await expect(courierai.composer()).toBeVisible();
+    await expect(airmailai.composer()).toBeVisible();
 });
 
 test('single turn: streams, persists to ext IDB, auto-titles, updates token counter', async ({
-    courierai,
+    airmailai,
 }) => {
-    await courierai.goto();
+    await airmailai.goto();
 
-    await courierai.send('Reply with exactly: pong');
+    await airmailai.send('Reply with exactly: pong');
 
-    await courierai.expectAssistantRoundTrip();
+    await airmailai.expectAssistantRoundTrip();
 
-    const { metas, messages } = await courierai.readDb();
+    const { metas, messages } = await airmailai.readDb();
     expect(metas).toHaveLength(1);
     const chatId = metas[0].id;
     const roles = messages
@@ -33,9 +33,9 @@ test('single turn: streams, persists to ext IDB, auto-titles, updates token coun
     expect(roles).toContain('assistant');
 
     await expect(async () => {
-        const db = await courierai.readDb();
+        const db = await airmailai.readDb();
         expect(db.metas[0]?.title).not.toBe('New Chat');
     }).toPass({ timeout: QUICK_TIMEOUT });
 
-    await expect(courierai.contextUsage()).toContainText('/');
+    await expect(airmailai.contextUsage()).toContainText('/');
 });

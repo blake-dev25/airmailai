@@ -1,7 +1,7 @@
 import { defineConfig } from '@playwright/test';
 import './tests/e2e/env';
 
-const BASE_URL = process.env.COURIERAI_BASE_URL ?? 'http://localhost:5173';
+const BASE_URL = process.env.AIRMAILAI_BASE_URL ?? 'http://localhost:5173';
 
 export default defineConfig({
     testDir: './tests/e2e',
@@ -21,7 +21,7 @@ export default defineConfig({
         trace: 'retain-on-failure',
     },
     webServer: {
-        command: 'bun run --filter courierai_web dev',
+        command: 'bun run --filter airmailai_web dev',
         url: `${BASE_URL}/app/`,
         reuseExistingServer: true,
         timeout: 120_000,

@@ -1,5 +1,5 @@
 // *** Isolation harness for the hand-rolled providers. Exercises a provider's
-// SSE -> CourierAIChunk mapping for a chosen server tool (web_search /
+// SSE -> AirmailAIChunk mapping for a chosen server tool (web_search /
 // web_fetch / code_execution), and the stateless text-fold replay round-trip
 // (all tools, all providers) - without touching background.ts.
 //
@@ -7,23 +7,23 @@
 //   bun scripts/provider-test.ts --provider openai    --tool web_fetch
 //   bun scripts/provider-test.ts --provider google    --tool code_execution --dump
 //
-// --dump prints every CourierAIChunk as it streams
+// --dump prints every AirmailAIChunk as it streams
 import type {
-    CourierAIChunk,
-    CourierAIMessage,
-    CourierAIPart,
-    CourierAISourceUrlPart,
-    CourierAIToolPart,
+    AirmailAIChunk,
+    AirmailAIMessage,
+    AirmailAIPart,
+    AirmailAISourceUrlPart,
+    AirmailAIToolPart,
     ProviderStream,
-} from '@courierai/shared';
+} from '@airmailai/shared';
 import {
     PROVIDERS,
     type ThinkingLevel,
-} from '../packages/courierai_web/src/lib/models';
+} from '../packages/airmailai_web/src/lib/models';
 
 type ProviderName = 'openai' | 'anthropic' | 'google' | 'openrouter';
 type ToolName = 'web_search' | 'web_fetch' | 'code_execution';
-type CodeExecPart = Extract<CourierAIToolPart, { name: 'code_execution' }>;
+type CodeExecPart = Extract<AirmailAIToolPart, { name: 'code_execution' }>;
 
 const PROVIDER_DEFAULTS: Record<ProviderName, { env: string; model: string }> =
     {
@@ -53,13 +53,13 @@ const WIRE_KEY: Record<ToolName, 'webSearch' | 'webFetch' | 'codeExecution'> = {
     code_execution: 'codeExecution',
 };
 
-// *** SHA-256 of the exact UTF-8 bytes of 'CourierAI' (no trailing newline),
+// *** SHA-256 of the exact UTF-8 bytes of 'AirmailAI' (no trailing newline),
 // precomputed via python hashlib. The code_execution test asks the model for
 // this digest: it can't produce a SHA-256 from memory, so a matching digest in
 // the output proves the sandbox actually ran AND our tool-call/result mapping
 // surfaced it. To regenerate:
-//   python -c "import hashlib; print(hashlib.sha256('CourierAI'.encode()).hexdigest())"
-const COURIERAI_SHA256 =
+//   python -c "import hashlib; print(hashlib.sha256('AirmailAI'.encode()).hexdigest())"
+const AIRMAILAI_SHA256 =
     '59d1aef073ffe17cb27ad0bae25c9b75bb7a94b6aa98944563bbf45efd4dc8a8';
 
 const DEFAULT_PROMPTS: Record<ToolName, string> = {
@@ -68,7 +68,7 @@ const DEFAULT_PROMPTS: Record<ToolName, string> = {
     web_fetch:
         'Fetch https://www.formula1.com/en/racing/2026 and tell me when the next race is.',
     code_execution:
-        "Use the code execution tool to compute the SHA-256 hex digest of the exact string 'CourierAI' (no quotes, no trailing newline) using Python's hashlib. Do not compute it from memory. Print only the digest.",
+        "Use the code execution tool to compute the SHA-256 hex digest of the exact string 'AirmailAI' (no quotes, no trailing newline) using Python's hashlib. Do not compute it from memory. Print only the digest.",
 };
 
 function flag(name: string): string | undefined {
@@ -105,18 +105,18 @@ function toolWire(
 async function loadProvider(p: ProviderName): Promise<ProviderStream> {
     switch (p) {
         case 'openai':
-            return (await import('../packages/courierai_ext/providers/openai'))
+            return (await import('../packages/airmailai_ext/providers/openai'))
                 .streamOpenAI;
         case 'anthropic':
             return (
-                await import('../packages/courierai_ext/providers/anthropic')
+                await import('../packages/airmailai_ext/providers/anthropic')
             ).streamAnthropic;
         case 'google':
-            return (await import('../packages/courierai_ext/providers/google'))
+            return (await import('../packages/airmailai_ext/providers/google'))
                 .streamGoogle;
         case 'openrouter':
             return (
-                await import('../packages/courierai_ext/providers/openrouter')
+                await import('../packages/airmailai_ext/providers/openrouter')
             ).streamOpenRouter;
     }
 }
@@ -124,7 +124,7 @@ async function loadProvider(p: ProviderName): Promise<ProviderStream> {
 interface TurnResult {
     text: string;
     reasoningChars: number;
-    sources: CourierAISourceUrlPart[];
+    sources: AirmailAISourceUrlPart[];
     docs: number;
     citations: number;
     files: number;
@@ -133,7 +133,7 @@ interface TurnResult {
     tokens?: { input: number; output: number };
 }
 
-function dumpChunk(chunk: CourierAIChunk): void {
+function dumpChunk(chunk: AirmailAIChunk): void {
     if (chunk.type === 'text-delta' || chunk.type === 'reasoning-delta') {
         console.log(
             `  ${chunk.type} ${JSON.stringify(chunk.delta.slice(0, 80))}`
@@ -155,7 +155,7 @@ async function runTurn(
     stream: ProviderStream,
     apiKey: string,
     model: string,
-    messages: CourierAIMessage[],
+    messages: AirmailAIMessage[],
     params: Record<string, unknown>,
     dump: boolean
 ): Promise<TurnResult> {
@@ -229,8 +229,8 @@ async function runTurn(
 
 function msg(
     role: 'user' | 'assistant',
-    parts: CourierAIPart[]
-): CourierAIMessage {
+    parts: AirmailAIPart[]
+): AirmailAIMessage {
     return {
         id: crypto.randomUUID(),
         role,
@@ -253,7 +253,7 @@ function printHelp(): void {
         .join('\n');
     console.log(`provider-test - isolation harness for the hand-rolled ext providers
 
-Exercises one provider's SSE -> CourierAIChunk mapping for a chosen server
+Exercises one provider's SSE -> AirmailAIChunk mapping for a chosen server
 tool, without touching background.ts. It then runs the stateless replay
 round-trip: turn 2 recalls a previously returned url (web_search / web_fetch)
 or the prior code output (code_execution).
@@ -268,7 +268,7 @@ Options:
   --input, --prompt   override the default prompt for the tool
   --thinking <level>  thinking level         (default: the model's, none if unset)
   --adaptive <bool>   adaptive thinking      (default: the model's)
-  --dump              print every CourierAIChunk as it streams
+  --dump              print every AirmailAIChunk as it streams
   -h, --help          show this help
 
 Provider defaults (model / required env var):
@@ -364,7 +364,7 @@ async function main() {
         }
 
         console.log('\n--- TURN 2 (recall, sterile user + assistant text) ---');
-        const assistantParts: CourierAIPart[] = [
+        const assistantParts: AirmailAIPart[] = [
             { type: 'text', text: 'I fetched the page.', state: 'done' },
             ...t1.sources,
         ];
@@ -408,7 +408,7 @@ async function main() {
         process.exit(ok ? 0 : 1);
     }
     if (tool === 'code_execution') {
-        const digestInTurn1 = t1.text.includes(COURIERAI_SHA256);
+        const digestInTurn1 = t1.text.includes(AIRMAILAI_SHA256);
         if (!t1.codeExecutions.length || !digestInTurn1) {
             const why =
                 (t1.codeExecutions.length
@@ -416,13 +416,13 @@ async function main() {
                     : ' (no code_execution tool-call)') +
                 (digestInTurn1
                     ? ''
-                    : ` (digest ${COURIERAI_SHA256} not in turn-1 output)`);
+                    : ` (digest ${AIRMAILAI_SHA256} not in turn-1 output)`);
             console.error(`FAIL turn 1:${why}`);
             process.exit(1);
         }
 
         console.log('\n--- TURN 2 (recall, sterile assistant text) ---');
-        const assistantParts: CourierAIPart[] = [
+        const assistantParts: AirmailAIPart[] = [
             {
                 type: 'text',
                 text: 'I completed using the tool.',
@@ -451,7 +451,7 @@ async function main() {
         console.log('reply:', JSON.stringify(t2.text));
         console.log('tokens:', t2.tokens);
 
-        const echoed = t2.text.includes(COURIERAI_SHA256);
+        const echoed = t2.text.includes(AIRMAILAI_SHA256);
         const reran = t2.codeExecutions.length > 0;
         const ok = echoed && !reran;
         const why =
@@ -467,7 +467,7 @@ async function main() {
     }
 
     console.log('\n--- TURN 2 (recall, sterile assistant text) ---');
-    const assistantParts: CourierAIPart[] = [
+    const assistantParts: AirmailAIPart[] = [
         { type: 'text', text: 'I completed the search.', state: 'done' },
         ...t1.sources,
     ];

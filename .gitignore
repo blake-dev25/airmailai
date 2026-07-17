@@ -1,8 +1,8 @@
 # local notes/docs
 CLAUDE.md
 *.txt
-!packages/courierai_web/static/legal/third-party-licenses.txt
-!packages/courierai_ext/public/third-party-licenses.txt
+!packages/airmailai_web/static/legal/third-party-licenses.txt
+!packages/airmailai_ext/public/third-party-licenses.txt
 collab/
 
 # dependencies

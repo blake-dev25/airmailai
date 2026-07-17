@@ -1,5 +1,5 @@
 {
-    "name": "courierai",
+    "name": "airmailai",
     "devDependencies": {
         "@anthropic-ai/sdk": "^0.110.0",
         "@axe-core/playwright": "^4.12.1",
@@ -31,12 +31,12 @@
         "lint": "NO_COLOR=1 eslint .",
         "format": "NO_COLOR=1 prettier . --write",
         "format:check": "NO_COLOR=1 prettier . --check",
-        "build": "bun scripts/gen-version.ts && bun run check && NO_COLOR=1 bun run --filter courierai_web build && NO_COLOR=1 bun run --filter courierai_ext typecheck && NO_COLOR=1 bun run --filter courierai_ext zip && NO_COLOR=1 bun run --filter courierai_ext build",
+        "build": "bun scripts/gen-version.ts && bun run check && NO_COLOR=1 bun run --filter airmailai_web build && NO_COLOR=1 bun run --filter airmailai_ext typecheck && NO_COLOR=1 bun run --filter airmailai_ext zip && NO_COLOR=1 bun run --filter airmailai_ext build",
         "build:verbose": "BUILD_VERBOSE=1 bun run build",
-        "build:web": "bun scripts/gen-version.ts && bun run check && NO_COLOR=1 bun run --filter courierai_web build",
+        "build:web": "bun scripts/gen-version.ts && bun run check && NO_COLOR=1 bun run --filter airmailai_web build",
         "deploy:web": "bun scripts/deploy-web.ts",
-        "dev:web": "bun scripts/gen-version.ts && bun run check && NO_COLOR=1 bun run --filter courierai_web typecheck && NO_COLOR=1 bun run --filter courierai_web dev",
-        "dev:ext": "bun run check && NO_COLOR=1 bun run --filter courierai_ext build",
+        "dev:web": "bun scripts/gen-version.ts && bun run check && NO_COLOR=1 bun run --filter airmailai_web typecheck && NO_COLOR=1 bun run --filter airmailai_web dev",
+        "dev:ext": "bun run check && NO_COLOR=1 bun run --filter airmailai_ext build",
         "gen:logo": "bun scripts/gen-logo.ts",
         "gen:og": "bun scripts/gen-og-card.ts",
         "test": "playwright test"

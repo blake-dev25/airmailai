@@ -3,7 +3,7 @@ import { defineConfig } from 'eslint/config';
 import svelte from 'eslint-plugin-svelte';
 import globals from 'globals';
 import ts from 'typescript-eslint';
-import svelteConfig from './packages/courierai_web/svelte.config.js';
+import svelteConfig from './packages/airmailai_web/svelte.config.js';
 
 export default defineConfig(
     {

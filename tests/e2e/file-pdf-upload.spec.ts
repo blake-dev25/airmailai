@@ -4,7 +4,7 @@ import { expect, test, TOOL_TURN_TIMEOUT } from './fixtures';
 test.use({ seedFileUploadsEnabled: true });
 
 test('PDF upload: model reads text from an attached PDF', async ({
-    courierai,
+    airmailai,
 }) => {
     test.setTimeout(120_000);
     const n = String(Math.floor(100000 + Math.random() * 900000));
@@ -18,20 +18,20 @@ test('PDF upload: model reads text from an attached PDF', async ({
     });
     const bytes = await doc.save();
 
-    await courierai.goto();
-    await courierai.attachFile({
+    await airmailai.goto();
+    await airmailai.attachFile({
         name: 'sample.pdf',
         mimeType: 'application/pdf',
         buffer: Buffer.from(bytes),
     });
-    await courierai.send(
+    await airmailai.send(
         'What number is in this document? Reply with just the number.',
         { turnTimeout: TOOL_TURN_TIMEOUT }
     );
 
-    await courierai.expectAssistantRoundTrip(n, { mode: 'contains' });
+    await airmailai.expectAssistantRoundTrip(n, { mode: 'contains' });
     expect(
-        (await courierai.persistedTexts('assistant')).at(-1) ?? ''
+        (await airmailai.persistedTexts('assistant')).at(-1) ?? ''
     ).toContain(n);
-    expect(await courierai.persistedFileNames('user')).toContain('sample.pdf');
+    expect(await airmailai.persistedFileNames('user')).toContain('sample.pdf');
 });
