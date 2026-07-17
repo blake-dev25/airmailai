@@ -106,7 +106,7 @@ not an OSI-approved open source license. It allows personal use and use
 within small businesses (as defined in the license), but not
 distribution or use by larger organizations without separate permission.
 
-For commercial license inquiries, contact blake@airmailai.net.
+For commercial license inquiries, contact contact@blake-dev.net.
 
 ## 8. Intellectual property and no backend commitment
 
@@ -209,7 +209,7 @@ intellectual property rights; or (c) any Dispute that cannot be
 required to be arbitrated under applicable law.
 
 **Opt-out.** You may opt out of this arbitration agreement by emailing
-blake@airmailai.net with the subject line "Arbitration Opt-Out" within
+contact@blake-dev.net with the subject line "Arbitration Opt-Out" within
 30 days of first accepting these Terms. Your email must include your
 name and a statement that you decline to be bound by this arbitration
 agreement. If you opt out, no other part of these Terms is affected.
@@ -240,4 +240,4 @@ acceptance of the updated Terms.
 
 ## 16. Contact
 
-Questions about these Terms: blake@airmailai.net
+Questions about these Terms: contact@blake-dev.net

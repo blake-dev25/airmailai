@@ -27,7 +27,7 @@ AirmailAI is currently an independent project. If operations are
 transferred to a legal entity (LLC) in the future, this policy will be
 updated to reflect that, including any applicable governing law.
 
-Contact: blake@airmailai.net
+Contact: contact@blake-dev.net
 
 ## What we collect
 
@@ -195,4 +195,4 @@ and this Privacy Policy before you continue using it.
 
 ## Contact
 
-Questions about this policy: blake@airmailai.net
+Questions about this policy: contact@blake-dev.net
