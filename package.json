@@ -23,6 +23,7 @@
         "turndown": "^7.2.4",
         "typescript-eslint": "^8.62.1"
     },
+    "license": "Apache-2.0",
     "private": true,
     "scripts": {
         "check": "bun run lint && bun run format && bun run check:tests && bun run check:scripts",

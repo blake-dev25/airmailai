@@ -19,7 +19,7 @@
 
     <p class="m-0 text-sm leading-normal text-fg-muted">
         By clicking <strong class="text-fg">Agree &amp; continue</strong>, you
-        accept our
+        agree to our
         <a
             href="/legal/terms.md"
             target="_blank"
@@ -27,7 +27,7 @@
             class="inline-flex items-center gap-0.5 text-accent-fg no-underline hover:underline"
             >Terms of Service<Icon name="external-link" /></a
         >
-        and
+        and acknowledge our
         <a
             href="/legal/privacy.md"
             target="_blank"

@@ -52,82 +52,10 @@
         <meta name="twitter:card" content="summary_large_image" />
         <meta name="twitter:site" content="@airmailai" />
         <link rel="stylesheet" href="/src/site.css" />
-        <script type="application/ld+json">
-            {
-                "@context": "https://schema.org",
-                "@type": "FAQPage",
-                "mainEntity": [
-                    {
-                        "@type": "Question",
-                        "name": "What is AirmailAI?",
-                        "acceptedAnswer": {
-                            "@type": "Answer",
-                            "text": "AirmailAI is a bring-your-own-keys LLM chat app, with a focus on security, privacy, and performance."
-                        }
-                    },
-                    {
-                        "@type": "Question",
-                        "name": "Do I need a AirmailAI account?",
-                        "acceptedAnswer": {
-                            "@type": "Answer",
-                            "text": "No, AirmailAI doesn't have accounts. You only need API keys from the providers you want to use."
-                        }
-                    },
-                    {
-                        "@type": "Question",
-                        "name": "What browsers does AirmailAI support?",
-                        "acceptedAnswer": {
-                            "@type": "Answer",
-                            "text": "Any Chromium-based browser (Chrome, Edge, Brave, etc)."
-                        }
-                    },
-                    {
-                        "@type": "Question",
-                        "name": "What providers does AirmailAI support?",
-                        "acceptedAnswer": {
-                            "@type": "Answer",
-                            "text": "AirmailAI currently supports OpenAI, Anthropic, Google, and OpenRouter, with more providers planned."
-                        }
-                    },
-                    {
-                        "@type": "Question",
-                        "name": "Does AirmailAI see my conversations?",
-                        "acceptedAnswer": {
-                            "@type": "Answer",
-                            "text": "No. Your messages, attachments, system prompts, and model/request settings are sent from the website UI to the browser extension, then directly to the provider and back to the UI. Your conversations never touch our servers."
-                        }
-                    },
-                    {
-                        "@type": "Question",
-                        "name": "How does AirmailAI store and protect my API keys?",
-                        "acceptedAnswer": {
-                            "@type": "Answer",
-                            "text": "We rely on the Chromium extension security model, which isolates your stored API keys from websites and other extensions. Once a key is saved, AirmailAI.net can ask the extension to make a provider request or delete the key, but it cannot read the key back."
-                        }
-                    },
-                    {
-                        "@type": "Question",
-                        "name": "Is AirmailAI free?",
-                        "acceptedAnswer": {
-                            "@type": "Answer",
-                            "text": "The AirmailAI website and extension are free to use for personal use and qualifying small-business use. API usage is billed by the respective providers."
-                        }
-                    },
-                    {
-                        "@type": "Question",
-                        "name": "Does AirmailAI add a markup to provider API costs?",
-                        "acceptedAnswer": {
-                            "@type": "Answer",
-                            "text": "No, AirmailAI does not add a markup or charge per request. Your API usage is billed directly by the providers you use."
-                        }
-                    }
-                ]
-            }
-        </script>
     </head>
     <body>
         <div class="stripe-band" aria-hidden="true"></div>
-        <header class="site-header">
+        <header>
             <nav class="nav" aria-label="Main">
                 <a class="brand" href="/">
                     <img src="/airmailai-stamp-logo.svg" alt="" />
@@ -195,6 +123,133 @@
                     >Open an issue.</a
                 >
             </p>
+            <nav class="toc" aria-label="FAQ contents">
+                <details name="toc">
+                    <summary>
+                        <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            aria-hidden="true"
+                        >
+                            <path d="m9 18 6-6-6-6" />
+                        </svg>
+                        App
+                    </summary>
+                    <a href="#what-is-airmailai">What is AirmailAI?</a>
+                    <a href="#accounts">Do I need an AirmailAI account?</a>
+                    <a href="#browsers"
+                        >What browsers does AirmailAI support?</a
+                    >
+                    <a href="#why-extension"
+                        >Why do I need to install a browser extension?</a
+                    >
+                    <a href="#why-not-direct"
+                        >Why can't the website just call the APIs directly?</a
+                    >
+                    <a href="#providers"
+                        >What providers does AirmailAI support?</a
+                    >
+                    <a href="#file-uploads">Can I upload pdfs/images/files?</a>
+                    <a href="#mobile">Does AirmailAI work on mobile?</a>
+                    <a href="#vs-provider-apps"
+                        >How is this different from using a provider's web
+                        app?</a
+                    >
+                    <a href="#vs-other-byok"
+                        >How is this different from using other BYOK apps?</a
+                    >
+                </details>
+                <details name="toc">
+                    <summary>
+                        <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            aria-hidden="true"
+                        >
+                            <path d="m9 18 6-6-6-6" />
+                        </svg>
+                        Privacy, Security, &amp; Data
+                    </summary>
+                    <a href="#see-conversations"
+                        >Does AirmailAI see my conversations?</a
+                    >
+                    <a href="#host-models">Does AirmailAI host any models?</a>
+                    <a href="#data-collection">What data do you collect?</a>
+                    <a href="#key-storage"
+                        >How does AirmailAI store and protect my API keys?</a
+                    >
+                    <a href="#sync"
+                        >Are my chats, files, API keys, or settings synced?</a
+                    >
+                    <a href="#export">Can I export my chat history?</a>
+                    <a href="#import">Can I import chats?</a>
+                    <a href="#delete-data">Can I delete my data?</a>
+                    <a href="#open-source"
+                        >Is AirmailAI open source software?</a
+                    >
+                </details>
+                <details name="toc">
+                    <summary>
+                        <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            aria-hidden="true"
+                        >
+                            <path d="m9 18 6-6-6-6" />
+                        </svg>
+                        Costs
+                    </summary>
+                    <a href="#free">Is AirmailAI free?</a>
+                    <a href="#api-costs"
+                        >How much does using a provider API through AirmailAI
+                        cost?</a
+                    >
+                    <a href="#markup"
+                        >Does AirmailAI add a markup to provider API costs?</a
+                    >
+                    <a href="#free-models"
+                        >Are there free models I can use with AirmailAI?</a
+                    >
+                    <a href="#get-keys">Where can I get API keys?</a>
+                </details>
+                <details name="toc">
+                    <summary>
+                        <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            aria-hidden="true"
+                        >
+                            <path d="m9 18 6-6-6-6" />
+                        </svg>
+                        Support &amp; Feedback
+                    </summary>
+                    <a href="#missing-provider"
+                        >What if I want to use a provider/model that isn't
+                        listed on the site?</a
+                    >
+                    <a href="#bug-report"
+                        >I found a bug or ran into an error. Where do I report
+                        it?</a
+                    >
+                    <a href="#how-to-help">I like AirmailAI. How can I help?</a>
+                </details>
+            </nav>
 
             <h2 id="app">App</h2>
 
@@ -204,15 +259,7 @@
                 security, privacy, and performance.
             </p>
 
-            <h3 id="who-is-it-for">Who is AirmailAI for?</h3>
-            <p>
-                If you've ever run into subscription plan rate limits, you'd
-                rather pay for the tokens you actually use, or you want access
-                to frontier LLMs without paying monthly subscriptions to every
-                provider, then AirmailAI is for you.
-            </p>
-
-            <h3 id="accounts">Do I need a AirmailAI account?</h3>
+            <h3 id="accounts">Do I need an AirmailAI account?</h3>
             <p>
                 No, AirmailAI doesn't have accounts. You only need API keys from
                 the providers you want to use.
@@ -221,25 +268,27 @@
             <h3 id="browsers">What browsers does AirmailAI support?</h3>
             <p>Any Chromium-based browser (Chrome, Edge, Brave, etc).</p>
 
-            <h3 id="why-extension">Why do I need to install an extension?</h3>
+            <h3 id="why-extension">
+                Why do I need to install a browser extension?
+            </h3>
             <p>
                 The AirmailAI website is just static files served from a CDN -
                 there are no AirmailAI servers that your keys, chats, or API
-                requests ever pass through. The extension acts as that backend:
-                it stores your API keys and sends your requests directly to the
-                provider.
+                requests ever pass through. The browser extension acts as that
+                backend: it stores your API keys and sends your requests
+                directly to the provider.
             </p>
 
             <h3 id="why-not-direct">
                 Why can't the website just call the APIs directly?
             </h3>
             <p>
-                Some providers allow this, such as with Anthropic's
-                'anthropic-dangerous-direct-browser-access' request header
-                option. However, it's dangerous because the website has to store
-                your API keys, where any script running on the page can read
-                them. Our extension keeps your keys isolated from every website,
-                even the official AirmailAI website, by design.
+                Not all providers support calling their API directly from a
+                website. Additionally, calling APIs from a website can be
+                dangerous because the website has to store your API keys, where
+                any script running on the page can read them. Our extension
+                keeps your keys isolated from every website, even the official
+                AirmailAI website, by design.
             </p>
 
             <h3 id="providers">What providers does AirmailAI support?</h3>
@@ -259,9 +308,8 @@
             <h3 id="mobile">Does AirmailAI work on mobile?</h3>
             <p>
                 AirmailAI works on devices that can install the browser
-                extension, such as desktops, laptops, and Chromebooks. Most
-                phones cannot install browser extensions. Let us know if you'd
-                like a mobile app!
+                extension. Unfortunately, most phones cannot install browser
+                extensions. Let us know if you'd like a mobile app!
             </p>
 
             <h3 id="vs-provider-apps">
@@ -269,10 +317,9 @@
             </h3>
             <p>
                 Provider web apps are built around that provider's own models,
-                plans, and usage limits. AirmailAI is a bring-your-own-key
-                client: you can use multiple provider APIs in one customizable
-                chat UI, pay as you go, and avoid subscription-plan usage
-                limits.
+                plans, and usage limits. AirmailAI is a bring-your-own-keys
+                client: you can use multiple provider APIs in one UI, pay as you
+                go, and avoid subscription-plan usage limits.
             </p>
 
             <h3 id="vs-other-byok">
@@ -280,9 +327,10 @@
             </h3>
             <p>
                 AirmailAI is built to be lightweight, fast, and low-friction.
-                There's no account, no desktop app, no AirmailAI server between
-                you and the provider. You install the browser extension, open
-                AirmailAI.net, add your API keys, and it just works.
+                There's no account, no desktop app you have to install, and no
+                AirmailAI server between you and the provider. You install the
+                browser extension, open the app, add your API keys, and it just
+                works.
             </p>
 
             <h2 id="privacy">Privacy, Security, &amp; Data</h2>
@@ -322,9 +370,11 @@
                 sends it to the provider you choose when making an API request.
             </p>
 
-            <h3 id="sync">Are my chats, API keys, and settings synced?</h3>
+            <h3 id="sync">
+                Are my chats, files, API keys, or settings synced?
+            </h3>
             <p>
-                Chats and API keys stay local to your device. Settings will sync
+                Chats, files, and API keys are not synced. Settings will sync
                 through your browser account if you're signed in. If sync is
                 off, or if your browser keeps extension data local, everything
                 is stored locally on your device and does not sync.
@@ -348,15 +398,19 @@
             <p>
                 Yes. You can delete chats individually via the gear button next
                 to the chat in the sidebar, you can clear API keys individually
-                in settings, and you can delete all data via settings or by
-                clicking on the extension icon in your browser toolbar. You can
-                also uninstall the extension from your browser, which deletes
-                all of your data as well.
+                in settings, and you can delete all local data via settings or
+                by clicking on the extension icon in your browser toolbar. Use
+                that delete-all control before uninstalling the extension:
+                uninstalling alone removes the extension's stored data but can
+                leave the website's local preference caches behind. Files
+                uploaded to provider systems are not deleted automatically -
+                manage those through your provider's controls.
             </p>
 
             <h3 id="open-source">Is AirmailAI open source software?</h3>
             <p>
-                AirmailAI is source available software, see our
+                Yes! AirmailAI is open source under the Apache 2.0 license, see
+                our
                 <a
                     href="https://github.com/blake-dev25/airmailai"
                     target="_blank"
@@ -369,18 +423,8 @@
 
             <h3 id="free">Is AirmailAI free?</h3>
             <p>
-                The AirmailAI website and extension are free to use for personal
-                use and qualifying small-business use. API usage is billed by
-                the respective providers. If you would like to use AirmailAI for
-                larger commercial use, please reach out to
-                <a href="mailto:contact@blake-dev.net">contact@blake-dev.net</a
-                >. For details, see the
-                <a
-                    href="https://github.com/blake-dev25/airmailai/blob/main/LICENSE"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    >license</a
-                >.
+                Yes, the AirmailAI website and extension are free. API usage is
+                billed by the respective providers.
             </p>
 
             <h3 id="api-costs">
@@ -492,6 +536,11 @@
                 >.
             </p>
         </main>
+        <footer class="site-footer">
+            <a href="/legal/terms.md">Terms of Service</a>
+            <span aria-hidden="true">/</span>
+            <a href="/legal/privacy.md">Privacy Policy</a>
+        </footer>
         <div class="stripe-band" aria-hidden="true"></div>
     </body>
 </html>

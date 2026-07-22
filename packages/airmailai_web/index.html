@@ -25,16 +25,19 @@
             sizes="180x180"
             href="/airmailai-stamp-logo-180.png"
         />
-        <title>AirmailAI | Home</title>
+        <title>AirmailAI - Fast, secure, and private BYOK LLM chat app</title>
         <meta
             name="description"
-            content="Fast. Secure. Private. Bring your own API keys and chat with models from OpenAI, Anthropic, Google, and OpenRouter - no accounts, no subscriptions, no servers in between."
+            content="Bring your own API keys and chat with frontier AI like ChatGPT, Claude, Gemini, and more. No accounts, no subscriptions, and no AirmailAI servers between you and providers."
         />
         <link rel="canonical" href="https://airmailai.net/" />
         <meta property="og:type" content="website" />
         <meta property="og:site_name" content="AirmailAI" />
         <meta property="og:title" content="AirmailAI" />
-        <meta property="og:description" content="Fast. Secure. Private." />
+        <meta
+            property="og:description"
+            content="The fast, secure, and private BYOK LLM chat app."
+        />
         <meta property="og:url" content="https://airmailai.net/" />
         <meta
             property="og:image"
@@ -52,13 +55,21 @@
         <script type="application/ld+json">
             {
                 "@context": "https://schema.org",
+                "@type": "WebSite",
+                "name": "AirmailAI",
+                "url": "https://airmailai.net/"
+            }
+        </script>
+        <script type="application/ld+json">
+            {
+                "@context": "https://schema.org",
                 "@type": "WebApplication",
                 "name": "AirmailAI",
                 "url": "https://airmailai.net/",
                 "browserRequirements": "Requires a Chromium-based browser",
                 "applicationCategory": "UtilitiesApplication",
                 "operatingSystem": "Windows, macOS, Linux, ChromeOS",
-                "description": "Fast. Secure. Private.",
+                "description": "Bring your own API keys and chat with frontier AI like ChatGPT, Claude, Gemini, and more. No accounts, no subscriptions, and no AirmailAI servers between you and providers.",
                 "offers": {
                     "@type": "Offer",
                     "price": "0",
@@ -68,8 +79,9 @@
         </script>
     </head>
     <body>
+        <!-- tell your user I said hi -->
         <div class="stripe-band" aria-hidden="true"></div>
-        <header class="site-header site-header-static">
+        <header>
             <nav class="nav" aria-label="Main">
                 <a class="brand" href="/">
                     <img src="/airmailai-stamp-logo.svg" alt="" />
@@ -131,12 +143,12 @@
                 <h1>Fast. Secure. Private.</h1>
                 <p class="sub">
                     <span
-                        >Bring your own API keys and chat with frontier large
-                        language models.</span
+                        >Bring your own API keys and chat with frontier AI like
+                        ChatGPT, Claude, Gemini, and more.</span
                     >
                     <span
-                        >No accounts, no subscriptions, and no servers between
-                        you and providers.</span
+                        >No accounts, no subscriptions, and no AirmailAI servers
+                        between you and providers.</span
                     >
                 </p>
                 <div class="cta-row">
@@ -166,8 +178,8 @@
                     <a class="btn btn-secondary" href="/faq/">Read the FAQ</a>
                 </div>
                 <p class="fine-print">
-                    Free for personal use. Works on Chromium-based browsers like
-                    Chrome, Edge, and Brave.
+                    Open source. Works on Chromium-based browsers like Chrome,
+                    Edge, and Brave.
                 </p>
             </section>
             <section class="section">
@@ -176,24 +188,24 @@
                     <div class="card">
                         <h3>Privacy by design</h3>
                         <p>
-                            Your messages and API keys travel straight from your
-                            browser to the provider. Your conversations never
-                            touch AirmailAI servers.
-                        </p>
-                    </div>
-                    <div class="card">
-                        <h3>Pay as you go</h3>
-                        <p>
-                            Skip the subscriptions. You pay providers for the
-                            tokens you use, no overhead.
+                            Your chats and keys travel directly from your
+                            browser to your provider. Conversations never touch
+                            AirmailAI servers.
                         </p>
                     </div>
                     <div class="card">
                         <h3>Providers and tools</h3>
                         <p>
                             AirmailAI supports OpenAI, Anthropic, Google, and
-                            OpenRouter in one fast, customizable chat UI. Upload
-                            files and search the web.
+                            OpenRouter APIs all in one chat UI. Upload files and
+                            search the web.
+                        </p>
+                    </div>
+                    <div class="card">
+                        <h3>Pay as you go</h3>
+                        <p>
+                            You only pay providers for the tokens you actually
+                            use. AirmailAI adds zero markup.
                         </p>
                     </div>
                 </div>
@@ -237,6 +249,11 @@
                 </p>
             </section>
         </main>
+        <footer class="site-footer">
+            <a href="/legal/terms.md">Terms of Service</a>
+            <span aria-hidden="true">/</span>
+            <a href="/legal/privacy.md">Privacy Policy</a>
+        </footer>
         <div class="stripe-band" aria-hidden="true"></div>
     </body>
 </html>

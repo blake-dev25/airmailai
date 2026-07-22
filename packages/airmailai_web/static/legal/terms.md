@@ -1,243 +1,273 @@
 # Terms of Service
 
-**Last updated:** May 9, 2026
+**Last updated:** July 20, 2026
 
-## 1. Acceptance
+## 1. Acceptance and eligibility
 
-By installing the AirmailAI browser extension, visiting the AirmailAI
-website, or otherwise using the software and service (together, the
-"Service"), you agree to these Terms of Service. If you do not agree,
-do not use the Service.
+These Terms of Service ("Terms") govern your use of the AirmailAI
+application, the official AirmailAI browser extension, and related
+software and services that Blake Dev LLC ("Blake Dev LLC", "we", "us",
+or "our") makes available (together, the "Service").
 
-You must be at least 13 years old, or the minimum age of digital
-consent in your jurisdiction (whichever is higher), to use the Service.
+By clicking "Agree & continue" or using the Service after being
+presented with these Terms, you agree to be bound by them. Browsing our
+public informational pages does not by itself constitute acceptance of
+these Terms. If you do not agree, do not use the Service.
 
-**These Terms contain a binding arbitration agreement and a class
-action waiver (Section 13). They affect your legal rights. Please read
-them carefully.**
+You must be at least 18 years old and have reached the age of legal
+majority where you live to use the Service. You must also satisfy the
+eligibility requirements of every LLM provider you use.
+
+If you use the Service for or on behalf of a business or other
+organization, you represent that you have authority to bind that
+organization to these Terms, and "you" includes that organization.
 
 ## 2. What AirmailAI is
 
 AirmailAI is a browser-based client that lets you send requests to
 third-party Large Language Model ("LLM") APIs using your own API keys.
 The Service does not operate its own LLM backend and does not run any
-server that processes your messages. When you send a message, it is
+server that processes your messages. When you make a request, it is
 sent from your browser - by way of the AirmailAI extension, which
-handles the HTTPS request on the browser's behalf - directly to the LLM
-provider you selected, using credentials you supplied. No intermediate
-server operated by AirmailAI is involved.
+handles the HTTPS request on the browser's behalf - directly to the
+provider you selected using credentials you supplied. No intermediate
+server operated by us is involved.
 
-AirmailAI is currently an unincorporated project maintained by its
-contributors. If operations are transferred to a legal entity in the
-future, these Terms will be updated and that entity will assume the
-rights and obligations set out here.
-
-## 3. Your API keys and your costs
+## 3. Your API keys and costs
 
 You are solely responsible for:
 
-- Obtaining API keys from the LLM providers you wish to use.
-- Complying with each provider's own terms of service, acceptable use
-  policy, and rate limits.
-- All charges incurred on your API keys as a result of requests made
-  through AirmailAI, including requests you did not personally review.
-- Keeping your API keys secure and revoking them if compromised.
+- Obtaining API keys from the providers you wish to use.
+- Complying with each provider's terms, usage policies, eligibility
+  rules, geographic restrictions, and rate limits.
+- All charges incurred on your API keys through the Service, including
+  charges for model requests, files, tools, storage, and code execution.
+- Reviewing provider pricing and configuring any provider-side budgets
+  or spending limits you consider appropriate.
+- Keeping your API keys and devices secure and promptly revoking any
+  key that may have been compromised.
 
-AirmailAI does not set, predict, control, or reimburse the prices
-charged by LLM providers.
+We do not set, predict, control, reimburse, or add a markup to prices
+charged by providers.
 
 ## 4. Third-party services
 
-The Service connects to LLM providers that are independent of
-AirmailAI. We do not control their availability, pricing, model
-behavior, training data, retention practices, or output. Your use of
-each provider is governed by that provider's own terms. You are
-responsible for reviewing and accepting the terms of each provider you
-use.
+The Service connects to providers that are independent of Blake Dev
+LLC. We do not control their availability, pricing, models, behavior,
+training practices, safety systems, data retention, tools, or outputs.
+Your relationship with each provider is governed by that provider's
+terms and policies. You are responsible for reviewing and accepting
+them.
 
-**Provider enforcement actions.** Each LLM provider independently sets
-and enforces its own policies. If a provider warns you, restricts your
-access, suspends your account, bans you, revokes your API key, charges
-you, or takes any other action against you in connection with your use
-of their API - whether or not that use was through AirmailAI -
-AirmailAI is not responsible and you will have no claim against
-AirmailAI arising from that action. Disputes about provider enforcement
-are strictly between you and the provider.
+Some services, including OpenRouter, may route a request to a separate
+model operator. Provider features such as web search, web fetch,
+document parsing, file storage, and code execution may involve
+additional third parties or subprocessors. Those services and parties
+are governed by the applicable provider terms.
 
-## 5. LLM outputs
+Providers independently set and enforce their policies. To the maximum
+extent permitted by law, we are not responsible for a provider warning,
+restriction, suspension, ban, key revocation, charge, data practice, or
+other action arising from the provider's systems, policies, or your
+conduct. Disputes concerning those actions are between you and the
+provider.
+
+## 5. LLM outputs and consequential use
 
 LLM outputs are generated by third-party models. They may be
-inaccurate, offensive, biased, outdated, unsafe, or otherwise
-unsuitable for a given purpose. Do not rely on LLM outputs for medical,
-legal, financial, safety-critical, or other consequential decisions.
-AirmailAI is a conduit to these models and makes no representation
-about the quality, accuracy, or suitability of their outputs.
+inaccurate, incomplete, offensive, biased, outdated, unsafe,
+infringing, or otherwise unsuitable for your purpose. Outputs may
+appear confident even when they are wrong.
+
+You must independently evaluate outputs before using or sharing them.
+You must not rely on an output as the sole basis for any business,
+financial, legal, medical, employment, safety, or other consequential
+decision. You assume all risk arising from decisions or actions taken
+in reliance on an output.
+
+The Service is a conduit to third-party models. We make no
+representation about the accuracy, completeness, legality, ownership,
+quality, or suitability of any output.
 
 ## 6. Acceptable use
 
 You agree not to use the Service to:
 
-- Violate any law or any third party's rights.
-- Violate any LLM provider's acceptable use policy.
-- Generate content that sexually exploits minors, incites violence,
-  facilitates real-world harm, or enables targeted harassment.
-- Interfere with, disrupt, or attempt to compromise the Service, other
-  users, or any LLM provider's infrastructure.
-- Resell the Service as a hosted product or misrepresent it as your
-  own, or otherwise use the Service in ways not permitted by the
-  PolyForm Small Business License (see Section 7).
+- Violate any law, regulation, court order, or third-party right.
+- Violate any provider's terms or usage policy.
+- Sexually exploit minors, incite violence, facilitate real-world harm,
+  or enable targeted harassment.
+- Interfere with, disrupt, damage, or attempt to compromise the
+  Service, another user, or any provider's systems.
+- Misrepresent the official Service as your own or misuse the
+  "AirmailAI" name, logo, or other marks.
 
-**Cooperation with legal process and providers.** We reserve the right
-to investigate suspected violations of these Terms and to cooperate
-with LLM providers, law enforcement, and other authorities where
-legally required or where we believe in good faith that cooperation is
-appropriate to protect the Service, its users, or third parties.
+We may preserve or disclose information actually in our possession
+when required by valid legal process or when otherwise permitted by law
+to protect rights, safety, and security. Because Blake Dev LLC does not
+receive API keys or chat content through the Service, we generally
+cannot produce that information.
 
-## 7. License and source availability
+## 7. Software license and trademarks
 
-The source code for AirmailAI is made publicly available under the
-PolyForm Small Business License 1.0.0 (see the `LICENSE` file in the
-repository). The Service itself - the software, the website, the
-trademarks "AirmailAI" and any associated marks, and the overall
-product - is proprietary to AirmailAI and its maintainers.
+AirmailAI is open source. The source code is licensed under the Apache
+License 2.0, as provided in the `LICENSE` file in the repository. These
+Terms do not restrict rights granted under that license.
 
-The PolyForm Small Business License is a **source-available** license,
-not an OSI-approved open source license. It allows personal use and use
-within small businesses (as defined in the license), but not
-distribution or use by larger organizations without separate permission.
+Except for third-party materials and contributions, Blake Dev LLC owns
+or has obtained the rights necessary to provide AirmailAI. The Apache
+License does not grant rights to use the AirmailAI name, logos, or
+branding except for accurate attribution, nominative use, or other use
+permitted by law.
 
-For commercial license inquiries, contact contact@blake-dev.net.
+## 8. Your content and the Service architecture
 
-## 8. Intellectual property and no backend commitment
+As between you and Blake Dev LLC, and to the extent recognized by
+applicable law, you retain any rights you have in your prompts,
+messages, files, and outputs. We claim no ownership of them. Provider
+terms may separately govern ownership and permitted use.
 
-You retain all rights to the content you create using the Service
-(subject to the provider terms you accepted). AirmailAI claims no
-ownership of your prompts, messages, or LLM outputs.
-
-AirmailAI is designed such that your prompts, messages, API keys, and
-LLM outputs never pass through any server operated by AirmailAI. It is
-our intention to preserve this architecture indefinitely. If this ever
-changes in a future version of the Service, these Terms and the
-Privacy Policy will be updated before the change takes effect, and you
-will be notified.
+The Service is designed so that your prompts, messages, API keys,
+files, and outputs do not pass through a server operated by Blake Dev
+LLC. It is our intention to preserve this architecture indefinitely.
+If this ever changes in a future version of the Service, these Terms
+and the Privacy Policy will be updated before the change takes effect,
+you will be notified, and we will obtain any consent required by law
+before the new practice begins. The Privacy Policy describes the
+current data flows in more detail.
 
 ## 9. No warranty
 
 **THE SERVICE IS PROVIDED "AS IS" AND "AS AVAILABLE," WITHOUT WARRANTY
-OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION
-WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE,
-NONINFRINGEMENT, ACCURACY, OR UNINTERRUPTED AVAILABILITY.**
+OF ANY KIND, EXPRESS, IMPLIED, OR STATUTORY, INCLUDING WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE,
+NONINFRINGEMENT, ACCURACY, SECURITY, OR UNINTERRUPTED AVAILABILITY.**
 
-The Service may be discontinued, changed, or made unavailable at any
-time without notice.
+**WE DO NOT WARRANT THAT THE SERVICE OR ANY OUTPUT WILL BE ACCURATE,
+COMPLETE, ERROR-FREE, SECURE, AVAILABLE, OR SUITABLE FOR YOUR USE.**
+
+The Service may be changed, suspended, discontinued, or made
+unavailable at any time without notice.
 
 ## 10. Limitation of liability
 
-**TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT WILL THE
-MAINTAINERS OR CONTRIBUTORS OF AIRMAILAI BE LIABLE FOR ANY INDIRECT,
-INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, INCLUDING LOST
-PROFITS, LOST DATA, LOST API CREDITS, OR THE COST OF SUBSTITUTE
-SERVICES, ARISING OUT OF OR IN CONNECTION WITH YOUR USE OF THE SERVICE,
-WHETHER IN CONTRACT, TORT, OR OTHERWISE, EVEN IF ADVISED OF THE
-POSSIBILITY OF SUCH DAMAGES.**
+In these Terms, the "Covered Parties" are Blake Dev LLC and its
+affiliates, officers, employees, contractors, maintainers,
+contributors, and licensors.
+
+**TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE COVERED PARTIES WILL NOT BE
+LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY,
+OR PUNITIVE DAMAGES, INCLUDING LOST PROFITS, REVENUE, BUSINESS,
+CONTRACTS, OPPORTUNITIES, GOODWILL, DATA, OR API CREDITS; BUSINESS
+INTERRUPTION; OR THE COST OF SUBSTITUTE SERVICES, ARISING OUT OF OR
+RELATING TO THE SERVICE OR THESE TERMS.**
 
 **TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE TOTAL AGGREGATE LIABILITY
-OF AIRMAILAI AND ITS MAINTAINERS FOR ANY AND ALL CLAIMS ARISING OUT OF
-OR RELATING TO THESE TERMS OR THE SERVICE IS LIMITED TO THE GREATER OF
-(A) THE AMOUNT YOU PAID TO AIRMAILAI IN THE TWELVE (12) MONTHS BEFORE
-THE EVENT GIVING RISE TO THE CLAIM, OR (B) TEN U.S. DOLLARS (USD 10).
-BECAUSE AIRMAILAI DOES NOT CHARGE USERS FOR THE SERVICE, (A) WILL
-TYPICALLY BE ZERO.**
+OF THE COVERED PARTIES FOR ALL CLAIMS ARISING OUT OF OR RELATING TO THE
+SERVICE OR THESE TERMS WILL NOT EXCEED THE GREATER OF (A) THE AMOUNT YOU
+PAID DIRECTLY TO BLAKE DEV LLC FOR THE SERVICE DURING THE TWELVE MONTHS
+BEFORE THE EVENT GIVING RISE TO THE CLAIM OR (B) TEN U.S. DOLLARS
+(USD 10). AMOUNTS YOU PAY TO A PROVIDER ARE NOT AMOUNTS PAID TO BLAKE
+DEV LLC.**
 
-**Nothing in these Terms limits or excludes liability for gross
-negligence, willful misconduct, fraud, or any other liability that
-cannot be limited or excluded under applicable law.**
+These limitations apply regardless of the form of action, whether in
+contract, tort (including negligence), strict liability, statute, or
+otherwise; even if a Covered Party was advised that damages were
+possible; and even if a remedy fails of its essential purpose. These
+limitations are an essential basis on which the Service is provided.
+
+Nothing in these Terms limits liability for gross negligence, willful
+misconduct, fraud, or any other liability that cannot lawfully be
+limited or excluded. Some jurisdictions do not allow certain warranty
+disclaimers or liability limitations, so some of the provisions above
+may not apply to you.
 
 ## 11. Indemnification
 
-You agree to defend, indemnify, and hold harmless AirmailAI and its
-maintainers from any claim, demand, loss, or damage (including
-reasonable legal fees) arising out of or related to: your use of the
-Service; your violation of these Terms; your violation of any LLM
-provider's terms or acceptable use policy, including any claim by a
-provider arising from your use of their API through the Service; or
-your violation of any law or third-party right.
+To the maximum extent permitted by law, you agree to defend, indemnify,
+and hold harmless the Covered Parties from third-party claims, demands,
+actions, proceedings, losses, liabilities, damages, judgments,
+settlements, and reasonable legal fees arising out of or relating to:
+
+- Your prompts, files, instructions, or other content.
+- Your use, publication, distribution, or other exploitation of an
+  output.
+- Your use or misuse of the Service.
+- Your violation of these Terms or a provider's terms or policies.
+- Your violation of law or a third party's rights.
+
+We will provide prompt notice of a covered claim, and a delay in notice
+will relieve your obligations only to the extent it materially
+prejudices the defense. We may, at our option, assume exclusive control
+of the defense of any covered claim at your expense; otherwise you will
+defend it with counsel reasonably acceptable to us. You may not settle
+a claim without our written consent if the settlement requires a
+Covered Party to admit wrongdoing, pay money, assume an ongoing
+obligation, or accept anything other than a complete and unconditional
+release.
+
+This section does not require you to indemnify a Covered Party for that
+party's gross negligence, willful misconduct, or fraud.
 
 ## 12. Termination
 
 You may stop using the Service at any time by uninstalling the
-extension and no longer visiting the website.
+extension and no longer using the application.
 
-We may discontinue the Service, remove it from distribution channels
-(for example, the Chrome Web Store), or withdraw support at any time,
-with or without notice. Because the Service runs entirely in your
-browser, we have no ability to terminate an individual user's installed
-copy.
+We may discontinue the Service, remove it from distribution channels,
+or withdraw support at any time, with or without notice. Because the
+Service runs in your browser and we do not operate user accounts, we
+generally cannot disable an individual installed copy.
 
-Sections 3, 4, 5, 8, 9, 10, 11, 13, and 14 survive termination.
+Sections 3 through 11 and 13 through 15 survive termination to the
+extent their nature requires.
 
-## 13. Arbitration and class action waiver
-
-**PLEASE READ THIS SECTION CAREFULLY. IT AFFECTS YOUR LEGAL RIGHTS,
-INCLUDING YOUR RIGHT TO FILE A LAWSUIT IN COURT.**
-
-You and AirmailAI agree that any dispute, claim, or controversy arising
-out of or relating to these Terms or the Service (a "Dispute") will be
-resolved by binding individual arbitration rather than in court, except
-as set out below.
-
-**Arbitration rules.** The arbitration will be administered by the
-American Arbitration Association ("AAA") under its Consumer Arbitration
-Rules, as modified by these Terms. The AAA's rules are available at
-<https://www.adr.org>. The arbitration may be conducted by telephone,
-online, or by written submissions; in-person hearings will occur only
-if you request one and the arbitrator agrees, and will take place in a
-location reasonably convenient to you.
-
-**Class action waiver.** You and AirmailAI agree that each may bring
-claims against the other only in your or its individual capacity, and
-not as a plaintiff or class member in any class, collective, or
-representative proceeding. The arbitrator may not consolidate more than
-one person's claims or preside over any form of representative or class
-proceeding.
-
-**Exceptions.** This Section 13 does not apply to: (a) claims that
-qualify for small claims court in the claimant's county of residence,
-so long as the claim remains individual and stays in that court; (b)
-claims for injunctive or other equitable relief to protect
-intellectual property rights; or (c) any Dispute that cannot be
-required to be arbitrated under applicable law.
-
-**Opt-out.** You may opt out of this arbitration agreement by emailing
-contact@blake-dev.net with the subject line "Arbitration Opt-Out" within
-30 days of first accepting these Terms. Your email must include your
-name and a statement that you decline to be bound by this arbitration
-agreement. If you opt out, no other part of these Terms is affected.
-
-**Severability within this section.** If the class action waiver above
-is found unenforceable as to a particular claim, that claim will be
-severed from this arbitration agreement and heard in the courts
-identified in Section 14, while all other claims remain in arbitration.
-
-## 14. Governing law and venue
+## 13. Governing law and venue
 
 These Terms are governed by the laws of the State of New Mexico,
-without regard to its conflict-of-law principles. Subject to Section 13
-(Arbitration), any dispute that is not subject to arbitration - or that
-a court of competent jurisdiction determines cannot be arbitrated -
-will be brought exclusively in the state or federal courts located in
-Bernalillo County, New Mexico, and you consent to personal jurisdiction
-there.
+without regard to conflict-of-law principles.
 
-## 15. Changes to these Terms
+Any dispute arising out of or relating to these Terms or the Service
+must be brought exclusively in the state or federal courts located in
+Bernalillo County, New Mexico, and each party consents to personal
+jurisdiction and venue in those courts.
+
+Nothing in this section deprives a consumer of a non-waivable right,
+protection, or forum under applicable law.
+
+## 14. Changes to these Terms
 
 We may update these Terms from time to time. The updated version will
-be published at the same URL with a new "Last updated" date. Material
-changes will also be surfaced in the website itself the next time you
-open it, so you don't have to check this page to find out. Your
-continued use of the Service after changes take effect constitutes
-acceptance of the updated Terms.
+be published at the same URL with a new "Last updated" date and will be
+presented to you before you continue using the Service.
+
+Changes apply prospectively from their stated effective date. If you
+do not agree to updated Terms, you must stop using the Service.
+
+## 15. Miscellaneous
+
+These Terms and the Apache License 2.0, each governing its respective
+subject matter, constitute the entire agreement between you and Blake
+Dev LLC concerning the Service. Provider terms separately govern your
+relationship with each provider.
+
+If any provision of these Terms is found invalid or unenforceable, it
+will be enforced to the maximum extent permitted and the remaining
+provisions will remain in effect. Failure to enforce a provision is not
+a waiver.
+
+You may not assign these Terms without our written consent. We may
+assign these Terms to an affiliate or in connection with a merger,
+reorganization, financing, or sale of all or substantially all of the
+assets or business associated with the Service.
+
+We will not be liable for a failure or delay caused by circumstances
+beyond our reasonable control.
+
+Except for the Covered Parties as to Sections 9 through 11, these Terms
+do not create third-party beneficiary rights.
 
 ## 16. Contact
 
-Questions about these Terms: contact@blake-dev.net
+Questions or legal notices concerning these Terms:
+contact@blake-dev.net

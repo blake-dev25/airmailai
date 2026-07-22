@@ -3,6 +3,7 @@ CLAUDE.md
 *.txt
 !packages/airmailai_web/static/legal/third-party-licenses.txt
 !packages/airmailai_ext/public/third-party-licenses.txt
+!packages/airmailai_web/static/robots.txt
 collab/
 
 # dependencies

@@ -1,198 +1,257 @@
 # Privacy Policy
 
-**Last updated:** July 1, 2026
+**Last updated:** July 20, 2026
 
 ## The short version
 
-AirmailAI is a browser-based client for third-party Large Language Model
-(LLM) APIs. You bring your own API keys, and the app lets you chat with
-the providers you choose.
+AirmailAI is a browser-based client for third-party artificial
+intelligence APIs. You supply your own API keys. AirmailAI stores those
+keys and your chats in browser storage and sends requests directly from
+the extension to the provider you select. Blake Dev LLC does not
+operate an application backend that receives your API keys, prompts,
+chat history, files, or model responses.
 
-**We do not operate a backend. We do not see your chats. We do not see
-your API keys.** Your API keys and chat history live in your browser
-storage. Your messages go from your browser - by way of the AirmailAI
-extension, which handles the HTTPS request on the browser's behalf -
-directly to the LLM provider you selected, using the API key you
-provided. No intermediate server operated by us is involved.
+This does not mean that no one processes data when you use AirmailAI.
+The provider you select receives the data needed to provide its
+features. Your browser vendor may process synchronized settings. Amazon
+CloudFront processes website request data to deliver the site. Blake
+Dev LLC also receives information you choose to send through support
+email or public project channels. This Policy explains each of those
+flows.
 
-The only personal data we touch is your IP address, which our CDN
-(Amazon CloudFront) necessarily processes in transit to route requests,
-and data which appears in aggregate analytics (country, browser, OS mix)
-that CloudFront provides. We do not enable or retain per-request CDN
-logs. Details below.
+## Who we are and the scope of this Policy
 
-## Who we are
-
-AirmailAI is currently an independent project. If operations are
-transferred to a legal entity (LLC) in the future, this policy will be
-updated to reflect that, including any applicable governing law.
+AirmailAI is operated by Blake Dev LLC. This Policy applies to the
+AirmailAI website, browser extension, and support communications.
 
 Contact: contact@blake-dev.net
 
-## What we collect
+Third-party AI providers, browser vendors, extension stores, GitHub,
+and other third-party services have their own privacy policies. Their
+processing is not governed by this Policy.
 
-### What we don't collect
+## Data stored in your browser
 
-We do not collect, store, sell, or share any chat content, prompts,
-completions, API keys, or usage analytics on any server that we control.
-We do not run a backend that sees your traffic to LLM providers.
-
-### CloudFront
-
-The website is served via Amazon CloudFront, a content delivery network.
-We do not enable CloudFront access logging or real-time logs, so no
-per-request records (IP address, user agent, URL, etc.) are retained by
-us.
-
-CloudFront does process your IP address in transit in order to route
-requests, as any CDN or web server necessarily does. CloudFront also
-provides us with aggregate analytics in its console - for example, the
-mix of browsers, operating systems, and countries across all visitors -
-retained for a rolling 60 days. These reports are aggregate viewer
-reports, not per-request logging. They do not contain per-request data
-or identify individual users.
-
-Under GDPR, an IP address is considered personal data, so although our
-processing is minimal, we want to be specific about it:
-
-- **Legal basis (GDPR Art. 6(1)(f)):** legitimate interest in delivering
-  the site and defending it against abuse.
-- **International transfers:** CloudFront operates a global edge
-  network, so requests may be processed in regions outside your own.
-  AWS relies on Standard Contractual Clauses for transfers out of the
-  EEA/UK.
-- **Use:** the aggregate analytics are never used to build user
-  profiles, for tracking, or for advertising. We do not correlate them
-  with any other identifier, because we hold no other identifier.
-- **No automated decision-making:** we do not subject you to any
-  automated decision-making or profiling under GDPR Art. 22.
-
-### Chrome extension permissions
-
-The AirmailAI browser extension requests only the permissions required
-to function. These are declared in the extension's manifest and visible
-at install time. The extension does not transmit data to any server
-operated by us.
-
-## What lives in your browser
-
-The following user data lives only in your own browser storage and is
-not sent to any server operated by us:
+The following data is stored in your browser rather than on an
+application server operated by Blake Dev LLC:
 
 | Data | Storage location |
 |---|---|
-| API keys | `chrome.storage.local` for use by the extension |
-| Chat history, attachments, system prompts, and token counts | IndexedDB (local to each browser profile) |
-| Theme, model, and UI preferences | `chrome.storage.sync` |
-| Theme, message-font, and branding-visibility preferences (paint-time cache, so the correct appearance renders before the extension finishes loading) | Website `localStorage` (keys: `airmailai-theme`, `airmailai-message-font`, `airmailai-show-branding`) - kept in sync with, and overwritten by, the canonical values from `chrome.storage.sync` |
+| API keys | `chrome.storage.local` |
+| Chat history, attachments, system prompts, token counts, and provider file or container identifiers | IndexedDB |
+| Provider, model, appearance, feature, and other settings, including the accepted legal-document version | `chrome.storage.sync` |
+| Downloaded provider model-catalog data | Browser storage |
+| Theme, message-font, and branding-visibility preference caches | Website `localStorage` under `airmailai-theme`, `airmailai-message-font`, and `airmailai-show-branding` |
 
-You can delete any of this at any time by uninstalling the extension or
-clearing the extension's storage through your browser.
+API keys are stored in local, non-synchronized extension storage.
+Information in `chrome.storage.sync` may be synchronized through your
+browser account when browser sync is enabled. That synchronization is
+operated by your browser vendor under its own privacy policy. Blake Dev
+LLC does not receive synchronized data through AirmailAI.
 
-**Note on browser sync:** data placed in `chrome.storage.sync` may be
-synchronized by your browser account across browsers where you are
-signed in and have sync enabled. The sync provider depends on your
-browser and account setup. Browser sync is provided by your browser
-vendor and governed by its privacy policy. We do not receive or see
-this data.
+## Data sent to AI and feature providers
 
-## Third-party LLM providers
+When you use AirmailAI, the extension sends data directly to the
+third-party provider you select. Depending on the provider, model,
+settings, and features you use, that data may include:
 
-Some third-party providers offer model catalogs. After you add an API
-key for a provider with a model catalog, AirmailAI may use that key to
-download the provider's catalog directly from the provider and cache it
-in your browser.
+- Your API key
+- Prompts, system prompts, and relevant conversation history
+- Files, images, file metadata, and provider file or container
+  identifiers
+- Tool definitions, tool inputs and results, search queries, and URLs
+- Model responses and other information needed to continue a
+  conversation or feature
 
-When you send a message, it is transmitted from your browser to the LLM
-provider whose API key you configured. That provider receives your
-messages and returns responses. Each provider has its own privacy
-practices, which apply to the content you send them. We encourage you to
-review the policy of each provider whose API you use through AirmailAI.
-We do not act as an intermediary, processor, or controller of this
-content.
+The provider processes this data under the agreement and privacy terms
+associated with your account and API key. Providers may retain
+requests, responses, files, or other data, use subprocessors, or
+process data in other countries. Their practices vary by service,
+account type, configuration, and feature.
 
-## Cookies and tracking
+Some provider features can store uploaded files or create code
+execution containers on provider systems. Deleting a local chat,
+clearing AirmailAI's browser storage, or uninstalling the extension
+does not necessarily delete those provider-side copies. When a
+provider offers deletion controls, delete provider-side data before
+removing the API key AirmailAI would need to request that deletion.
 
-We do not use cookies, with one exception: three `localStorage` keys
-(`airmailai-theme`, `airmailai-message-font`, and
-`airmailai-show-branding`) that the website stores in your browser to
-render the correct appearance before the extension finishes loading.
-These are functional preference caches, not tracking mechanisms. We do
-not use client-side web analytics, tracking pixels, fingerprinting, or
-advertising identifiers. We do not enable per-request CDN access logs
-or real-time logs. The only CDN metrics we receive are the aggregate
-CloudFront viewer reports described above.
+If you use OpenRouter, OpenRouter may route a request to a downstream
+model operator and may use other partners for features such as file
+parsing, web search, or URL retrieval. The privacy and retention
+practices of the services involved in that route apply in addition to
+OpenRouter's terms and settings.
+
+Blake Dev LLC has no way to receive the content described in this
+section through the Service itself. The only way we can receive it is
+if you choose to send it to us yourself, for example by email.
+
+## Website delivery through Amazon CloudFront
+
+The AirmailAI website is delivered through Amazon CloudFront. To serve
+and secure a request, CloudFront necessarily processes request metadata
+such as an IP address, timestamp, requested path, user agent, and
+approximate geographic information derived from the request.
+
+Blake Dev LLC does not enable CloudFront standard access logs or
+real-time logs for AirmailAI and therefore does not receive or retain
+per-request CloudFront log records through those features. CloudFront
+provides aggregate viewer reports, such as country, browser, and
+operating-system distributions, for a rolling 60-day period. Blake Dev
+LLC uses those aggregate reports only to deliver, maintain, secure, and
+understand the general operation of the site, not for advertising or
+cross-site tracking.
+
+For people in the EEA or UK, the legal basis for this processing is our
+legitimate interest in delivering, securing, and maintaining the
+Service. You may object to processing based on legitimate interests by
+contacting us. CloudFront operates a global network, so request data
+may be processed outside your country. Amazon Web Services offers
+contractual transfer safeguards, including the European Commission's
+Standard Contractual Clauses and the UK International Data Transfer
+Addendum, where applicable.
+
+Amazon Web Services acts as a service provider that processes this data
+to provide CloudFront. Its own privacy notice also applies to its
+operations.
+
+## Communications and public project channels
+
+If you contact Blake Dev LLC, we receive the information you choose to
+provide. This may include your email address, name, message, attachments,
+and ordinary message metadata. If you submit or participate in a
+GitHub issue, discussion, or other public project channel, we receive
+the account information and content displayed through that service,
+and the content may be public.
+
+We use communications data to respond to you, provide support, address
+security or legal matters, enforce our terms, and improve AirmailAI.
+For people in the EEA or UK, the legal basis is performance of or steps
+toward a contract when the communication concerns the Service, our
+legitimate interests in supporting and securing AirmailAI, or compliance
+with a legal obligation, as applicable.
+
+Our email and project-hosting providers process communications on our
+behalf or under their own terms. They may process data in countries
+other than your own. We retain communications for as long as reasonably
+needed to respond, resolve the matter, maintain security or legal
+records, enforce our agreements, and preserve any request not to be
+contacted. Public project content may remain available according to the
+hosting service's controls and policies.
+
+Please do not send sensitive information that is not needed for your
+request.
+
+## Browser vendors and extension stores
+
+Your browser vendor may process synchronized settings and information
+related to installing, updating, or using extensions. An extension
+store may provide Blake Dev LLC with aggregate listing or installation
+statistics. Those services are governed by their own terms and privacy
+policies.
+
+AirmailAI's use and transfer of information received from Chrome APIs
+complies with the Chrome Web Store User Data Policy, including the
+Limited Use requirements.
+
+## What Blake Dev LLC does not operate or use
+
+AirmailAI does not provide user accounts, payment processing,
+an application backend, client-side analytics, advertising, tracking
+pixels, or fingerprinting. Blake Dev LLC does not sell personal
+information or share personal information for cross-context behavioral
+advertising.
+
+We do not use browser cookies. The three functional website
+`localStorage` preference caches listed above are not cookies and are
+not used to track you across sites. Unlike cookies, they are never
+transmitted with network requests; they exist only in your browser.
+
+## Legal disclosures
+
+We may preserve or disclose information that Blake Dev LLC actually
+possesses if we reasonably believe doing so is necessary to comply with
+law, legal process, or a valid government request; protect the rights,
+property, or safety of users, Blake Dev LLC, or others; investigate
+fraud, abuse, or security incidents; or enforce our agreements.
+
+Because Blake Dev LLC does not receive your API keys or chat content
+through the Service, it generally cannot disclose content it does not
+possess. Third-party providers and browser vendors may separately
+receive legal demands for data they hold.
 
 ## Children
 
-AirmailAI is not intended for use by anyone under 13, or under the
-minimum age for digital consent in your jurisdiction (which, in parts of
-the EU and UK, may be as high as 16). We do not knowingly collect
-information from children.
+AirmailAI is intended only for people who are at least 18 years old. We
+do not knowingly collect personal information from anyone under 18. If
+you believe a person under 18 has provided personal information to
+Blake Dev LLC, contact us so we can review and, where appropriate,
+delete it.
 
-## Your rights
+## Your privacy rights
 
-### For everyone
+### Browser and provider data
 
-Because we do not hold personal information about you beyond the
-in-transit processing described above, there is typically nothing for us
-to export, correct, or delete on your request. Data held in your
-browser can be managed directly by you, by uninstalling the extension
-or clearing its storage.
+You directly control most AirmailAI data because it is stored in your
+browser. Use AirmailAI's "Delete all local storage" control before
+uninstalling to clear extension storage, IndexedDB, synchronized
+settings, and the website preference caches described above. You can
+also use your browser's extension and site-data controls.
 
-If you believe we hold data about you and wish to make a request,
-contact us at the email above.
+Uninstalling the extension may not remove the website's `localStorage`
+or data held by an AI provider, browser-sync service, email provider,
+or project-hosting service. Manage provider-side data through the
+provider's controls where available.
 
-### EU / UK (GDPR)
+### EEA and UK
 
-If the GDPR or UK GDPR applies to you, you have the right to:
+If EEA or UK data-protection law applies, you may have rights to request
+access, correction, deletion, restriction, or portability of personal
+data Blake Dev LLC holds, and to object to processing based on
+legitimate interests. You may also withdraw consent where consent is
+the basis for processing and lodge a complaint with your local
+supervisory authority.
 
-- Access the personal data we hold about you
-- Request rectification of inaccurate data
-- Request erasure
-- Request restriction of processing
-- Object to processing carried out under legitimate interest
-- Data portability
-- Lodge a complaint with your national supervisory authority (for
-  example, the ICO in the UK, or your country's data protection
-  authority in the EU)
+Blake Dev LLC does not use personal data it receives to make decisions
+based solely on automated processing that produce legal or similarly
+significant effects, and it does not perform profiling with that data.
 
-### California (CCPA / CPRA)
+### California
 
-If you are a California resident, you have the right to know what
-categories of personal information we collect, to request deletion, to
-request correction, and to opt out of the sale or sharing of personal
-information. The only category of personal information we process is
-**identifiers**, specifically the IP address that CloudFront handles in
-transit to serve the site, as described above. We do not retain this
-information in logs.
+To the extent California privacy law applies to Blake Dev LLC or a
+particular request, California residents may have rights to know,
+access, correct, or delete covered personal information and to receive
+information about its collection and disclosure. Blake Dev LLC does
+not sell personal information or share it for cross-context behavioral
+advertising and has not done so during the preceding 12 months. We will
+not discriminate against you for exercising an applicable privacy
+right.
 
-**We do not sell or share personal information**, and we have not done
-so in the preceding 12 months. There is accordingly no "Do Not Sell or
-Share My Personal Information" mechanism to offer, because there is
-nothing to opt out of.
-
-You will not be discriminated against for exercising any of these
-rights.
+To exercise a right that applies to information held by Blake Dev LLC,
+email contact@blake-dev.net. We may need information sufficient to
+verify the request and may retain a record of the request as required
+or permitted by law. For data held only by a third party, direct the
+request to that party.
 
 ## Security
 
-Your API keys stay in browser-managed extension storage, not on servers
-operated by us. They remain only in the browser profile where you saved
-them: keys are kept in the extension's local (non-synced) storage and
-are never included in browser sync. When you make a request, the
-relevant key is sent over HTTPS only to the provider you chose.
+AirmailAI uses browser-managed storage for local data and HTTPS for
+network requests. API keys are placed in non-synchronized extension
+storage and are sent to the provider selected for a request, not to an
+AirmailAI application backend.
 
-You should treat any API key as a sensitive credential. If you suspect
-a key has been compromised, revoke it in the provider's dashboard.
+No storage or transmission method is completely secure. Protect access
+to your browser profile and device, use provider keys with appropriate
+limits where available, and revoke a key through the provider if you
+suspect it has been exposed.
 
-## Changes
+## Changes to this Policy
 
-If this policy changes, the updated version will be published at the
-same URL with a new "Last updated" date. When we change this policy, the
-Service will ask you to review and agree to the updated Terms of Service
-and this Privacy Policy before you continue using it.
+We may update this Policy as AirmailAI, providers, or legal requirements
+change. We will post the revised Policy with a new "Last updated" date.
+When the legal-document version changes, AirmailAI will require you to
+review the updated documents before continuing to use the application.
 
 ## Contact
 
-Questions about this policy: contact@blake-dev.net
+For privacy questions or requests, email contact@blake-dev.net.

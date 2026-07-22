@@ -1033,6 +1033,21 @@
                     class="inline-flex items-center gap-0.5 text-accent-fg no-underline hover:underline"
                     >open source software<Icon name="external-link" /></a
                 >.
+                <a
+                    href="/legal/terms.md"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="inline-flex items-center gap-0.5 text-accent-fg no-underline hover:underline"
+                    >Terms of Service</a
+                >
+                /
+                <a
+                    href="/legal/privacy.md"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="inline-flex items-center gap-0.5 text-accent-fg no-underline hover:underline"
+                    >Privacy Policy</a
+                >
             </p>
         </div>
 
