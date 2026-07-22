@@ -15,10 +15,60 @@ import {
     ANTHROPIC_OVERRIDES,
     ANTHROPIC_TOOLS_LATEST,
     applyOverride,
+    staleOverrideIds,
 } from './overrides';
 
 const ANTHROPIC_MODELS_OVERVIEW_URL =
     'https://platform.claude.com/docs/en/about-claude/models/overview.md';
+const ANTHROPIC_TOOL_REFERENCE_URL =
+    'https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference.md';
+
+export function parseAnthropicToolVersions(md: string): Map<string, string> {
+    const newest = new Map<string, string>();
+    for (const m of md.matchAll(
+        /\b(web_search|web_fetch|code_execution)_(\d{8})\b/g
+    )) {
+        const [, family, date] = m;
+        const current = newest.get(family);
+        if (!current || date > current) newest.set(family, date);
+    }
+    return newest;
+}
+
+async function checkAnthropicToolVersions(): Promise<void> {
+    console.log('scraping tool reference for current tool versions');
+    try {
+        const res = await fetch(ANTHROPIC_TOOL_REFERENCE_URL);
+        if (!res.ok) {
+            console.log(`⚠ tool reference scrape failed (HTTP ${res.status})`);
+            return;
+        }
+        const newest = parseAnthropicToolVersions(await res.text());
+        if (newest.size === 0) {
+            console.log(
+                '⚠ tool reference parsed to 0 tool versions - page layout may have changed'
+            );
+            return;
+        }
+        const pins: Array<[string, string | boolean | undefined]> = [
+            ['web_search', ANTHROPIC_TOOLS_LATEST.webSearch],
+            ['web_fetch', ANTHROPIC_TOOLS_LATEST.webFetch],
+            ['code_execution', ANTHROPIC_TOOLS_LATEST.codeExecution],
+        ];
+        for (const [family, pinned] of pins) {
+            const date = newest.get(family);
+            if (!date || typeof pinned !== 'string') continue;
+            const candidate = `${family}_${date}`;
+            if (pinned !== candidate) {
+                console.log(
+                    `⚠ ANTHROPIC_TOOLS_LATEST pins ${pinned} but ${candidate} exists - review and bump`
+                );
+            }
+        }
+    } catch (e) {
+        console.log(`⚠ tool reference scrape failed: ${(e as Error).message}`);
+    }
+}
 
 // *** The overview page is served as markdown directly - no turndown pass
 // like the OpenAI/Google scrapers (turndown would mangle the pipe tables).
@@ -90,6 +140,7 @@ export async function fetchAnthropic(): Promise<DerivedModel[]> {
     if (!key) throw new Error('ANTHROPIC_API_KEY missing from .env');
     const client = new Anthropic({ apiKey: key });
 
+    await checkAnthropicToolVersions();
     const cutoffs = await fetchAnthropicCutoffs();
     const out: DerivedModel[] = [];
     for await (const m of client.models.list({ limit: 1000 })) {
@@ -222,5 +273,10 @@ export function printAnthropicWarnings(models: DerivedModel[]): void {
     printIdList(
         `${missing.length} model(s) missing knowledgeCutoff - add to OVERRIDES if desired:`,
         missing
+    );
+    const stale = staleOverrideIds(ANTHROPIC_OVERRIDES, models);
+    printIdList(
+        `${stale.length} stale ANTHROPIC_OVERRIDES entry/entries - model not in current list, consider removing:`,
+        stale
     );
 }

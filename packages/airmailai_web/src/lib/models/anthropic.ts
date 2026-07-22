@@ -21,9 +21,9 @@ export const ANTHROPIC: ProviderOption = {
                 },
             },
             tools: {
-                webSearch: 'web_search_20260209',
-                webFetch: 'web_fetch_20260209',
-                codeExecution: 'code_execution_20260120',
+                webSearch: 'web_search_20260318',
+                webFetch: 'web_fetch_20260318',
+                codeExecution: 'code_execution_20260521',
             },
         },
         {
@@ -41,9 +41,9 @@ export const ANTHROPIC: ProviderOption = {
                 },
             },
             tools: {
-                webSearch: 'web_search_20260209',
-                webFetch: 'web_fetch_20260209',
-                codeExecution: 'code_execution_20260120',
+                webSearch: 'web_search_20260318',
+                webFetch: 'web_fetch_20260318',
+                codeExecution: 'code_execution_20260521',
             },
         },
         {
@@ -61,9 +61,9 @@ export const ANTHROPIC: ProviderOption = {
                 },
             },
             tools: {
-                webSearch: 'web_search_20260209',
-                webFetch: 'web_fetch_20260209',
-                codeExecution: 'code_execution_20260120',
+                webSearch: 'web_search_20260318',
+                webFetch: 'web_fetch_20260318',
+                codeExecution: 'code_execution_20260521',
             },
         },
         {
@@ -81,9 +81,9 @@ export const ANTHROPIC: ProviderOption = {
                 },
             },
             tools: {
-                webSearch: 'web_search_20260209',
-                webFetch: 'web_fetch_20260209',
-                codeExecution: 'code_execution_20260120',
+                webSearch: 'web_search_20260318',
+                webFetch: 'web_fetch_20260318',
+                codeExecution: 'code_execution_20260521',
             },
         },
         {
@@ -103,9 +103,9 @@ export const ANTHROPIC: ProviderOption = {
                 },
             },
             tools: {
-                webSearch: 'web_search_20260209',
-                webFetch: 'web_fetch_20260209',
-                codeExecution: 'code_execution_20260120',
+                webSearch: 'web_search_20260318',
+                webFetch: 'web_fetch_20260318',
+                codeExecution: 'code_execution_20260521',
             },
         },
         {
@@ -125,9 +125,9 @@ export const ANTHROPIC: ProviderOption = {
                 },
             },
             tools: {
-                webSearch: 'web_search_20260209',
-                webFetch: 'web_fetch_20260209',
-                codeExecution: 'code_execution_20260120',
+                webSearch: 'web_search_20260318',
+                webFetch: 'web_fetch_20260318',
+                codeExecution: 'code_execution_20260521',
             },
         },
         {
@@ -148,7 +148,7 @@ export const ANTHROPIC: ProviderOption = {
             tools: {
                 webSearch: 'web_search_20250305',
                 webFetch: 'web_fetch_20250910',
-                codeExecution: 'code_execution_20260120',
+                codeExecution: 'code_execution_20260521',
             },
         },
         {
@@ -190,7 +190,7 @@ export const ANTHROPIC: ProviderOption = {
             tools: {
                 webSearch: 'web_search_20250305',
                 webFetch: 'web_fetch_20250910',
-                codeExecution: 'code_execution_20260120',
+                codeExecution: 'code_execution_20260521',
             },
         },
         {

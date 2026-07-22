@@ -142,6 +142,10 @@ body > .stripe-band:last-child {
     fill: currentColor;
 }
 
+.mobile-only {
+    display: none;
+}
+
 @media (max-width: 620px) {
     .nav {
         grid-template-columns: 1fr auto;
@@ -149,6 +153,18 @@ body > .stripe-band:last-child {
 
     .nav-links {
         display: none;
+    }
+
+    .desktop-only {
+        display: none;
+    }
+
+    .btn.desktop-only {
+        display: none;
+    }
+
+    .mobile-only {
+        display: block;
     }
 }
 

@@ -29,6 +29,18 @@ export interface ModelOverride {
     tools?: ModelTools;
 }
 
+export function staleOverrideIds(
+    overrides: Record<string, ModelOverride>,
+    models: DerivedModel[]
+): string[] {
+    const ids = new Set(models.map((m) => m.id));
+    return Object.entries(overrides)
+        .filter(
+            ([key, o]) => !ids.has(key) && !(o.idAlias && ids.has(o.idAlias))
+        )
+        .map(([key]) => key);
+}
+
 export function applyOverride(m: DerivedModel, o: ModelOverride): void {
     if (o.idAlias) m.id = o.idAlias;
     if (o.name !== undefined) m.name = o.name;
@@ -63,14 +75,14 @@ export function applyOverride(m: DerivedModel, o: ModelOverride): void {
 // variants because they don't support programmatic tool calling - we pin
 // them to the direct-only legacy versions below.
 export const ANTHROPIC_TOOLS_LATEST: ModelTools = {
-    webSearch: 'web_search_20260209',
-    webFetch: 'web_fetch_20260209',
-    codeExecution: 'code_execution_20260120',
+    webSearch: 'web_search_20260318',
+    webFetch: 'web_fetch_20260318',
+    codeExecution: 'code_execution_20260521',
 };
 const ANTHROPIC_TOOLS_4_5: ModelTools = {
     webSearch: 'web_search_20250305',
     webFetch: 'web_fetch_20250910',
-    codeExecution: 'code_execution_20260120',
+    codeExecution: 'code_execution_20260521',
 };
 const ANTHROPIC_TOOLS_LEGACY: ModelTools = {
     webSearch: 'web_search_20250305',
@@ -103,8 +115,6 @@ export const ANTHROPIC_OVERRIDES: Record<string, ModelOverride> = {
         tools: ANTHROPIC_TOOLS_LEGACY,
     },
     'claude-opus-4-1-20250805': { tools: ANTHROPIC_TOOLS_LEGACY },
-    'claude-opus-4-20250514': { tools: ANTHROPIC_TOOLS_LEGACY },
-    'claude-sonnet-4-20250514': { tools: ANTHROPIC_TOOLS_LEGACY },
 };
 
 // *** OpenAI's own /models endpoint is barebones, but OpenRouter fills most of the
@@ -140,15 +150,17 @@ export const OPENAI_OVERRIDES: Record<string, ModelOverride> = {
     'o4-mini-deep-research': { thinking: O_SERIES_THINKING },
 };
 
-// *** Google's API gives token limits and temperature. OpenRouter helps identify
-// reasoning-capable models, but it does not enumerate Google's thinking levels,
-// so the level/default choices live here, sourced from
-// https://ai.google.dev/gemini-api/docs/thinking:
+// *** Google's API gives token limits and temperature. Thinking levels come
+// from the model table scraped off
+// https://ai.google.dev/gemini-api/docs/thinking; overrides remain only where
+// that table falls short:
 // - 2.5 models take thinkingBudget; 0 disables (except Pro, which can't
-//   disable), -1 is dynamic (the API default for Pro and Flash) - exposed as
-//   adaptive: 'optional'.
-// - Gemini 3+ models take thinkingLevel (minimal/low/medium/high, model
-//   dependent) and cannot disable thinking, so no 'none' level.
+//   disable), -1 is dynamic (the API default for Pro and Flash). The table
+//   doesn't express the budget-derived 'max' level or adaptive: 'optional',
+//   so the 2.5 trio stays pinned here.
+// - Models absent from the table (currently gemini-3.1-flash-lite and its
+//   preview) keep hand-sourced levels. Gemini 3+ models cannot disable
+//   thinking, so no 'none' level.
 export const GOOGLE_OVERRIDES: Record<string, ModelOverride> = {
     'gemini-2.5-pro': {
         thinking: {
@@ -171,24 +183,6 @@ export const GOOGLE_OVERRIDES: Record<string, ModelOverride> = {
             adaptive: 'optional',
         },
     },
-    'gemini-3-pro-preview': {
-        thinking: {
-            levels: ['low', 'high'],
-            defaultLevel: 'high',
-        },
-    },
-    'gemini-3-flash-preview': {
-        thinking: {
-            levels: ['minimal', 'low', 'medium', 'high'],
-            defaultLevel: 'high',
-        },
-    },
-    'gemini-3.1-pro-preview': {
-        thinking: {
-            levels: ['low', 'medium', 'high'],
-            defaultLevel: 'high',
-        },
-    },
     'gemini-3.1-flash-lite-preview': {
         thinking: {
             levels: ['minimal', 'low', 'medium', 'high'],
@@ -199,12 +193,6 @@ export const GOOGLE_OVERRIDES: Record<string, ModelOverride> = {
         thinking: {
             levels: ['minimal', 'low', 'medium', 'high'],
             defaultLevel: 'minimal',
-        },
-    },
-    'gemini-3.5-flash': {
-        thinking: {
-            levels: ['minimal', 'low', 'medium', 'high'],
-            defaultLevel: 'medium',
         },
     },
 };

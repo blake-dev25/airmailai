@@ -175,6 +175,22 @@ export function printIdList(header: string, ids: string[]): void {
     for (const id of ids) console.log(`   - ${id}`);
 }
 
+export function tsString(value: string): string {
+    const inner = JSON.stringify(value)
+        .slice(1, -1)
+        .replace(/\\"/g, '"')
+        .replace(/'/g, "\\'");
+    return `'${inner}'`;
+}
+
+const SAFE_MODEL_ID = /^[A-Za-z0-9._:/~-]+$/;
+
+export function assertSafeModelId(id: string): void {
+    if (!SAFE_MODEL_ID.test(id)) {
+        throw new Error(`Rejecting unsafe model id: ${JSON.stringify(id)}`);
+    }
+}
+
 export function emitProviderFile(
     providerId: string,
     providerName: string,
@@ -185,8 +201,8 @@ export function emitProviderFile(
 // NOTE FOR LLMS: NEVER MANUALLY MODIFY IDS/NAMES, THEY ARE CORRECT
 // This file is automatically written over by scripts/update-model-list.ts, edits will not be saved
 export const ${providerId.toUpperCase()}: ProviderOption = {
-    id: '${providerId}',
-    name: '${providerName}',
+    id: ${tsString(providerId)},
+    name: ${tsString(providerName)},
     models: [
 `;
     const body = models.map(emitModelEntry).join('');
@@ -197,13 +213,14 @@ export const ${providerId.toUpperCase()}: ProviderOption = {
 }
 
 function emitModelEntry(m: DerivedModel): string {
+    assertSafeModelId(m.id);
     const maxOutputTokens = m.maxOutputTokens ?? 0;
     const defaultMaxTokens =
         maxOutputTokens > 0 ? Math.min(8192, maxOutputTokens) : 8192;
     const lines: string[] = [];
     lines.push('        {');
-    lines.push(`            id: '${m.id}',`);
-    lines.push(`            name: '${m.name.replace(/'/g, "\\'")}',`);
+    lines.push(`            id: ${tsString(m.id)},`);
+    lines.push(`            name: ${tsString(m.name)},`);
     lines.push('            params: {');
     lines.push(`                contextWindow: ${m.contextWindow ?? 0},`);
     lines.push(`                maxOutputTokens: ${maxOutputTokens},`);
@@ -215,18 +232,20 @@ function emitModelEntry(m: DerivedModel): string {
         );
     }
     if (m.knowledgeCutoff) {
-        lines.push(`                knowledgeCutoff: '${m.knowledgeCutoff}',`);
+        lines.push(
+            `                knowledgeCutoff: ${tsString(m.knowledgeCutoff)},`
+        );
     }
     if (m.thinking) {
         lines.push('                thinking: {');
-        const lv = m.thinking.levels.map((l) => `'${l}'`).join(', ');
+        const lv = m.thinking.levels.map(tsString).join(', ');
         lines.push(`                    levels: [${lv}],`);
         lines.push(
-            `                    defaultLevel: '${m.thinking.defaultLevel}',`
+            `                    defaultLevel: ${tsString(m.thinking.defaultLevel)},`
         );
         if (m.thinking.adaptive) {
             lines.push(
-                `                    adaptive: '${m.thinking.adaptive}',`
+                `                    adaptive: ${tsString(m.thinking.adaptive)},`
             );
         }
         lines.push('                },');
@@ -234,7 +253,7 @@ function emitModelEntry(m: DerivedModel): string {
     lines.push('            },');
     if (m.tools) {
         const formatToolValue = (v: boolean | string): string =>
-            typeof v === 'string' ? `'${v}'` : String(v);
+            typeof v === 'string' ? tsString(v) : String(v);
         lines.push('            tools: {');
         if (m.tools.webSearch !== undefined) {
             lines.push(
@@ -404,7 +423,8 @@ export async function fetchOpenRouterIndex(): Promise<OpenRouterIndex> {
 
     for (const raw of json.data ?? []) {
         if (!raw.id || !raw.name) continue;
-        const [provider, ...rest] = raw.id.split('/');
+        const [rawProvider, ...rest] = raw.id.split('/');
+        const provider = rawProvider?.replace(/^~/, '');
         const localId = rest.join('/');
         if (!provider || !localId) continue;
         const info: OpenRouterModelInfo = {

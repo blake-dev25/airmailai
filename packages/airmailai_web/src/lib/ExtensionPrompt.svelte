@@ -65,8 +65,9 @@
         </p>
     {:else}
         <p class="m-0 text-sm leading-normal text-fg-muted">
-            AirmailAI requires a desktop browser extension, so it isn't
-            available on mobile. Please visit on desktop.
+            AirmailAI requires a desktop Chromium-based browser and the
+            AirmailAI extension, so it isn't available on mobile. Please visit
+            on desktop.
         </p>
     {/if}
 </div>

@@ -52,6 +52,7 @@ import {
     emitProviderFile,
     fetchOpenRouterIndex,
     loadSnapshot,
+    printIdList,
     runScrapeTest,
     writeSnapshot,
 } from './update-model-list/shared';
@@ -62,6 +63,7 @@ import {
     OPENAI_OVERRIDES,
     type ModelOverride,
     applyOverride,
+    staleOverrideIds,
 } from './update-model-list/overrides';
 import { updateTiersFile } from './update-model-list/tiers';
 
@@ -80,11 +82,9 @@ function reapplyOverrides(provider: string, models: DerivedModel[]): void {
         if (entry.idAlias) byAliasOrId.set(entry.idAlias, entry);
     }
     for (const m of models) {
+        if (provider === 'anthropic') m.tools = ANTHROPIC_TOOLS_LATEST;
         const o = byAliasOrId.get(m.id);
         if (o) applyOverride(m, o);
-        if (provider === 'anthropic' && !m.tools) {
-            m.tools = ANTHROPIC_TOOLS_LATEST;
-        }
     }
 }
 
@@ -145,6 +145,11 @@ async function writeFromFiles(paths: string[]): Promise<void> {
 
     for (const { provider, providerName, models } of loaded) {
         reapplyOverrides(provider, models);
+        const stale = staleOverrideIds(overridesForProvider(provider), models);
+        printIdList(
+            `${stale.length} stale ${provider} override entry/entries - model not in current list, consider removing:`,
+            stale
+        );
         const content = emitProviderFile(provider, providerName, models);
         const path = resolve(MODELS_DIR, `${provider}.ts`);
         await Bun.write(path, content);

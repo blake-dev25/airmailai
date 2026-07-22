@@ -20,7 +20,7 @@ import {
     stripProviderName,
     supportsOpenRouterParam,
 } from './shared';
-import { OPENAI_OVERRIDES } from './overrides';
+import { OPENAI_OVERRIDES, staleOverrideIds } from './overrides';
 
 interface OpenAIRaw {
     id: string;
@@ -123,6 +123,98 @@ export async function scrapeOpenAIDocsRaw(id: string) {
     return scrapeDocsRaw(
         `https://developers.openai.com/api/docs/models/${slug}`
     );
+}
+
+const OPENAI_MODELS_INDEX_URL = 'https://developers.openai.com/api/docs/models';
+
+const LEVEL_TOKENS_LONGEST_FIRST: ThinkingLevel[] = [
+    'minimal',
+    'medium',
+    'xhigh',
+    'none',
+    'high',
+    'max',
+    'low',
+];
+
+function tokenizeConcatenatedLevels(raw: string): ThinkingLevel[] | null {
+    const levels: ThinkingLevel[] = [];
+    let i = 0;
+    while (i < raw.length) {
+        const token = LEVEL_TOKENS_LONGEST_FIRST.find((t) =>
+            raw.startsWith(t, i)
+        );
+        if (!token) return null;
+        levels.push(token);
+        i += token.length;
+    }
+    return levels.length >= 2 ? levels : null;
+}
+
+export function parseOpenAIModelsIndex(
+    md: string
+): Map<string, ThinkingLevel[]> {
+    const levelsById = new Map<string, ThinkingLevel[]>();
+    let currentId: string | null = null;
+    let awaitingId = false;
+    let awaitingLevels = false;
+    for (const rawLine of md.split('\n')) {
+        const line = rawLine.trim();
+        if (line === '') continue;
+        if (line === 'Model ID') {
+            awaitingId = true;
+            awaitingLevels = false;
+            continue;
+        }
+        if (awaitingId) {
+            currentId = line;
+            awaitingId = false;
+            continue;
+        }
+        if (/^\[Reasoning\]\(/.test(line)) {
+            awaitingLevels = true;
+            continue;
+        }
+        if (awaitingLevels) {
+            awaitingLevels = false;
+            if (!currentId) continue;
+            const levels = tokenizeConcatenatedLevels(line);
+            if (levels) levelsById.set(currentId, levels);
+        }
+    }
+    return levelsById;
+}
+
+async function applyOpenAIIndexLevels(models: DerivedModel[]): Promise<void> {
+    console.log('scraping OpenAI models index for reasoning levels');
+    const { status, markdown } = await scrapeDocsRaw(OPENAI_MODELS_INDEX_URL);
+    if (!markdown) {
+        console.log(`⚠ models index scrape failed (HTTP ${status})`);
+        return;
+    }
+    const levelsById = parseOpenAIModelsIndex(markdown);
+    if (levelsById.size === 0) {
+        console.log(
+            '⚠ models index parsed to 0 reasoning entries - page layout may have changed'
+        );
+        return;
+    }
+    console.log(`got ${levelsById.size} reasoning entries from models index`);
+    for (const model of models) {
+        if (model.thinkingPinned) continue;
+        if (!model.notes.some((n) => n.includes('reasoning supported'))) {
+            continue;
+        }
+        const levels = levelsById.get(model.id);
+        if (!levels) continue;
+        model.thinking = {
+            levels: sortLevels(levels),
+            defaultLevel: levels.includes('none') ? 'none' : levels[0],
+        };
+        model.notes = model.notes.filter(
+            (n) => !n.includes('reasoning supported')
+        );
+    }
 }
 
 interface ScrapedOpenAI {
@@ -420,6 +512,7 @@ export async function pipelineOpenAI(
     }
 
     await applyOpenAIDocFallback(models);
+    await applyOpenAIIndexLevels(models);
     const fallbackThinkingIds = new Set<string>();
     for (const model of models) {
         if (model.notes.some((n) => n.includes('reasoning supported'))) {
@@ -476,5 +569,10 @@ export function printOpenAIWarnings(r: OpenAIPipelineResult): void {
     printIdList(
         `${r.missingCutoff.length} model(s) missing knowledgeCutoff - add to OPENAI_OVERRIDES if desired:`,
         r.missingCutoff
+    );
+    const stale = staleOverrideIds(OPENAI_OVERRIDES, r.models);
+    printIdList(
+        `${stale.length} stale OPENAI_OVERRIDES entry/entries - model not in current list, consider removing:`,
+        stale
     );
 }

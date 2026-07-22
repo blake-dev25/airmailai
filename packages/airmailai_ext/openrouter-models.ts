@@ -3,7 +3,7 @@ import { log } from './debug';
 
 const FRESH_MS = 24 * 60 * 60 * 1000;
 const ERROR_COOLDOWN_MS = 5 * 60 * 1000;
-export const CACHE_VERSION = 3;
+export const CACHE_VERSION = 4;
 
 export const CACHE_KEY = 'openrouter_models_cache';
 const URL = 'https://openrouter.ai/api/v1/models/user';
@@ -36,8 +36,8 @@ const PARAMS_OF_INTEREST = new Set([
 function slim(raw: RawModel): OpenRouterModel | null {
     if (!raw.id || !raw.name) return null;
     const ctx = raw.top_provider?.context_length ?? raw.context_length ?? 0;
-    const out = raw.top_provider?.max_completion_tokens ?? 0;
-    if (!ctx || !out) return null;
+    if (!ctx) return null;
+    const out = raw.top_provider?.max_completion_tokens || ctx;
     const vendor = raw.id.split('/')[0] ?? 'unknown';
     return {
         id: raw.id,

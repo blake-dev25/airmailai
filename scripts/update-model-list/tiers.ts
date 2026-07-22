@@ -1,3 +1,5 @@
+import { assertSafeModelId, tsString } from './shared';
+
 export function updateTiersFile(
     text: string,
     sectionComment: string,
@@ -7,6 +9,7 @@ export function updateTiersFile(
     newIds: string[];
     staleEntries: Array<{ id: string; tier: string }>;
 } {
+    for (const id of derivedIds) assertSafeModelId(id);
     const lines = text.split('\n');
     const sectionIdx = lines.findIndex((l) => l.trim() === sectionComment);
     if (sectionIdx === -1) {
@@ -46,7 +49,9 @@ export function updateTiersFile(
     combined.sort((a, b) =>
         a.id.localeCompare(b.id, undefined, { numeric: true })
     );
-    const sortedLines = combined.map((e) => `    '${e.id}': '${e.tier}',`);
+    const sortedLines = combined.map(
+        (e) => `    ${tsString(e.id)}: ${tsString(e.tier)},`
+    );
 
     const updated = [
         ...lines.slice(0, sectionIdx + 1),

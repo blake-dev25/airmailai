@@ -4,6 +4,7 @@ import {
     type DerivedThinking,
     type ModelProbeResult,
     type OpenRouterIndex,
+    type ThinkingLevel,
     MODEL_PROBE_DELAY_MS,
     WEBPAGE_SCRAPE_DELAY_MS,
     fallbackReasoningThinking,
@@ -18,7 +19,7 @@ import {
     stripProviderName,
     supportsOpenRouterParam,
 } from './shared';
-import { GOOGLE_OVERRIDES } from './overrides';
+import { GOOGLE_OVERRIDES, staleOverrideIds } from './overrides';
 
 async function probeGoogleModel(
     client: GoogleGenAI,
@@ -90,10 +91,92 @@ export function parseGoogleDoc(id: string, md: string): ScrapedGoogle {
     return { id, hasTextOutput, thinkingSupported, knowledgeCutoff };
 }
 
+const GOOGLE_THINKING_DOCS_URL =
+    'https://ai.google.dev/gemini-api/docs/thinking';
+
+const GOOGLE_LEVELS = new Set<string>([
+    'none',
+    'minimal',
+    'low',
+    'medium',
+    'high',
+    'max',
+]);
+
+export function parseGoogleThinkingLevels(
+    md: string
+): Map<string, DerivedThinking> {
+    const table = new Map<string, DerivedThinking>();
+    const lines = md
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l !== '');
+    const header = lines.findIndex(
+        (l, i) =>
+            l === 'Model' &&
+            lines[i + 1] === 'Default Thinking' &&
+            lines[i + 2] === 'Levels Supported'
+    );
+    if (header === -1) return table;
+    for (let i = header + 3; i + 2 < lines.length; i += 3) {
+        const id = lines[i];
+        if (!/^[a-z0-9][a-z0-9.-]*$/.test(id)) break;
+        const defMatch = lines[i + 1].match(/^O(n|ff)(?: \(([a-z]+)\))?$/);
+        if (!defMatch) break;
+        const rawLevels = lines[i + 2].split(',').map((s) => s.trim());
+        if (!rawLevels.every((l) => GOOGLE_LEVELS.has(l))) break;
+        const levels = sortLevels(rawLevels as ThinkingLevel[]);
+        const isOff = defMatch[1] === 'ff';
+        const stated = defMatch[2] as ThinkingLevel | undefined;
+        if (isOff) {
+            table.set(id, {
+                levels: sortLevels(['none', ...levels]),
+                defaultLevel: 'none',
+            });
+        } else if (stated && levels.includes(stated)) {
+            table.set(id, { levels, defaultLevel: stated });
+        } else if (!stated) {
+            table.set(id, {
+                levels,
+                defaultLevel: levels.includes('medium') ? 'medium' : levels[0],
+            });
+        }
+    }
+    return table;
+}
+
+async function fetchGoogleThinkingTable(): Promise<
+    Map<string, DerivedThinking>
+> {
+    console.log('scraping Gemini thinking docs for levels');
+    try {
+        const { status, markdown } = await scrapeDocsRaw(
+            GOOGLE_THINKING_DOCS_URL
+        );
+        if (!markdown) {
+            console.log(`⚠ thinking docs scrape failed (HTTP ${status})`);
+            return new Map();
+        }
+        const table = parseGoogleThinkingLevels(markdown);
+        if (table.size === 0) {
+            console.log(
+                '⚠ thinking docs parsed to 0 rows - page layout may have changed'
+            );
+        } else {
+            console.log(`got ${table.size} thinking level rows from docs`);
+        }
+        return table;
+    } catch (e) {
+        console.log(`⚠ thinking docs scrape failed: ${(e as Error).message}`);
+        return new Map();
+    }
+}
+
 function deriveGoogle(
     m: GoogleModel,
     openrouter: OpenRouterIndex,
-    scraped: ScrapedGoogle
+    scraped: ScrapedGoogle,
+    thinkingTable: Map<string, DerivedThinking>
 ): DerivedModel {
     const id = googleModelId(m);
     const o = GOOGLE_OVERRIDES[id];
@@ -102,12 +185,15 @@ function deriveGoogle(
     const raw = m as unknown as Record<string, unknown>;
 
     let thinking: DerivedThinking | undefined;
+    const fromDocs = thinkingTable.get(id);
     if (o?.thinking) {
         thinking = {
             levels: sortLevels(o.thinking.levels),
             defaultLevel: o.thinking.defaultLevel,
             ...(o.thinking.adaptive ? { adaptive: o.thinking.adaptive } : {}),
         };
+    } else if (fromDocs) {
+        thinking = fromDocs;
     } else if (
         scraped.thinkingSupported ||
         supportsOpenRouterParam(info, 'reasoning')
@@ -183,6 +269,7 @@ export async function pipelineGoogle(
     const raw: GoogleModel[] = [];
     for await (const m of await client.models.list()) raw.push(m);
 
+    const thinkingTable = await fetchGoogleThinkingTable();
     const skipped: Array<{ id: string; reason: string }> = [];
 
     const candidates = raw.filter((m) => {
@@ -225,7 +312,7 @@ export async function pipelineGoogle(
             });
             continue;
         }
-        docSurvivors.push(deriveGoogle(m, openrouter, scraped));
+        docSurvivors.push(deriveGoogle(m, openrouter, scraped, thinkingTable));
     }
 
     console.log(
@@ -299,5 +386,10 @@ export function printGoogleWarnings(r: GooglePipelineResult): void {
     printIdList(
         `${r.missingCutoff.length} model(s) missing knowledgeCutoff - add to GOOGLE_OVERRIDES if desired:`,
         r.missingCutoff
+    );
+    const stale = staleOverrideIds(GOOGLE_OVERRIDES, r.models);
+    printIdList(
+        `${stale.length} stale GOOGLE_OVERRIDES entry/entries - model not in current list, consider removing:`,
+        stale
     );
 }

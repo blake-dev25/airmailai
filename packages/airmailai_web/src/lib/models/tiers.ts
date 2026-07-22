@@ -1,6 +1,6 @@
 import type { ModelTier } from './types';
 
-// Manually curated. Unknown ids fall through to 'legacy', so new models
+// *** Manually curated. Unknown ids fall through to 'legacy', so new models
 // never auto-surface in 'latest' or 'previous' without explicit promotion.
 export const MODEL_TIERS: Record<string, ModelTier> = {
     // anthropic
@@ -39,13 +39,16 @@ export const MODEL_TIERS: Record<string, ModelTier> = {
     'gpt-5.2-codex': 'legacy',
     'gpt-5.2-pro': 'legacy',
     'gpt-5.3-chat-latest': 'legacy',
-    'gpt-5.3-codex': 'latest',
+    'gpt-5.3-codex': 'previous',
     'gpt-5.4': 'previous',
-    'gpt-5.4-mini': 'latest',
-    'gpt-5.4-nano': 'previous',
-    'gpt-5.4-pro': 'previous',
-    'gpt-5.5': 'latest',
-    'gpt-5.5-pro': 'latest',
+    'gpt-5.4-mini': 'legacy',
+    'gpt-5.4-nano': 'legacy',
+    'gpt-5.4-pro': 'legacy',
+    'gpt-5.5': 'previous',
+    'gpt-5.5-pro': 'previous',
+    'gpt-5.6-luna': 'latest',
+    'gpt-5.6-sol': 'latest',
+    'gpt-5.6-terra': 'latest',
     'o1': 'legacy',
     'o1-pro': 'legacy',
     'o3': 'legacy',
@@ -63,10 +66,12 @@ export const MODEL_TIERS: Record<string, ModelTier> = {
     'gemini-2.5-flash': 'legacy',
     'gemini-2.5-flash-lite': 'legacy',
     'gemini-2.5-pro': 'legacy',
-    'gemini-3-flash-preview': 'previous',
-    'gemini-3.1-flash-lite': 'latest',
+    'gemini-3-flash-preview': 'legacy',
+    'gemini-3.1-flash-lite': 'previous',
     'gemini-3.1-flash-lite-preview': 'previous',
     'gemini-3.1-pro-preview': 'latest',
-    'gemini-3.5-flash': 'latest',
+    'gemini-3.5-flash': 'previous',
+    'gemini-3.5-flash-lite': 'latest',
+    'gemini-3.6-flash': 'latest',
     'gemini-robotics-er-1.6-preview': 'legacy',
 };

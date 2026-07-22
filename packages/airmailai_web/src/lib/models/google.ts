@@ -66,7 +66,6 @@ export const GOOGLE: ProviderOption = {
                 defaultMaxTokens: 8192,
                 temperatureMax: 2,
                 defaultTemperature: 1,
-                knowledgeCutoff: 'Jan 2025',
                 thinking: {
                     levels: ['minimal', 'low', 'medium', 'high'],
                     defaultLevel: 'high',
@@ -82,7 +81,6 @@ export const GOOGLE: ProviderOption = {
                 defaultMaxTokens: 8192,
                 temperatureMax: 2,
                 defaultTemperature: 1,
-                knowledgeCutoff: 'Jan 2025',
                 thinking: {
                     levels: ['low', 'medium', 'high'],
                     defaultLevel: 'high',
@@ -98,7 +96,6 @@ export const GOOGLE: ProviderOption = {
                 defaultMaxTokens: 8192,
                 temperatureMax: 2,
                 defaultTemperature: 1,
-                knowledgeCutoff: 'Jan 2025',
                 thinking: {
                     levels: ['minimal', 'low', 'medium', 'high'],
                     defaultLevel: 'minimal',
@@ -114,7 +111,6 @@ export const GOOGLE: ProviderOption = {
                 defaultMaxTokens: 8192,
                 temperatureMax: 2,
                 defaultTemperature: 1,
-                knowledgeCutoff: 'Jan 2025',
                 thinking: {
                     levels: ['minimal', 'low', 'medium', 'high'],
                     defaultLevel: 'minimal',
@@ -131,6 +127,36 @@ export const GOOGLE: ProviderOption = {
                 temperatureMax: 2,
                 defaultTemperature: 1,
                 knowledgeCutoff: 'Jan 2025',
+                thinking: {
+                    levels: ['minimal', 'low', 'medium', 'high'],
+                    defaultLevel: 'medium',
+                },
+            },
+        },
+        {
+            id: 'gemini-3.5-flash-lite',
+            name: 'Gemini 3.5 Flash Lite',
+            params: {
+                contextWindow: 1048576,
+                maxOutputTokens: 65536,
+                defaultMaxTokens: 8192,
+                temperatureMax: 2,
+                defaultTemperature: 1,
+                thinking: {
+                    levels: ['minimal', 'low', 'medium', 'high'],
+                    defaultLevel: 'minimal',
+                },
+            },
+        },
+        {
+            id: 'gemini-3.6-flash',
+            name: 'Gemini 3.6 Flash',
+            params: {
+                contextWindow: 1048576,
+                maxOutputTokens: 65536,
+                defaultMaxTokens: 8192,
+                temperatureMax: 2,
+                defaultTemperature: 1,
                 thinking: {
                     levels: ['minimal', 'low', 'medium', 'high'],
                     defaultLevel: 'medium',

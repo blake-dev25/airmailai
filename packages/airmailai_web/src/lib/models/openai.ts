@@ -7,6 +7,48 @@ export const OPENAI: ProviderOption = {
     name: 'OpenAI',
     models: [
         {
+            id: 'gpt-5.6-luna',
+            name: 'GPT-5.6 Luna',
+            params: {
+                contextWindow: 1050000,
+                maxOutputTokens: 128000,
+                defaultMaxTokens: 8192,
+                knowledgeCutoff: 'Feb 2026',
+                thinking: {
+                    levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
+                    defaultLevel: 'none',
+                },
+            },
+        },
+        {
+            id: 'gpt-5.6-terra',
+            name: 'GPT-5.6 Terra',
+            params: {
+                contextWindow: 1050000,
+                maxOutputTokens: 128000,
+                defaultMaxTokens: 8192,
+                knowledgeCutoff: 'Feb 2026',
+                thinking: {
+                    levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
+                    defaultLevel: 'none',
+                },
+            },
+        },
+        {
+            id: 'gpt-5.6-sol',
+            name: 'GPT-5.6 Sol',
+            params: {
+                contextWindow: 1050000,
+                maxOutputTokens: 128000,
+                defaultMaxTokens: 8192,
+                knowledgeCutoff: 'Feb 2026',
+                thinking: {
+                    levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
+                    defaultLevel: 'none',
+                },
+            },
+        },
+        {
             id: 'gpt-5.5-pro',
             name: 'GPT-5.5 Pro',
             params: {

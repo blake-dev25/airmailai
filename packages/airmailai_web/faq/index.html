@@ -211,6 +211,10 @@
                         </svg>
                         Costs
                     </summary>
+                    <a href="#subscriptions"
+                        >Does my ChatGPT, Claude, or Gemini subscription include
+                        API access?</a
+                    >
                     <a href="#free">Is AirmailAI free?</a>
                     <a href="#api-costs"
                         >How much does using a provider API through AirmailAI
@@ -247,6 +251,10 @@
                         >I found a bug or ran into an error. Where do I report
                         it?</a
                     >
+                    <a href="#report-ai-output"
+                        >The AI gave me an incorrect, harmful, or otherwise
+                        problematic response. How do I report it?</a
+                    >
                     <a href="#how-to-help">I like AirmailAI. How can I help?</a>
                 </details>
             </nav>
@@ -266,7 +274,11 @@
             </p>
 
             <h3 id="browsers">What browsers does AirmailAI support?</h3>
-            <p>Any Chromium-based browser (Chrome, Edge, Brave, etc).</p>
+            <p>
+                AirmailAI supports desktop Chromium-based browsers such as
+                Chrome, Edge, and Brave. The AirmailAI browser extension is
+                required.
+            </p>
 
             <h3 id="why-extension">
                 Why do I need to install a browser extension?
@@ -307,9 +319,9 @@
 
             <h3 id="mobile">Does AirmailAI work on mobile?</h3>
             <p>
-                AirmailAI works on devices that can install the browser
-                extension. Unfortunately, most phones cannot install browser
-                extensions. Let us know if you'd like a mobile app!
+                Not currently. AirmailAI requires its browser extension and is
+                designed for desktop Chromium-based browsers. If you'd like a
+                mobile app, let us know!
             </p>
 
             <h3 id="vs-provider-apps">
@@ -341,6 +353,15 @@
                 model/request settings are sent from the website UI to the
                 browser extension, then directly to the provider and back to the
                 UI. Your conversations never touch our servers.
+            </p>
+            <p>
+                The provider you select still receives and processes the data
+                needed to fulfill your request under its own terms, privacy
+                policy, and retention settings. Requests sent through OpenRouter
+                are processed by OpenRouter and the downstream model provider it
+                routes the request to. Provider tools such as web search, URL
+                retrieval, file storage, and code execution may involve
+                additional provider services.
             </p>
 
             <h3 id="host-models">Does AirmailAI host any models?</h3>
@@ -420,6 +441,16 @@
             </p>
 
             <h2 id="costs">Costs</h2>
+
+            <h3 id="subscriptions">
+                Does my ChatGPT, Claude, or Gemini subscription include API
+                access?
+            </h3>
+            <p>
+                No. Subscriptions to provider chat apps are separate from their
+                APIs. To use a paid provider API through AirmailAI, you need an
+                API key and may need to set up API billing with that provider.
+            </p>
 
             <h3 id="free">Is AirmailAI free?</h3>
             <p>
@@ -515,6 +546,17 @@
                 >
                 and include what happened, what you expected, your browser, and
                 any error message you saw.
+            </p>
+
+            <h3 id="report-ai-output">
+                The AI gave me an incorrect, harmful, or otherwise problematic
+                response. How do I report it?
+            </h3>
+            <p>
+                AirmailAI does not generate, review, or control AI responses.
+                Please report the response to the provider you used. If
+                AirmailAI displayed a response incorrectly or you encountered an
+                app error, open a GitHub issue instead.
             </p>
 
             <h3 id="how-to-help">I like AirmailAI. How can I help?</h3>

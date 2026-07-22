@@ -387,6 +387,41 @@
     --color-on-accent-3-bg-hover: #000000;
 }
 
+[data-theme='hotdog'] {
+    --color-canvas: #ff0000;
+    --color-surface-raised: #ffff00;
+    --color-surface-sunken: #ffffff;
+    --color-border: #000000;
+    --color-fg: #000000;
+    --color-fg-muted: #000000;
+
+    --color-bubble-user: #ffff00;
+    --color-on-bubble-user: #000000;
+    --color-bubble-assistant: #ffff00;
+    --color-on-bubble-assistant: #000000;
+
+    --color-accent-fg: #000000;
+    --color-accent-fg-hover: #000000;
+    --color-accent-bg: #ffff00;
+    --color-accent-bg-hover: #000000;
+    --color-on-accent-bg: #000000;
+    --color-on-accent-bg-hover: #ffffff;
+
+    --color-accent-2-fg: #000000;
+    --color-accent-2-fg-hover: #000000;
+    --color-accent-2-bg: #000000;
+    --color-accent-2-bg-hover: #ffffff;
+    --color-on-accent-2-bg: #ffffff;
+    --color-on-accent-2-bg-hover: #000000;
+
+    --color-accent-3-fg: #000000;
+    --color-accent-3-fg-hover: #000000;
+    --color-accent-3-bg: #ffff00;
+    --color-accent-3-bg-hover: #000000;
+    --color-on-accent-3-bg: #000000;
+    --color-on-accent-3-bg-hover: #ffffff;
+}
+
 .prose {
     white-space: normal;
     --tw-prose-body: var(--color-on-bubble-assistant);
