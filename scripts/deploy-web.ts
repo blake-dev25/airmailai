@@ -32,20 +32,11 @@ await $`bun run build:web`
     .cwd(root)
     .env({ ...process.env, AIRMAILAI_LOG_LEVEL: 'errors' });
 
-const version = (await Bun.file(join(root, 'VERSION')).text()).trim();
 const versionName = (await Bun.file(join(root, 'VERSION_NAME')).text()).trim();
 await Bun.write(
     join(dist, 'version.json'),
     JSON.stringify({ version: versionName })
 );
-
-const changelog = await Bun.file(join(dist, 'changelog.md')).text();
-const changelogTopEntry = changelog.match(/^## (.+)$/m)?.[1]?.trim();
-if (changelogTopEntry !== version) {
-    console.warn(
-        `\n!!! WARNING: changelog.md top entry (${changelogTopEntry ?? 'none'}) does not match version ${version} - add an entry before deploying? !!!\n`
-    );
-}
 
 console.log('\n> S3 sync /assets/* (immutable long cache)...');
 await $`aws s3 sync ${dist}/assets/ s3://${BUCKET}/assets/ --cache-control ${LONG_CACHE} --no-progress`;
