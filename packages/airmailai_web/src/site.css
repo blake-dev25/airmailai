@@ -17,6 +17,10 @@
     box-sizing: border-box;
 }
 
+html {
+    margin-left: calc(100vw - 100%);
+}
+
 @media (prefers-reduced-motion: no-preference) {
     html {
         scroll-behavior: smooth;
@@ -27,7 +31,7 @@ body {
     display: flex;
     flex-direction: column;
     min-height: 100dvh;
-    margin: 0 0 0 calc(100vw - 100%);
+    margin: 0;
     background: var(--canvas);
     color: var(--fg);
     font-family: var(--font-sans);
@@ -46,6 +50,7 @@ body > .stripe-band:last-child {
 .stripe-band {
     height: 20px;
     margin-left: calc((100% - 100vw) / 2);
+    width: calc(100% + (100vw - 100%) / 2);
     background: repeating-linear-gradient(
         135deg,
         #c14227 0 28.28px,
@@ -146,7 +151,7 @@ body > .stripe-band:last-child {
     display: none;
 }
 
-@media (max-width: 620px) {
+@media (max-width: 700px) {
     .nav {
         grid-template-columns: 1fr auto;
     }
@@ -412,6 +417,36 @@ body > .stripe-band:last-child {
 .page ul {
     margin: 0 0 8px;
     padding-left: 24px;
+}
+
+.architecture-flow {
+    margin: 12px 0 16px;
+    padding: 20px;
+    overflow-x: auto;
+    background: var(--surface-sunken);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--fg);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.architecture-flow code {
+    font-family:
+        ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+}
+
+.page .page-note {
+    scroll-margin-top: 16px;
+    margin-top: 48px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-size: 13px;
+}
+
+.page .page-note p {
+    margin: 0;
+    color: var(--fg-muted);
 }
 
 .page a {

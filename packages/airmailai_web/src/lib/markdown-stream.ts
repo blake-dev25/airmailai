@@ -95,8 +95,7 @@ export function streamingMarkdown(
                         throw new Error('file not found in local storage');
                     }
                     openBlobInNewTab(
-                        blob.mediaType,
-                        blob.base64,
+                        blob,
                         Number.isFinite(page) && page > 0 ? page : undefined
                     );
                 })

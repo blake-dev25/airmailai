@@ -2,10 +2,12 @@ import type { OpenRouterModel } from '@airmailai/shared';
 import { log } from './debug';
 
 const FRESH_MS = 24 * 60 * 60 * 1000;
-const ERROR_COOLDOWN_MS = 5 * 60 * 1000;
+export const MANUAL_REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
+const ERROR_COOLDOWN_MS = MANUAL_REFRESH_COOLDOWN_MS;
 export const CACHE_VERSION = 4;
 
 export const CACHE_KEY = 'openrouter_models_cache';
+export const MANUAL_REFRESH_KEY = 'openrouter_models_manual_refresh_at';
 const URL = 'https://openrouter.ai/api/v1/models/user';
 
 interface CacheEntry {
@@ -79,6 +81,12 @@ async function writeCache(entry: CacheEntry): Promise<void> {
     await chrome.storage.local.set({ [CACHE_KEY]: entry });
 }
 
+export async function getOpenRouterManualRefreshAt(): Promise<number | null> {
+    const result = await chrome.storage.local.get(MANUAL_REFRESH_KEY);
+    const value = result[MANUAL_REFRESH_KEY];
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 export async function getOpenRouterModels(
     apiKey?: string
 ): Promise<OpenRouterModel[] | null> {
@@ -115,6 +123,41 @@ export async function getOpenRouterModels(
         throw e instanceof Error
             ? e
             : new Error(`OpenRouter fetch failed: ${String(e)}`);
+    }
+}
+
+let manualRefreshRunning = false;
+export async function refreshOpenRouterModels(
+    apiKey?: string
+): Promise<OpenRouterModel[]> {
+    if (!apiKey) throw new Error('No OpenRouter API key saved.');
+    if (manualRefreshRunning) {
+        throw new Error('An OpenRouter model refresh is already in progress.');
+    }
+
+    manualRefreshRunning = true;
+    try {
+        const now = Date.now();
+        const lastRefreshAt = await getOpenRouterManualRefreshAt();
+        if (
+            lastRefreshAt !== null &&
+            now - lastRefreshAt < MANUAL_REFRESH_COOLDOWN_MS
+        ) {
+            throw new Error(
+                'OpenRouter models were recently refreshed. Please wait 5 minutes before trying again.'
+            );
+        }
+
+        await chrome.storage.local.set({ [MANUAL_REFRESH_KEY]: now });
+        const models = await fetchAndSlim(apiKey);
+        await writeCache({
+            version: CACHE_VERSION,
+            models,
+            fetchedAt: Date.now(),
+        });
+        return models;
+    } finally {
+        manualRefreshRunning = false;
     }
 }
 

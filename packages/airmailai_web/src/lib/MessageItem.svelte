@@ -192,7 +192,7 @@
             if (!blob) {
                 throw new Error('file not found in local storage');
             }
-            openBlobInNewTab(blob.mediaType, blob.base64);
+            openBlobInNewTab(blob);
         } catch (err) {
             reportAppError(
                 'citation document open failed',
@@ -208,7 +208,7 @@
             if (!blob) {
                 throw new Error('file not found in local storage');
             }
-            triggerBlobDownload(chip.filename, blob.mediaType, blob.base64);
+            triggerBlobDownload(chip.filename, blob);
         } catch (err) {
             reportAppError(
                 'file download failed',

@@ -1,4 +1,8 @@
-import { SETTINGS_KEYS, type UserSettings } from '@airmailai/shared';
+import {
+    SETTINGS_KEYS,
+    type BrandingMode,
+    type UserSettings,
+} from '@airmailai/shared';
 import { untrack } from 'svelte';
 import {
     defaultModelForProvider,
@@ -36,6 +40,12 @@ function getDefaultFontSizeIndex(): number {
     return 2;
 }
 
+function getInitialBrandingMode(): BrandingMode {
+    const stored = localStorage.getItem('airmailai-show-branding');
+    if (stored === 'stripes' || stored === 'off') return stored;
+    return 'on';
+}
+
 const defaultModel =
     defaultModelForProvider(PROVIDERS[0]) ?? PROVIDERS[0].models[0];
 
@@ -58,7 +68,7 @@ const SETTING_VALIDATORS: {
     chatWidth: isNumInRange(0, 100),
     smoothTextMode: isOneOf('smooth', 'raw'),
     submitKeystroke: isOneOf('enter', 'ctrl+enter'),
-    modelTier: isOneOf('latest', 'previous', 'legacy'),
+    modelTier: isOneOf('latest', 'previous', 'legacy', 'test'),
     autoscrollMode: isOneOf('pin-user-message', 'pin-bottom', 'off'),
     chatSortOrder: isOneOf('modified', 'created'),
     enableWebSearch: isBool,
@@ -80,7 +90,7 @@ const SETTING_VALIDATORS: {
         'cloudflare-ai',
         'mistral-ocr'
     ),
-    showBranding: isBool,
+    brandingMode: isOneOf('on', 'stripes', 'off'),
     messageFont: isOneOf('serif', 'sans'),
     legalAcceptedVersion: isString,
 };
@@ -105,9 +115,7 @@ class SettingsStore {
     openRouterPdfEngine = $state<
         'native' | 'auto' | 'cloudflare-ai' | 'mistral-ocr'
     >('native');
-    showBranding = $state(
-        localStorage.getItem('airmailai-show-branding') !== 'false'
-    );
+    brandingMode = $state<BrandingMode>(getInitialBrandingMode());
     messageFont = $state<'serif' | 'sans'>(
         localStorage.getItem('airmailai-message-font') === 'sans'
             ? 'sans'
@@ -154,7 +162,7 @@ class SettingsStore {
             $effect(() => {
                 localStorage.setItem(
                     'airmailai-show-branding',
-                    String(this.showBranding)
+                    this.brandingMode
                 );
             });
             $effect(() => {
@@ -186,7 +194,7 @@ class SettingsStore {
                     adaptiveThinking: this.adaptiveThinking,
                     tagOpenRouterRequests: this.tagOpenRouterRequests,
                     openRouterPdfEngine: this.openRouterPdfEngine,
-                    showBranding: this.showBranding,
+                    brandingMode: this.brandingMode,
                     messageFont: this.messageFont,
                 };
                 if (!this.shouldSave()) return;
@@ -304,8 +312,8 @@ class SettingsStore {
             openRouterPdfEngine: (v) => {
                 this.openRouterPdfEngine = v;
             },
-            showBranding: (v) => {
-                this.showBranding = v;
+            brandingMode: (v) => {
+                this.brandingMode = v;
             },
             messageFont: (v) => {
                 this.messageFont = v;

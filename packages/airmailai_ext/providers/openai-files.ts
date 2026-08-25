@@ -1,4 +1,4 @@
-import OpenAI, { toFile } from 'openai';
+import OpenAI, { toStreamingFile } from 'openai';
 import type { ProviderFileInfo } from '@airmailai/shared';
 import { makeDebugFetch } from './debug-fetch';
 
@@ -12,11 +12,11 @@ function fileClient(apiKey: string): OpenAI {
 
 export async function uploadOpenAIFile(
     apiKey: string,
-    bytes: Uint8Array,
+    blob: Blob,
     mediaType: string,
     filename: string
 ): Promise<string> {
-    const file = await toFile(bytes, filename, { type: mediaType });
+    const file = toStreamingFile(blob.stream(), filename, { type: mediaType });
     const result = await fileClient(apiKey).files.create({
         file,
         purpose: 'user_data',

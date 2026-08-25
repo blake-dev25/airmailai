@@ -2,22 +2,25 @@ import { ANTHROPIC } from './anthropic';
 import { GOOGLE } from './google';
 import { OPENAI } from './openai';
 import { OPENROUTER } from './openrouter';
-import { MODEL_TIERS } from './tiers';
+import { modelHasTier, visibleModelTier } from './tiers';
 import type {
     ModelOption,
     ModelTier,
     ModelTools,
     ProviderOption,
+    VisibleModelTier,
 } from './types';
 
 export { buildOpenRouterProvider } from './openrouter';
-export { MODEL_TIERS } from './tiers';
+export { MODEL_TIERS, modelHasTier, visibleModelTier } from './tiers';
 export type {
     ModelOption,
     ModelParams,
     ModelTier,
+    ModelTierAssignment,
     ProviderOption,
     ThinkingLevel,
+    VisibleModelTier,
 } from './types';
 
 // Google/OpenAI version their server tools globally, not per-model (unlike
@@ -57,7 +60,7 @@ export const PROVIDERS: ProviderOption[] = [
     OPENROUTER,
 ].sort((a, b) => a.name.localeCompare(b.name));
 
-const TIER_RANK: Record<ModelTier, number> = {
+const TIER_RANK: Record<VisibleModelTier, number> = {
     latest: 0,
     previous: 1,
     legacy: 2,
@@ -67,7 +70,8 @@ export function modelMatchesTier(
     modelId: string,
     selected: ModelTier
 ): boolean {
-    const modelTier = MODEL_TIERS[modelId] ?? 'legacy';
+    if (selected === 'test') return modelHasTier(modelId, selected);
+    const modelTier = visibleModelTier(modelId);
     return TIER_RANK[modelTier] <= TIER_RANK[selected];
 }
 
@@ -80,7 +84,7 @@ export function defaultModelForProvider(
     if (provider.marketplace) return provider.models[0];
     let best: { model: ModelOption; rank: number } | undefined;
     for (const m of provider.models) {
-        const rank = TIER_RANK[MODEL_TIERS[m.id] ?? 'legacy'];
+        const rank = TIER_RANK[visibleModelTier(m.id)];
         if (!best || rank < best.rank) best = { model: m, rank };
     }
     return best?.model;

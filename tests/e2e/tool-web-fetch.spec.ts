@@ -30,7 +30,7 @@ const PROVIDERS: ProviderKey[] = [
 ];
 
 for (const key of PROVIDERS) {
-    const { label, tools } = PROVIDER_MODELS[key];
+    const { label, tools, toolsName } = PROVIDER_MODELS[key];
 
     test(`${label} web fetch cites the page and re-injects it after edit`, async ({
         airmailai,
@@ -38,8 +38,11 @@ for (const key of PROVIDERS) {
         test.setTimeout(240_000);
         await airmailai.goto();
         await airmailai.setProvider(label);
-        if (key === 'openrouter') await airmailai.waitForOpenRouterCatalog();
-        await airmailai.setModelById(tools);
+        if (key === 'openrouter') {
+            await airmailai.waitForOpenRouterCatalog();
+            await airmailai.setModelById(tools);
+        }
+        await expect(airmailai.modelTrigger()).toContainText(toolsName);
         await airmailai.setChatWebFetch(true);
 
         let turn1Sources: string[] = [];

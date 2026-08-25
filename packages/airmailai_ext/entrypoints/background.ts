@@ -3,8 +3,11 @@ import type {
     BroadcastRequest,
     AirmailAIChunk,
     AirmailAIMessage,
+    DraftAttachment,
     ExtensionStreamEvent,
     FileAvailability,
+    FileTransferRequest,
+    FileTransferResponse,
     HydratedStoredMessage,
     ProviderFileEntry,
     ProviderFileInfo,
@@ -16,14 +19,20 @@ import type {
     UserSettings,
 } from '@airmailai/shared';
 import {
+    FILE_TRANSFER_CHUNK_BYTES,
     SETTINGS_KEYS,
     applyAirmailAIChunk,
     createMessageAssembler,
 } from '@airmailai/shared';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex } from '@noble/hashes/utils.js';
 import { log } from '../debug';
 import {
     CACHE_KEY as OPENROUTER_CACHE_KEY,
+    MANUAL_REFRESH_KEY as OPENROUTER_MANUAL_REFRESH_KEY,
+    getOpenRouterManualRefreshAt,
     getOpenRouterModels,
+    refreshOpenRouterModels,
 } from '../openrouter-models';
 import {
     deleteAnthropicFile,
@@ -35,6 +44,7 @@ import {
     listOpenAIFiles,
     uploadOpenAIFile,
 } from '../providers/openai-files';
+import { deleteProviderFileIfPresent } from '../providers/provider-file-errors';
 import {
     downloadOpenAIContainerFile,
     listOpenAIContainerFiles,
@@ -51,11 +61,9 @@ import {
     dbClearDraftAttachments,
     dbDeleteChat,
     dbDeleteMessage,
-    dbDeleteMessagesAfter,
     dbDeleteStoredFile,
     dbForgetProviderFile,
     dbGetFileBlob,
-    dbGetFileBlobBase64,
     dbGetFileFacts,
     dbListLocalFiles,
     dbGetMeta,
@@ -68,6 +76,8 @@ import {
     dbLoadChat,
     dbLoadChatMetas,
     dbLoadChatsByIds,
+    dbPrepareRetry,
+    dbPrepareTurn,
     dbPutMessage,
     dbSaveMeta,
     dbSetContainer,
@@ -107,6 +117,21 @@ function broadcast(event: BroadcastEvent, skipTabId?: string) {
     }
 }
 
+function broadcastTo(event: BroadcastEvent, targetTabId: string | undefined) {
+    if (targetTabId) {
+        for (const [port, tabId] of broadcastPorts) {
+            if (tabId !== targetTabId) continue;
+            try {
+                port.postMessage(event);
+                return;
+            } catch {
+                broadcastPorts.delete(port);
+            }
+        }
+    }
+    broadcast(event);
+}
+
 function apiKeyName(provider: string): string {
     return `${API_KEY_PREFIX}${provider}`;
 }
@@ -121,18 +146,28 @@ async function readProviderFileStorageEnabled(): Promise<boolean> {
     return result.enableProviderFileStorage === true;
 }
 
+async function deleteRemoteProviderFile(
+    providerId: string,
+    apiKey: string,
+    fileId: string
+): Promise<void> {
+    await deleteProviderFileIfPresent(async () => {
+        if (providerId === 'anthropic') {
+            await deleteAnthropicFile(apiKey, fileId);
+        } else if (providerId === 'openai') {
+            await deleteOpenAIFile(apiKey, fileId);
+        } else if (providerId === 'google') {
+            await deleteGoogleFile(apiKey, fileId);
+        }
+    });
+}
+
 async function deleteProviderFile(
     providerId: string,
     apiKey: string,
     fileId: string
 ): Promise<string[]> {
-    if (providerId === 'anthropic') {
-        await deleteAnthropicFile(apiKey, fileId);
-    } else if (providerId === 'openai') {
-        await deleteOpenAIFile(apiKey, fileId);
-    } else if (providerId === 'google') {
-        await deleteGoogleFile(apiKey, fileId);
-    }
+    await deleteRemoteProviderFile(providerId, apiKey, fileId);
     return dbForgetProviderFile(providerId, fileId);
 }
 
@@ -173,6 +208,29 @@ async function deleteProviderFiles(refs: ProviderFileRef[]): Promise<void> {
     }
 }
 
+async function deleteTemporaryProviderFiles(
+    refs: ProviderFileRef[],
+    apiKey: string
+): Promise<string[]> {
+    const warnings: string[] = [];
+    for (const ref of refs) {
+        try {
+            await deleteRemoteProviderFile(ref.providerId, apiKey, ref.fileId);
+        } catch (error) {
+            log.error(
+                'temporary provider file cleanup failed',
+                ref.providerId,
+                ref.fileId,
+                error
+            );
+            warnings.push(
+                `Couldn't delete a temporary ${ref.providerId} file (${ref.fileId}). You can remove it from the provider dashboard.`
+            );
+        }
+    }
+    return warnings;
+}
+
 const FILE_PROVIDERS = new Set(['anthropic', 'openai', 'google']);
 const KNOWN_PROVIDERS = new Set([...FILE_PROVIDERS, 'openrouter']);
 
@@ -190,49 +248,109 @@ function replicaFresh(entry: ProviderFileEntry): boolean {
     );
 }
 
-async function uploadWithDedup(
+const inflightProviderUploads = new Map<string, Promise<ProviderFileEntry>>();
+
+function uploadWithDedup(
+    hash: string,
     provider: string,
     apiKey: string,
-    bytes: Uint8Array<ArrayBuffer>,
+    blob: Blob,
     mediaType: string,
     filename: string
 ): Promise<ProviderFileEntry> {
-    const hash = await hashBytes(bytes.buffer);
-    const existing = await dbLookupProviderFile(hash, provider);
-    if (existing && replicaFresh(existing)) {
-        log.info('dedup: reusing provider file', provider, existing.fileId);
-        return existing;
+    const key = `${provider}:${hash}`;
+    const inflight = inflightProviderUploads.get(key);
+    if (inflight) {
+        log.info('dedup: joining in-flight provider upload', key);
+        return inflight;
     }
-    let entry: ProviderFileEntry;
+    const task = (async () => {
+        const existing = await dbLookupProviderFile(hash, provider);
+        if (existing && replicaFresh(existing)) {
+            log.info('dedup: reusing provider file', provider, existing.fileId);
+            return existing;
+        }
+        const entry = await uploadProviderBlob(
+            provider,
+            apiKey,
+            blob,
+            mediaType,
+            filename
+        );
+        await dbRecordProviderFile(hash, provider, entry, filename, mediaType);
+        return entry;
+    })();
+    inflightProviderUploads.set(key, task);
+    task.catch(() => {}).finally(() => inflightProviderUploads.delete(key));
+    return task;
+}
+
+async function uploadProviderBlob(
+    provider: string,
+    apiKey: string,
+    blob: Blob,
+    mediaType: string,
+    filename: string
+): Promise<ProviderFileEntry> {
     if (provider === 'anthropic') {
-        entry = {
+        return {
             fileId: await uploadAnthropicFile(
                 apiKey,
-                bytes,
+                blob,
                 mediaType,
                 filename
             ),
         };
-    } else if (provider === 'openai') {
-        entry = {
-            fileId: await uploadOpenAIFile(apiKey, bytes, mediaType, filename),
-        };
-    } else if (provider === 'google') {
-        entry = await uploadGoogleFile(apiKey, bytes, mediaType, filename);
-    } else {
-        throw new Error(
-            `Provider file storage is not supported for ${provider}.`
-        );
     }
-    await dbRecordProviderFile(hash, provider, entry, filename, mediaType);
-    return entry;
+    if (provider === 'openai') {
+        return {
+            fileId: await uploadOpenAIFile(apiKey, blob, mediaType, filename),
+        };
+    }
+    if (provider === 'google') {
+        return uploadGoogleFile(apiKey, blob, mediaType, filename);
+    }
+    throw new Error(`Provider file storage is not supported for ${provider}.`);
 }
 
-async function ensureReplicas(
+interface PreparedProviderFiles {
+    files: Record<string, ProviderFileEntry> | undefined;
+    ephemeral: ProviderFileRef[];
+}
+
+const PROVIDER_UPLOAD_CONCURRENCY = 3;
+
+async function runWithConcurrency<T>(
+    items: T[],
+    limit: number,
+    task: (item: T) => Promise<void>
+): Promise<void> {
+    const queue = [...items];
+    const errors: unknown[] = [];
+    const workers = Array.from(
+        { length: Math.min(limit, queue.length) },
+        async () => {
+            while (queue.length && !errors.length) {
+                const item = queue.shift();
+                if (item === undefined) break;
+                try {
+                    await task(item);
+                } catch (error) {
+                    errors.push(error);
+                }
+            }
+        }
+    );
+    await Promise.all(workers);
+    if (errors.length) throw errors[0];
+}
+
+async function prepareProviderFiles(
     messages: AirmailAIMessage[],
     provider: string,
-    apiKey: string
-): Promise<Record<string, ProviderFileEntry> | undefined> {
+    apiKey: string,
+    persistent: boolean
+): Promise<PreparedProviderFiles> {
     const infos = new Map<string, { filename: string; mediaType: string }>();
     for (const msg of messages) {
         for (const part of msg.parts) {
@@ -244,28 +362,65 @@ async function ensureReplicas(
             }
         }
     }
-    if (!infos.size) return undefined;
+    if (!infos.size) return { files: undefined, ephemeral: [] };
     const map: Record<string, ProviderFileEntry> = {};
-    for (const [hash, info] of infos) {
-        let entry = await dbLookupProviderFile(hash, provider);
-        if (!entry || !replicaFresh(entry)) {
-            const blob = await dbGetFileBlob(hash);
-            if (!blob) {
-                log.warn('replica skipped, no local bytes', hash);
-                continue;
+    const ephemeral: ProviderFileRef[] = [];
+    try {
+        await runWithConcurrency(
+            [...infos],
+            PROVIDER_UPLOAD_CONCURRENCY,
+            async ([hash, info]) => {
+                let entry = persistent
+                    ? await dbLookupProviderFile(hash, provider)
+                    : undefined;
+                if (entry && replicaFresh(entry)) {
+                    map[hash] = entry;
+                    return;
+                }
+                const blob = await dbGetFileBlob(hash);
+                if (!blob) {
+                    throw new Error(
+                        `${info.filename} is missing from local storage.`
+                    );
+                }
+                log.info('uploading file to provider', provider, hash);
+                if (persistent) {
+                    entry = await uploadWithDedup(
+                        hash,
+                        provider,
+                        apiKey,
+                        blob,
+                        blob.type || info.mediaType,
+                        info.filename
+                    );
+                } else {
+                    entry = await uploadProviderBlob(
+                        provider,
+                        apiKey,
+                        blob,
+                        blob.type || info.mediaType,
+                        info.filename
+                    );
+                    ephemeral.push({
+                        providerId: provider,
+                        fileId: entry.fileId,
+                    });
+                }
+                map[hash] = entry;
             }
-            log.info('replicating file to provider', provider, hash);
-            entry = await uploadWithDedup(
-                provider,
-                apiKey,
-                new Uint8Array(await blob.arrayBuffer()),
-                blob.type || info.mediaType,
-                info.filename
-            );
-        }
-        map[hash] = entry;
+        );
+    } catch (error) {
+        const warnings = await deleteTemporaryProviderFiles(ephemeral, apiKey);
+        if (!warnings.length) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`${message}\n${warnings.join('\n')}`, {
+            cause: error,
+        });
     }
-    return Object.keys(map).length ? map : undefined;
+    return {
+        files: Object.keys(map).length ? map : undefined,
+        ephemeral,
+    };
 }
 
 async function handleStorage(
@@ -352,37 +507,25 @@ async function handleStorage(
             log.info('-> storage response: saved');
             return { type: 'saved' };
         }
-        case 'stage_draft_attachment': {
-            await dbStageDraftAttachment(
-                message.chatId,
-                message.attachment,
-                message.base64
+        case 'prepare_turn': {
+            const refs = await dbPrepareTurn(message.meta, message.message);
+            await deleteProviderFiles(refs);
+            broadcast(
+                { type: 'meta-changed', meta: message.meta },
+                message.sourceTabId
             );
-            let warning: string | undefined;
-            if (
-                message.replicateTo &&
-                FILE_PROVIDERS.has(message.replicateTo)
-            ) {
-                try {
-                    const apiKey = await readApiKey(message.replicateTo);
-                    if (!apiKey) {
-                        throw new Error(
-                            `No API key saved for ${message.replicateTo}.`
-                        );
-                    }
-                    await uploadWithDedup(
-                        message.replicateTo,
-                        apiKey,
-                        base64ToBytes(message.base64),
-                        message.attachment.mediaType,
-                        message.attachment.name
-                    );
-                } catch (err) {
-                    log.error('draft replica upload failed', err);
-                    warning = err instanceof Error ? err.message : String(err);
-                }
-            }
-            return { type: 'saved', ...(warning ? { warning } : {}) };
+            log.info('-> storage response: turn prepared');
+            return { type: 'saved' };
+        }
+        case 'prepare_retry': {
+            const refs = await dbPrepareRetry(message.meta, message.lastKeptId);
+            await deleteProviderFiles(refs);
+            broadcast(
+                { type: 'meta-changed', meta: message.meta },
+                message.sourceTabId
+            );
+            log.info('-> storage response: retry prepared');
+            return { type: 'saved' };
         }
         case 'remove_draft_attachment': {
             const refs = await dbRemoveDraftAttachment(
@@ -407,15 +550,6 @@ async function handleStorage(
             const refs = await dbDeleteMessage(
                 message.chatId,
                 message.messageId
-            );
-            await deleteProviderFiles(refs);
-            log.info('-> storage response: saved');
-            return { type: 'saved' };
-        }
-        case 'delete_messages_after': {
-            const refs = await dbDeleteMessagesAfter(
-                message.chatId,
-                message.lastKeptId
             );
             await deleteProviderFiles(refs);
             log.info('-> storage response: saved');
@@ -463,10 +597,23 @@ async function handleStorage(
             );
             return { type: 'openrouter_models', models };
         }
-        case 'get_file_blob': {
-            const blob = await dbGetFileBlobBase64(message.hash);
-            log.info('-> storage response: file_blob', !!blob);
-            return { type: 'file_blob', blob };
+        case 'get_openrouter_refresh_status': {
+            const lastAttemptAt = await getOpenRouterManualRefreshAt();
+            log.info(
+                '-> storage response: openrouter_refresh_status',
+                lastAttemptAt
+            );
+            return { type: 'openrouter_refresh_status', lastAttemptAt };
+        }
+        case 'refresh_openrouter_models': {
+            const apiKey = await readApiKey('openrouter');
+            const models = await refreshOpenRouterModels(apiKey);
+            log.info(
+                '-> storage response: openrouter_models',
+                `${models.length} models`,
+                'manual refresh'
+            );
+            return { type: 'openrouter_models', models };
         }
         case 'file_status': {
             assertKnownProvider(message.provider);
@@ -575,7 +722,10 @@ async function handleStorage(
             ] = await Promise.all([
                 dbGetStorageUsage(),
                 chrome.storage.local.getBytesInUse(null),
-                chrome.storage.local.getBytesInUse(OPENROUTER_CACHE_KEY),
+                chrome.storage.local.getBytesInUse([
+                    OPENROUTER_CACHE_KEY,
+                    OPENROUTER_MANUAL_REFRESH_KEY,
+                ]),
                 chrome.storage.sync.getBytesInUse(null),
             ]);
             const localSettingsBytes = localTotalBytes - openRouterCacheBytes;
@@ -659,9 +809,10 @@ async function captureOpenAIOutputs(
         if (storageOn) {
             try {
                 await uploadWithDedup(
+                    hash,
                     'openai',
                     apiKey,
-                    bytes,
+                    new Blob([bytes], { type: f.mediaType }),
                     f.mediaType,
                     f.filename
                 );
@@ -701,15 +852,16 @@ async function hydrateBlobs(
     const blobs: Record<string, { mediaType: string; base64: string }> = {};
     for (const [hash, mediaType] of mediaTypes) {
         const replica = replicas?.[hash];
-        if (
-            replica &&
-            replicaUsableWithoutBytes(provider, replica) &&
-            !mediaType.startsWith('text/')
-        ) {
+        if (replica && replicaUsableWithoutBytes(provider, replica)) {
             continue;
         }
-        const b = await dbGetFileBlobBase64(hash);
-        if (b) blobs[hash] = b;
+        const blob = await dbGetFileBlob(hash);
+        if (blob) {
+            blobs[hash] = {
+                mediaType: blob.type || mediaType,
+                base64: bytesToBase64(new Uint8Array(await blob.arrayBuffer())),
+            };
+        }
     }
     return blobs;
 }
@@ -719,6 +871,7 @@ function truncateAssistantParts(msg: AirmailAIMessage, maxChars: number): void {
     let i = 0;
     while (i < msg.parts.length) {
         const part = msg.parts[i];
+        if (!part) break;
         if (part.type === 'text') {
             const remaining = maxChars - textConsumed;
             if (remaining <= 0) {
@@ -753,6 +906,199 @@ function dispatchStorage(
     return true;
 }
 
+async function replicateDraftAttachment(
+    chatId: string,
+    provider: string,
+    attachment: DraftAttachment,
+    blob: Blob,
+    sourceTabId: string | undefined
+): Promise<void> {
+    try {
+        const apiKey = await readApiKey(provider);
+        if (!apiKey) {
+            throw new Error(`No API key saved for ${provider}.`);
+        }
+        await uploadWithDedup(
+            attachment.hash,
+            provider,
+            apiKey,
+            blob,
+            attachment.mediaType,
+            attachment.name
+        );
+    } catch (error) {
+        log.error('draft replica upload failed', error);
+        broadcastTo(
+            {
+                type: 'replica-warning',
+                chatId,
+                provider,
+                filename: attachment.name,
+                message: error instanceof Error ? error.message : String(error),
+            },
+            sourceTabId
+        );
+    }
+}
+
+function handleFileTransferPort(port: chrome.runtime.Port): void {
+    streamPorts.add(port);
+    let upload:
+        Extract<FileTransferRequest, { type: 'upload_start' }> | undefined;
+    let uploadChunks: Blob[] = [];
+    let hasher: ReturnType<typeof sha256.create> | null = null;
+    let nextUploadIndex = 0;
+    let downloadBlob: Blob | null = null;
+    let failed = false;
+    let portOpen = true;
+    let work = Promise.resolve();
+
+    const send = (response: FileTransferResponse) => {
+        if (portOpen) port.postMessage(response);
+    };
+
+    const releaseUploadState = () => {
+        hasher?.destroy();
+        hasher = null;
+        uploadChunks = [];
+    };
+
+    const fail = (error: unknown) => {
+        failed = true;
+        releaseUploadState();
+        const message = error instanceof Error ? error.message : String(error);
+        log.error('file transfer failed', error);
+        send({ type: 'error', message });
+    };
+
+    const handle = async (message: FileTransferRequest) => {
+        if (failed) return;
+        if (message.type === 'upload_start') {
+            if (upload || downloadBlob) {
+                throw new Error('File transfer already started.');
+            }
+            const expectedChunks = Math.ceil(
+                message.attachment.sizeBytes / FILE_TRANSFER_CHUNK_BYTES
+            );
+            if (message.chunkCount !== expectedChunks) {
+                throw new Error('Invalid file transfer chunk count.');
+            }
+            upload = message;
+            hasher = sha256.create();
+            send({ type: 'upload_ready' });
+            return;
+        }
+        if (message.type === 'upload_chunk') {
+            if (!upload || !hasher) {
+                throw new Error('File upload has not started.');
+            }
+            if (
+                message.index !== nextUploadIndex ||
+                message.index >= upload.chunkCount
+            ) {
+                throw new Error('File chunks arrived out of order.');
+            }
+            const bytes = base64ToBytes(message.base64);
+            const expectedBytes = Math.min(
+                FILE_TRANSFER_CHUNK_BYTES,
+                upload.attachment.sizeBytes -
+                    message.index * FILE_TRANSFER_CHUNK_BYTES
+            );
+            if (bytes.byteLength !== expectedBytes) {
+                throw new Error(
+                    'File chunk size does not match the source file.'
+                );
+            }
+            hasher.update(bytes);
+            uploadChunks.push(new Blob([bytes]));
+            nextUploadIndex++;
+            send({ type: 'upload_chunk_saved', index: message.index });
+            return;
+        }
+        if (message.type === 'upload_complete') {
+            if (!upload || !hasher) {
+                throw new Error('File upload has not started.');
+            }
+            if (nextUploadIndex !== upload.chunkCount) {
+                throw new Error('File upload is incomplete.');
+            }
+            const blob = new Blob(uploadChunks, {
+                type: upload.attachment.mediaType,
+            });
+            if (blob.size !== upload.attachment.sizeBytes) {
+                throw new Error(
+                    'Transferred file size does not match the source file.'
+                );
+            }
+            const attachment: DraftAttachment = {
+                ...upload.attachment,
+                hash: bytesToHex(hasher.digest()),
+            };
+            releaseUploadState();
+            await dbStageDraftAttachment(upload.chatId, attachment, blob);
+            send({ type: 'upload_saved', hash: attachment.hash });
+            if (upload.replicateTo && FILE_PROVIDERS.has(upload.replicateTo)) {
+                void replicateDraftAttachment(
+                    upload.chatId,
+                    upload.replicateTo,
+                    attachment,
+                    blob,
+                    upload.sourceTabId
+                );
+            }
+            return;
+        }
+        if (message.type === 'download_start') {
+            if (upload || downloadBlob) {
+                throw new Error('File transfer already started.');
+            }
+            downloadBlob = await dbGetFileBlob(message.hash);
+            if (!downloadBlob) {
+                send({ type: 'download_missing' });
+                return;
+            }
+            send({
+                type: 'download_ready',
+                mediaType: downloadBlob.type,
+                sizeBytes: downloadBlob.size,
+                chunkCount: Math.ceil(
+                    downloadBlob.size / FILE_TRANSFER_CHUNK_BYTES
+                ),
+            });
+            return;
+        }
+        if (!downloadBlob) {
+            throw new Error('File download has not started.');
+        }
+        const chunkCount = Math.ceil(
+            downloadBlob.size / FILE_TRANSFER_CHUNK_BYTES
+        );
+        if (message.index < 0 || message.index >= chunkCount) {
+            throw new Error('Invalid file download chunk.');
+        }
+        const start = message.index * FILE_TRANSFER_CHUNK_BYTES;
+        const bytes = new Uint8Array(
+            await downloadBlob
+                .slice(start, start + FILE_TRANSFER_CHUNK_BYTES)
+                .arrayBuffer()
+        );
+        send({
+            type: 'download_chunk',
+            index: message.index,
+            base64: bytesToBase64(bytes),
+        });
+    };
+
+    port.onMessage.addListener((message: FileTransferRequest) => {
+        work = work.then(() => handle(message)).catch(fail);
+    });
+    port.onDisconnect.addListener(() => {
+        portOpen = false;
+        releaseUploadState();
+        releaseStreamPort(port);
+    });
+}
+
 export default defineBackground(() => {
     log.info('background ready');
 
@@ -776,6 +1122,11 @@ export default defineBackground(() => {
     );
 
     chrome.runtime.onConnectExternal.addListener((port) => {
+        if (port.name === 'file-transfer') {
+            log.info('file transfer port connected');
+            handleFileTransferPort(port);
+            return;
+        }
         if (port.name === 'broadcast') {
             log.info('broadcast port connected');
             broadcastPorts.set(port, undefined);
@@ -902,6 +1253,7 @@ export default defineBackground(() => {
             let capturedContainerExpiresAt: string | undefined;
             let storageOn = false;
             let apiKey: string | undefined;
+            let ephemeralInputFiles: ProviderFileRef[] = [];
             const outputWarnings: string[] = [];
             const streamOutputBlobs: Record<
                 string,
@@ -935,12 +1287,15 @@ export default defineBackground(() => {
                 storageOn = await readProviderFileStorageEnabled();
                 let providerFiles:
                     Record<string, ProviderFileEntry> | undefined;
-                if (FILE_PROVIDERS.has(msg.provider) && storageOn) {
-                    providerFiles = await ensureReplicas(
+                if (FILE_PROVIDERS.has(msg.provider)) {
+                    const prepared = await prepareProviderFiles(
                         msg.messages,
                         msg.provider,
-                        apiKey
+                        apiKey,
+                        storageOn
                     );
+                    providerFiles = prepared.files;
+                    ephemeralInputFiles = prepared.ephemeral;
                 }
                 const blobs = await hydrateBlobs(
                     msg.messages,
@@ -1151,10 +1506,20 @@ export default defineBackground(() => {
                             log.error('container persist failed', err);
                         }
                     }
-                    if (outputWarnings.length && disp !== 'errored') {
-                        inStreamErrorText = outputWarnings.join('\n');
-                        disp = 'errored';
-                    }
+                }
+
+                if (apiKey && ephemeralInputFiles.length) {
+                    outputWarnings.push(
+                        ...(await deleteTemporaryProviderFiles(
+                            ephemeralInputFiles,
+                            apiKey
+                        ))
+                    );
+                }
+
+                if (outputWarnings.length && disp !== 'errored') {
+                    inStreamErrorText = outputWarnings.join('\n');
+                    disp = 'errored';
                 }
 
                 if (disp === 'errored' && inStreamErrorText) {

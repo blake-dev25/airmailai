@@ -115,7 +115,7 @@
                 );
                 return;
             }
-            triggerBlobDownload(file.filename, blob.mediaType, blob.base64);
+            triggerBlobDownload(file.filename, blob);
         } catch (err) {
             reportAppError(
                 `local file download failed (hash=${file.hash})`,
@@ -155,7 +155,7 @@
             if (!blob) {
                 throw new Error('file not found in local storage');
             }
-            triggerBlobDownload(file.filename, blob.mediaType, blob.base64);
+            triggerBlobDownload(file.filename, blob);
         } catch (err) {
             reportAppError(
                 `provider file download failed (fileId=${file.fileId})`,

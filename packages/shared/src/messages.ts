@@ -9,6 +9,36 @@ export interface DraftAttachment extends DraftAttachmentMeta {
     hash: string;
 }
 
+export const FILE_TRANSFER_CHUNK_BYTES = 16 * 1024 * 1024;
+
+export type FileTransferRequest =
+    | {
+          type: 'upload_start';
+          chatId: string;
+          attachment: DraftAttachmentMeta;
+          chunkCount: number;
+          replicateTo?: string;
+          sourceTabId?: string;
+      }
+    | { type: 'upload_chunk'; index: number; base64: string }
+    | { type: 'upload_complete' }
+    | { type: 'download_start'; hash: string }
+    | { type: 'download_chunk'; index: number };
+
+export type FileTransferResponse =
+    | { type: 'upload_ready' }
+    | { type: 'upload_chunk_saved'; index: number }
+    | { type: 'upload_saved'; hash: string }
+    | {
+          type: 'download_ready';
+          mediaType: string;
+          sizeBytes: number;
+          chunkCount: number;
+      }
+    | { type: 'download_missing' }
+    | { type: 'download_chunk'; index: number; base64: string }
+    | { type: 'error'; message: string };
+
 export interface AirmailAIMessageMetadata {
     createdAt: number;
     model?: string;
@@ -263,6 +293,13 @@ export type BroadcastEvent =
     | { type: 'turn-aborted'; chatId: string }
     | { type: 'turn-truncate'; chatId: string; charLen: number }
     | { type: 'files-changed'; chatIds: string[] }
+    | {
+          type: 'replica-warning';
+          chatId: string;
+          provider: string;
+          filename: string;
+          message: string;
+      }
     | { type: 'meta-changed'; meta: ChatMeta }
     | { type: 'chat-deleted'; chatId: string }
     | { type: 'chats-cleared' };
@@ -277,13 +314,15 @@ export interface BroadcastKeepaliveRequest {
 export type BroadcastRequest =
     BroadcastRegisterRequest | BroadcastKeepaliveRequest;
 
+export type BrandingMode = 'on' | 'stripes' | 'off';
+
 export interface UserSettings {
     theme: string;
     fontSizeIndex: number;
     chatWidth: number;
     smoothTextMode: 'smooth' | 'raw';
     submitKeystroke: 'enter' | 'ctrl+enter';
-    modelTier: 'latest' | 'previous' | 'legacy';
+    modelTier: 'latest' | 'previous' | 'legacy' | 'test';
     autoscrollMode: 'pin-user-message' | 'pin-bottom' | 'off';
     chatSortOrder: 'modified' | 'created';
     enableWebSearch: boolean;
@@ -299,7 +338,7 @@ export interface UserSettings {
     adaptiveThinking: boolean;
     tagOpenRouterRequests: boolean;
     openRouterPdfEngine: 'native' | 'auto' | 'cloudflare-ai' | 'mistral-ocr';
-    showBranding: boolean;
+    brandingMode: BrandingMode;
     messageFont: 'serif' | 'sans';
     legalAcceptedVersion: string;
 }
@@ -326,7 +365,7 @@ const SETTINGS_KEY_MAP: { [K in keyof UserSettings]: 0 } = {
     adaptiveThinking: 0,
     tagOpenRouterRequests: 0,
     openRouterPdfEngine: 0,
-    showBranding: 0,
+    brandingMode: 0,
     messageFont: 0,
     legalAcceptedVersion: 0,
 };
@@ -409,23 +448,28 @@ export type StorageRequest =
     | { type: 'load_settings' }
     | { type: 'save_meta'; meta: ChatMeta; sourceTabId?: string }
     | {
-          type: 'stage_draft_attachment';
-          chatId: string;
-          attachment: DraftAttachment;
-          base64: string;
-          replicateTo?: string;
+          type: 'prepare_turn';
+          meta: ChatMeta;
+          message: HydratedStoredMessage;
+          sourceTabId?: string;
+      }
+    | {
+          type: 'prepare_retry';
+          meta: ChatMeta;
+          lastKeptId: string;
+          sourceTabId?: string;
       }
     | { type: 'remove_draft_attachment'; chatId: string; key: string }
     | { type: 'clear_draft_attachments'; chatId: string }
     | { type: 'put_message'; message: HydratedStoredMessage }
     | { type: 'delete_message'; chatId: string; messageId: string }
-    | { type: 'delete_messages_after'; chatId: string; lastKeptId: string }
     | { type: 'delete_chat'; chatId: string; sourceTabId?: string }
     | { type: 'load_chat_metas' }
     | { type: 'load_chats_by_ids'; ids: string[] }
     | { type: 'load_chat'; chatId: string }
     | { type: 'load_openrouter_models' }
-    | { type: 'get_file_blob'; hash: string }
+    | { type: 'get_openrouter_refresh_status' }
+    | { type: 'refresh_openrouter_models' }
     | { type: 'file_status'; hashes: string[]; provider: string }
     | { type: 'list_local_files' }
     | { type: 'list_provider_files'; provider: string }
@@ -455,10 +499,7 @@ export type StorageResponse =
     | { type: 'chats'; chats: StoredChat[] }
     | { type: 'chat'; chat: StoredChat | null }
     | { type: 'openrouter_models'; models: OpenRouterModel[] | null }
-    | {
-          type: 'file_blob';
-          blob: { mediaType: string; base64: string } | null;
-      }
+    | { type: 'openrouter_refresh_status'; lastAttemptAt: number | null }
     | { type: 'file_status'; statuses: Record<string, FileAvailability> }
     | { type: 'local_files'; files: LocalFileInfo[] }
     | { type: 'provider_files'; files: ProviderFileInfo[] }

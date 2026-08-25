@@ -1,7 +1,10 @@
 export type ThinkingLevel =
     'none' | 'minimal' | 'low' | 'medium' | 'high' | 'max' | 'xhigh';
 
-export type ModelTier = 'latest' | 'previous' | 'legacy';
+export type VisibleModelTier = 'latest' | 'previous' | 'legacy';
+export type ModelTier = VisibleModelTier | 'test';
+export type ModelTierAssignment =
+    VisibleModelTier | readonly [VisibleModelTier, 'test'];
 
 export interface ModelParams {
     contextWindow: number;

@@ -1,5 +1,7 @@
 import { expect, test } from './fixtures';
 
+test.use({ seedModelTier: 'legacy' });
+
 test('New Chat button creates a fresh empty chat', async ({ airmailai }) => {
     await airmailai.goto();
     await airmailai.send('Say the word apples and nothing else.');

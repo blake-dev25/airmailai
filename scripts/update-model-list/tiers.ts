@@ -26,10 +26,24 @@ export function updateTiersFile(
         }
     }
 
-    const sectionEntries: Array<{ id: string; tier: string }> = [];
+    const sectionEntries: Array<{
+        id: string;
+        tier: string;
+        assignment: string;
+    }> = [];
     for (let i = sectionIdx + 1; i < endIdx; i++) {
-        const m = lines[i].match(/^\s*'([^']+)':\s*'([^']+)',?\s*$/);
-        if (m) sectionEntries.push({ id: m[1], tier: m[2] });
+        const m = lines[i].match(/^\s*'([^']+)':\s*(.+),\s*$/);
+        if (!m) continue;
+        const tiers = Array.from(
+            m[2].matchAll(/'([^']+)'/g),
+            (match) => match[1]
+        );
+        if (tiers.length === 0) continue;
+        sectionEntries.push({
+            id: m[1],
+            tier: tiers.join(','),
+            assignment: m[2],
+        });
     }
 
     const allExisting = new Set<string>();
@@ -44,13 +58,17 @@ export function updateTiersFile(
 
     const combined = [
         ...sectionEntries,
-        ...newIds.map((id) => ({ id, tier: 'legacy' })),
+        ...newIds.map((id) => ({
+            id,
+            tier: 'legacy',
+            assignment: tsString('legacy'),
+        })),
     ];
     combined.sort((a, b) =>
         a.id.localeCompare(b.id, undefined, { numeric: true })
     );
     const sortedLines = combined.map(
-        (e) => `    ${tsString(e.id)}: ${tsString(e.tier)},`
+        (e) => `    ${tsString(e.id)}: ${e.assignment},`
     );
 
     const updated = [

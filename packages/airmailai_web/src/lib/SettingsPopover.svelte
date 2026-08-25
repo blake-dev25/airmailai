@@ -7,6 +7,7 @@
         clearAllChats,
         clearAllStorage,
         clearApiKey,
+        getOpenRouterRefreshStatus,
         getStorageUsage,
         saveApiKey,
         testApiKey,
@@ -38,7 +39,10 @@
     const OPENROUTER_PDF_INFO =
         'Controls how PDFs are processed in OpenRouter chats. "Provider native only" sends the PDF to the model provider and nowhere else, but only works with models that support PDF input. The Cloudflare and Mistral options parse the PDF into text first, which lets any model read PDFs but routes the file contents through that third party. Mistral OCR bills per page to your OpenRouter account; Cloudflare parsing is free.';
     const FILE_UPLOADS_WARNING =
-        "When file uploads are enabled, AirmailAI turns on Provider File Storage (PFS) and Code Execution (CE) by default. Any files uploaded through AirmailAI are stored on your device in IndexedDB; PFS also saves a copy on provider servers until you delete it, subject to each provider's retention policies. When combined with PFS, Code Execution enables Anthropic and OpenAI models to access, search, and process files directly in its sandbox container, which can reduce token usage. With Google, files are read fully into the model's context each time they are used (including by CE), so they do not reduce token usage and large files may not fit. When PFS is turned off, the full file content must be sent to the provider with every relevant message. You can manage stored files anytime from the Files tab in the sidebar. PFS and CE may add provider-side costs, see each provider's API documentation for pricing and retention details.";
+        "When file uploads are enabled, AirmailAI turns on Provider File Storage (PFS) and Code Execution (CE) by default. Any files uploaded through AirmailAI are stored on your device in IndexedDB; PFS also saves a copy on provider servers until you delete it, subject to each provider's retention policies. When combined with PFS, Code Execution enables Anthropic and OpenAI models to access, search, and process files directly in its sandbox container, which can reduce token usage. With Google, files are read fully into the model's context each time they are used (including by CE), so they do not reduce token usage and large files may not fit. When PFS is turned off, the full file content must be sent to the provider with every relevant message, which can increase token usage. You can manage stored files anytime from the Files tab in the sidebar. PFS and CE may add provider-side costs, see each provider's API documentation for pricing and retention details.";
+    const OPENROUTER_REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
+    const OPENROUTER_REFRESH_COOLDOWN_TITLE =
+        'Recently refreshed, please wait 5m to try again.';
 
     let storageUsage = $state<StorageUsage | null>(null);
     let storageLoading = $state(false);
@@ -209,7 +213,10 @@
         },
     ]);
 
-    let showPrevious = $derived(settingsStore.modelTier !== 'latest');
+    let showPrevious = $derived(
+        settingsStore.modelTier === 'previous' ||
+            settingsStore.modelTier === 'legacy'
+    );
     let showLegacy = $derived(settingsStore.modelTier === 'legacy');
 
     function togglePrevious(checked: boolean) {
@@ -218,6 +225,94 @@
 
     function toggleLegacy(checked: boolean) {
         settingsStore.modelTier = checked ? 'legacy' : 'previous';
+    }
+
+    type OpenRouterRefreshState = 'idle' | 'loading' | 'success' | 'error';
+    let openRouterRefreshState = $state<OpenRouterRefreshState>('idle');
+    let openRouterRefreshStatusLoading = $state(true);
+    let openRouterRefreshCoolingDown = $state(false);
+    let openRouterRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+    let hasOpenRouterKey = $derived(
+        providersStore.savedKeys?.openrouter === true
+    );
+    let openRouterRefreshDisabled = $derived(
+        !hasOpenRouterKey ||
+            openRouterRefreshStatusLoading ||
+            openRouterRefreshCoolingDown ||
+            openRouterRefreshState === 'loading'
+    );
+
+    function setOpenRouterRefreshCooldown(lastAttemptAt: number | null) {
+        if (openRouterRefreshTimer !== undefined) {
+            clearTimeout(openRouterRefreshTimer);
+            openRouterRefreshTimer = undefined;
+        }
+        if (lastAttemptAt === null) {
+            openRouterRefreshCoolingDown = false;
+            return;
+        }
+        const remaining =
+            lastAttemptAt + OPENROUTER_REFRESH_COOLDOWN_MS - Date.now();
+        if (remaining <= 0) {
+            openRouterRefreshCoolingDown = false;
+            if (openRouterRefreshState !== 'loading') {
+                openRouterRefreshState = 'idle';
+            }
+            return;
+        }
+        openRouterRefreshCoolingDown = true;
+        openRouterRefreshTimer = setTimeout(() => {
+            openRouterRefreshCoolingDown = false;
+            openRouterRefreshState = 'idle';
+            openRouterRefreshTimer = undefined;
+        }, remaining);
+    }
+
+    $effect(() => {
+        let cancelled = false;
+        waitForExtension()
+            .then(() => getOpenRouterRefreshStatus())
+            .then((lastAttemptAt) => {
+                if (!cancelled) {
+                    setOpenRouterRefreshCooldown(lastAttemptAt);
+                }
+            })
+            .catch((err) => {
+                if (!cancelled) {
+                    reportAppError(
+                        'OpenRouter refresh status load failed',
+                        "Couldn't read OpenRouter refresh status",
+                        err
+                    );
+                }
+            })
+            .finally(() => {
+                if (!cancelled) openRouterRefreshStatusLoading = false;
+            });
+        return () => {
+            cancelled = true;
+            if (openRouterRefreshTimer !== undefined) {
+                clearTimeout(openRouterRefreshTimer);
+            }
+        };
+    });
+
+    async function handleOpenRouterRefresh() {
+        if (openRouterRefreshDisabled) return;
+        setOpenRouterRefreshCooldown(Date.now());
+        openRouterRefreshState = 'loading';
+        try {
+            await providersStore.refreshOpenRouterModels();
+            openRouterRefreshState = 'success';
+        } catch (err) {
+            openRouterRefreshState = 'error';
+            reportAppError(
+                'OpenRouter model refresh failed',
+                "Couldn't refresh OpenRouter models",
+                err
+            );
+        }
     }
 
     let keyInputs = $state<Record<string, string>>(
@@ -955,20 +1050,15 @@
                 <label for="show-branding" class={labelClass}
                     >Show Branding</label
                 >
-                <button
+                <select
                     id="show-branding"
-                    type="button"
-                    class={[switchClass, settingsStore.showBranding && 'on']}
-                    role="switch"
-                    aria-checked={settingsStore.showBranding}
-                    aria-label="Show Branding"
-                    onclick={() => {
-                        settingsStore.showBranding =
-                            !settingsStore.showBranding;
-                    }}
+                    class={selectClass}
+                    bind:value={settingsStore.brandingMode}
                 >
-                    <span class="toggle-switch-thumb"></span>
-                </button>
+                    <option value="on">On</option>
+                    <option value="stripes">Show stripes</option>
+                    <option value="off">Off</option>
+                </select>
             </div>
             <div class={[rowBase, themeRow]}>
                 <label for="tag-openrouter" class={labelClass}
@@ -998,6 +1088,39 @@
                 >
                     <span class="toggle-switch-thumb"></span>
                 </button>
+            </div>
+            <div class={[rowBase, themeRow]}>
+                <label for="refresh-openrouter-models" class={labelClass}
+                    >Refresh OpenRouter Model List</label
+                >
+                <div class="flex items-center gap-2">
+                    {#if openRouterRefreshState === 'loading'}
+                        <Icon name="spinner" class="text-fg-muted" />
+                    {/if}
+                    <button
+                        id="refresh-openrouter-models"
+                        type="button"
+                        class={[
+                            'w-20 shrink-0 px-2.5 py-1.25 border rounded-md bg-surface-raised text-xs font-medium cursor-pointer whitespace-nowrap transition-[background-color,opacity,color,border-color] duration-150 enabled:hover:bg-surface-sunken disabled:cursor-not-allowed',
+                            openRouterRefreshState === 'error'
+                                ? 'text-accent-fg! border-accent-fg! disabled:opacity-100!'
+                                : 'text-fg border-border disabled:opacity-[0.35]',
+                        ]}
+                        title={openRouterRefreshCoolingDown
+                            ? OPENROUTER_REFRESH_COOLDOWN_TITLE
+                            : undefined}
+                        disabled={openRouterRefreshDisabled}
+                        onclick={handleOpenRouterRefresh}
+                    >
+                        {#if openRouterRefreshState === 'success'}
+                            Refreshed
+                        {:else if openRouterRefreshState === 'error'}
+                            Error
+                        {:else}
+                            Refresh
+                        {/if}
+                    </button>
+                </div>
             </div>
             <div class={[rowBase, themeRow]}>
                 <div class="flex items-center gap-1.25">

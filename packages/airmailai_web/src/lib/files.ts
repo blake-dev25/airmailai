@@ -1,4 +1,4 @@
-import type { DraftAttachment } from '@airmailai/shared';
+import type { DraftAttachmentMeta } from '@airmailai/shared';
 
 const MB = 1024 * 1024;
 
@@ -297,23 +297,19 @@ const OPENROUTER_ACCEPT_EXTENSIONS_BY_MODALITY: Record<
     video: ['.mov', '.mp4', '.mpeg', '.webm'],
 };
 
-// *** 45MB keeps a staged file's base64 (raw * 4/3 = 60MB) under Chrome's
-// 64MiB extension message limit (extensions/renderer/messaging_util.cc).
-const GLOBAL_MAX_FILE_BYTES = 45 * MB;
-
 export const FILE_POLICIES: Record<FileProviderId, FilePolicy> = {
     anthropic: {
         providerId: 'anthropic',
         maxAttachments: 100,
-        maxFileBytes: 32 * MB,
-        maxRequestBytes: 32 * MB,
+        maxFileBytes: 500 * MB,
+        maxRequestBytes: 500 * MB,
         mimeTypes: ANTHROPIC_MIME_TYPES,
     },
     google: {
         providerId: 'google',
         maxAttachments: 100,
-        maxFileBytes: GLOBAL_MAX_FILE_BYTES,
-        maxRequestBytes: 100 * MB,
+        maxFileBytes: 2 * 1024 * MB,
+        maxRequestBytes: 2 * 1024 * MB,
         mimeTypes: GOOGLE_MIME_TYPES,
         maxAudioAttachments: 1,
         maxVideoAttachments: 10,
@@ -321,15 +317,15 @@ export const FILE_POLICIES: Record<FileProviderId, FilePolicy> = {
     openai: {
         providerId: 'openai',
         maxAttachments: 20,
-        maxFileBytes: GLOBAL_MAX_FILE_BYTES,
-        maxRequestBytes: 50 * MB,
+        maxFileBytes: 512 * MB,
+        maxRequestBytes: 512 * MB,
         mimeTypes: OPENAI_MIME_TYPES,
     },
     openrouter: {
         providerId: 'openrouter',
         maxAttachments: 8,
-        maxFileBytes: 32 * MB,
-        maxRequestBytes: 32 * MB,
+        maxFileBytes: 8 * MB,
+        maxRequestBytes: 8 * MB,
         mimeTypes: EMPTY_MIME_TYPES,
     },
 };
@@ -622,25 +618,8 @@ export function resolveFileMediaType(
     return null;
 }
 
-export async function hashBytes(bytes: ArrayBuffer): Promise<string> {
-    const digest = await crypto.subtle.digest('SHA-256', bytes);
-    const view = new Uint8Array(digest);
-    let hex = '';
-    for (let i = 0; i < view.length; i++) {
-        hex += view[i].toString(16).padStart(2, '0');
-    }
-    return hex;
-}
-
-export function triggerBlobDownload(
-    filename: string,
-    mediaType: string,
-    base64: string
-): void {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    const url = URL.createObjectURL(new Blob([bytes], { type: mediaType }));
+export function triggerBlobDownload(filename: string, blob: Blob): void {
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
@@ -648,15 +627,8 @@ export function triggerBlobDownload(
     URL.revokeObjectURL(url);
 }
 
-export function openBlobInNewTab(
-    mediaType: string,
-    base64: string,
-    page?: number
-): void {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    const url = URL.createObjectURL(new Blob([bytes], { type: mediaType }));
+export function openBlobInNewTab(blob: Blob, page?: number): void {
+    const url = URL.createObjectURL(blob);
     window.open(page ? `${url}#page=${page}` : url, '_blank', 'noopener');
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
@@ -692,7 +664,7 @@ export function validateFilename(
 }
 
 export function validateReadyAttachments(
-    attachments: DraftAttachment[],
+    attachments: DraftAttachmentMeta[],
     providerId: string,
     model?: FilePolicyModel | null,
     opts: FilePolicyOptions = {}
@@ -718,15 +690,15 @@ export function validateReadyAttachments(
                 message: `${attachment.name} is not supported by this provider.`,
             };
         }
-        if (attachment.encodedSizeBytes > policy.maxFileBytes) {
+        if (attachment.sizeBytes > policy.maxFileBytes) {
             return {
                 ok: false,
-                message: `${attachment.name} is too large after encoding. Limit: ${formatFileSize(policy.maxFileBytes)}.`,
+                message: `${attachment.name} is too large. Limit: ${formatFileSize(policy.maxFileBytes)}.`,
             };
         }
         if (attachment.mediaType.startsWith('audio/')) audioCount++;
         if (attachment.mediaType.startsWith('video/')) videoCount++;
-        total += attachment.encodedSizeBytes;
+        total += attachment.sizeBytes;
     }
 
     if (

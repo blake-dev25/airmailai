@@ -113,8 +113,7 @@ export const ANTHROPIC_OVERRIDES: Record<string, ModelOverride> = {
     'claude-haiku-4-5-20251001': {
         idAlias: 'claude-haiku-4-5',
         tools: ANTHROPIC_TOOLS_LEGACY,
-    },
-    'claude-opus-4-1-20250805': { tools: ANTHROPIC_TOOLS_LEGACY },
+    }
 };
 
 // *** OpenAI's own /models endpoint is barebones, but OpenRouter fills most of the
@@ -130,13 +129,6 @@ const O_SERIES_THINKING: ThinkingOverride = {
 };
 
 export const OPENAI_OVERRIDES: Record<string, ModelOverride> = {
-    // *** xhigh shipped with gpt-5.1-codex-max; the docs scrape misses it.
-    'gpt-5.1-codex-max': {
-        thinking: {
-            levels: ['none', 'low', 'medium', 'high', 'xhigh'],
-            defaultLevel: 'none',
-        },
-    },
     'gpt-5-pro': {
         thinking: { levels: ['high'], defaultLevel: 'high' },
     },
@@ -145,9 +137,7 @@ export const OPENAI_OVERRIDES: Record<string, ModelOverride> = {
     o3: { thinking: O_SERIES_THINKING },
     'o3-mini': { thinking: O_SERIES_THINKING },
     'o3-pro': { thinking: O_SERIES_THINKING },
-    'o3-deep-research': { thinking: O_SERIES_THINKING },
-    'o4-mini': { thinking: O_SERIES_THINKING },
-    'o4-mini-deep-research': { thinking: O_SERIES_THINKING },
+    'o4-mini': { thinking: O_SERIES_THINKING }
 };
 
 // *** Google's API gives token limits and temperature. Thinking levels come

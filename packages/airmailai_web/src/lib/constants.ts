@@ -2,19 +2,23 @@ export type {
     ModelOption,
     ModelParams,
     ModelTier,
+    ModelTierAssignment,
     ProviderOption,
     ThinkingLevel,
+    VisibleModelTier,
 } from './models';
 export {
     buildOpenRouterProvider,
     defaultModelForProvider,
     filterProvidersByTier,
     MODEL_TIERS,
+    modelHasTier,
     modelMatchesTier,
     PROVIDERS,
+    visibleModelTier,
 } from './models';
 
-export const MIN_EXT_VERSION = '26.7.3.1';
+export const MIN_EXT_VERSION = '26.8.24.1';
 
 export const FONT_SIZES = [14, 16, 18, 20, 22, 24] as const;
 

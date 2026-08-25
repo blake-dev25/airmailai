@@ -1,4 +1,4 @@
-import Anthropic, { toFile } from '@anthropic-ai/sdk';
+import Anthropic from '@anthropic-ai/sdk';
 import type { ProviderFileInfo } from '@airmailai/shared';
 import { makeDebugFetch } from './debug-fetch';
 
@@ -14,11 +14,11 @@ function fileClient(apiKey: string): Anthropic {
 
 export async function uploadAnthropicFile(
     apiKey: string,
-    bytes: Uint8Array,
+    blob: Blob,
     mediaType: string,
     filename: string
 ): Promise<string> {
-    const file = await toFile(bytes, filename, { type: mediaType });
+    const file = new File([blob], filename, { type: mediaType });
     const result = await fileClient(apiKey).beta.files.upload({
         file,
         betas: [FILES_BETA],

@@ -1,4 +1,5 @@
 import { HTTPClient, OpenRouter } from '@openrouter/sdk';
+import { EventStream } from '@openrouter/sdk/lib/event-streams.js';
 import type {
     EasyInputMessageContentUnion1,
     FileParserPlugin,
@@ -12,6 +13,7 @@ import type {
 import { resolveAttachments } from './attachments';
 import { makeDebugFetch } from './debug-fetch';
 import { foldReplayIntoText } from './fold-replay';
+import { decodeBase64Text } from '../storage/encoding';
 
 type Effort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 
@@ -31,13 +33,6 @@ function toReasoning(level: string | undefined): ReasoningConfig | undefined {
         return { effort: level, summary: 'auto' };
     }
     return undefined;
-}
-
-function decodeBase64Text(base64: string): string {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return new TextDecoder().decode(bytes);
 }
 
 function audioFormat(mediaType: string): 'mp3' | 'wav' | undefined {
@@ -232,11 +227,22 @@ export async function* streamOpenRouter(
     let stopReason: AirmailAIMessageMetadata['stopReason'];
 
     try {
-        const stream = await client.beta.responses.send(requestBody, {
+        const stream = await client.responses.send(requestBody, {
             signal: args.signal,
         });
+        if (!(stream instanceof EventStream)) {
+            throw new Error(
+                'OpenRouter returned a non-streaming response to a streaming request'
+            );
+        }
         for await (const event of stream) {
-            if (event.type === 'response.output_text.delta') {
+            if (
+                event.type === 'response.output_text.delta' ||
+                event.type === 'response.refusal.delta'
+            ) {
+                if (event.type === 'response.refusal.delta') {
+                    stopReason = 'refusal';
+                }
                 if (mode !== 'text') {
                     if (mode === 'reasoning')
                         yield { type: 'reasoning-end', id: currentId };
@@ -252,6 +258,8 @@ export async function* streamOpenRouter(
                 }
                 currentTextLen += event.delta.length;
                 yield { type: 'text-delta', id: currentId, delta: event.delta };
+            } else if (event.type === 'response.refusal.done') {
+                stopReason = 'refusal';
             } else if (event.type === 'response.output_text.annotation.added') {
                 const ann = event.annotation as {
                     type?: string;

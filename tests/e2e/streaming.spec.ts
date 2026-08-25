@@ -1,10 +1,12 @@
-import { expect, test } from './fixtures';
+import { expect, PROVIDER_MODELS, test } from './fixtures';
 
 test('Stop halts mid-stream, keeps partial, and persists the chopped answer', async ({
     airmailai,
 }) => {
     await airmailai.goto();
-    await airmailai.setModelById('claude-sonnet-5');
+    await expect(airmailai.modelTrigger()).toContainText(
+        PROVIDER_MODELS.anthropic.chatName
+    );
     await airmailai.setThinkingNone();
 
     let partial = '';

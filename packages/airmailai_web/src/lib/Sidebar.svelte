@@ -134,7 +134,7 @@
 <aside
     class="sidebar w-64 shrink-0 flex flex-col bg-canvas border-r border-border overflow-hidden select-none [&_input]:select-text"
 >
-    {#if settingsStore.showBranding}
+    {#if settingsStore.brandingMode !== 'off'}
         <svg
             width={sidebarW}
             height={stripeH}
@@ -164,7 +164,9 @@
                 {/each}
             </g>
         </svg>
+    {/if}
 
+    {#if settingsStore.brandingMode === 'on'}
         <div
             class="flex shrink-0 items-center justify-center gap-2 px-4 py-4.5 text-fg border-b border-border"
         >

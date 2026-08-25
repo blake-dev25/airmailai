@@ -10,7 +10,7 @@ import type {
     StoredMessage,
 } from '@airmailai/shared';
 import { log } from '../debug';
-import { bytesToBase64 } from './encoding';
+import { base64ToBytes } from './encoding';
 
 interface IdbUsage {
     chatHistoryBytes: number;
@@ -18,7 +18,7 @@ interface IdbUsage {
 }
 
 const DB_NAME = 'airmailai';
-const DB_VERSION = 14;
+const DB_VERSION = 16;
 
 const STORE_MESSAGES = 'chat_messages';
 const STORE_META = 'chat_meta';
@@ -54,24 +54,22 @@ let _db: IDBDatabase | null = null;
 function openDb(): Promise<IDBDatabase> {
     return new Promise((resolve, reject) => {
         const req = indexedDB.open(DB_NAME, DB_VERSION);
-        req.onupgradeneeded = (event) => {
+        req.onupgradeneeded = () => {
             const db = req.result;
-            if (event.oldVersion < 14) {
-                for (const name of Array.from(db.objectStoreNames)) {
-                    db.deleteObjectStore(name);
-                }
-                const messages = db.createObjectStore(STORE_MESSAGES, {
-                    keyPath: ['chatId', 'message.id'],
-                });
-                messages.createIndex(
-                    INDEX_CHAT_ORDER,
-                    ['chatId', 'message.metadata.createdAt', 'message.id'],
-                    { unique: false }
-                );
-                db.createObjectStore(STORE_META, { keyPath: 'id' });
-                db.createObjectStore(STORE_FILES, { keyPath: 'hash' });
-                db.createObjectStore(STORE_FILE_META, { keyPath: 'hash' });
+            for (const name of Array.from(db.objectStoreNames)) {
+                db.deleteObjectStore(name);
             }
+            const messages = db.createObjectStore(STORE_MESSAGES, {
+                keyPath: ['chatId', 'message.id'],
+            });
+            messages.createIndex(
+                INDEX_CHAT_ORDER,
+                ['chatId', 'message.metadata.createdAt', 'message.id'],
+                { unique: false }
+            );
+            db.createObjectStore(STORE_META, { keyPath: 'id' });
+            db.createObjectStore(STORE_FILES, { keyPath: 'hash' });
+            db.createObjectStore(STORE_FILE_META, { keyPath: 'hash' });
         };
         req.onsuccess = () => {
             log.info('IndexedDB opened');
@@ -251,10 +249,7 @@ async function reconcileChatFileRefs(
 }
 
 function base64ToBlob(base64: string, mediaType: string): Blob {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return new Blob([bytes], { type: mediaType });
+    return new Blob([base64ToBytes(base64)], { type: mediaType });
 }
 
 function freshBlobsFromHydrated(msg: HydratedStoredMessage): Map<string, Blob> {
@@ -267,31 +262,52 @@ function freshBlobsFromHydrated(msg: HydratedStoredMessage): Map<string, Blob> {
     return blobs;
 }
 
-export async function dbPutMessage(
-    msg: HydratedStoredMessage
-): Promise<ProviderFileRef[]> {
-    log.info('db: put message', msg.chatId, msg.message.id);
-    if (!Number.isFinite(msg.message.metadata?.createdAt)) {
+function messageCreatedAt(msg: HydratedStoredMessage): number {
+    const createdAt = msg.message.metadata?.createdAt;
+    if (!Number.isFinite(createdAt)) {
         throw new Error(
             `Message ${msg.message.id} has no valid createdAt - refusing to persist`
         );
     }
-    const freshBlobs = freshBlobsFromHydrated(msg);
-    const db = await getDb();
-    const { tx, stores } = fileTx(db);
+    return createdAt;
+}
 
-    const meta = (await reqAsPromise(stores.chatMetaStore.get(msg.chatId))) as
-        ChatMeta | undefined;
-    if (!meta) {
-        log.info('db: chat gone, skipping put', msg.chatId, msg.message.id);
+function mergeChatMeta(
+    existing: ChatMeta | undefined,
+    meta: ChatMeta,
+    draftAttachments = existing?.draftAttachments
+): ChatMeta {
+    const lastMessageAt = Math.max(
+        existing?.lastMessageAt ?? 0,
+        meta.lastMessageAt ?? 0
+    );
+    return {
+        ...meta,
+        ...(lastMessageAt ? { lastMessageAt } : {}),
+        draftAttachments,
+        containerId: existing?.containerId,
+        containerExpiresAt: existing?.containerExpiresAt,
+        containerFileIds: existing?.containerFileIds,
+    };
+}
+
+function abortActiveTransaction(tx: IDBTransaction): void {
+    try {
         tx.abort();
-        return [];
+    } catch (err) {
+        if (!(
+            err instanceof DOMException && err.name === 'InvalidStateError'
+        )) {
+            log.warn('db: transaction abort failed', err);
+        }
     }
-    const msgCreatedAt = msg.message.metadata.createdAt;
-    if (msgCreatedAt > (meta.lastMessageAt ?? 0)) {
-        stores.chatMetaStore.put({ ...meta, lastMessageAt: msgCreatedAt });
-    }
+}
 
+async function putMessageInStores(
+    stores: FileStores,
+    msg: HydratedStoredMessage
+): Promise<Set<string>> {
+    const freshBlobs = freshBlobsFromHydrated(msg);
     const prior = (await reqAsPromise(
         stores.messagesStore.get([msg.chatId, msg.message.id])
     )) as StoredMessage | undefined;
@@ -309,15 +325,158 @@ export async function dbPutMessage(
     }
 
     const nextHashes = new Set(messageAttachmentHashes(msg.message));
-    const removed = new Set(
+    return new Set(
         messageAttachmentHashes(prior?.message ?? null).filter(
-            (h) => !nextHashes.has(h)
+            (hash) => !nextHashes.has(hash)
         )
     );
-    const refs = await reconcileChatFileRefs(stores, msg.chatId, removed);
+}
 
-    await txDone(tx);
-    return refs;
+async function deleteMessagesAfterInStores(
+    stores: FileStores,
+    chatId: string,
+    lastKeptId: string
+): Promise<Set<string>> {
+    const boundary = (await reqAsPromise(
+        stores.messagesStore.get([chatId, lastKeptId])
+    )) as StoredMessage | undefined;
+    if (!boundary) {
+        throw new Error(
+            `Message ${lastKeptId} not found in chat ${chatId} - refusing to truncate`
+        );
+    }
+    const boundaryCreatedAt = boundary.message.metadata?.createdAt ?? 0;
+    const index = stores.messagesStore.index(INDEX_CHAT_ORDER);
+    const range = IDBKeyRange.bound(
+        [
+            chatId,
+            boundaryCreatedAt,
+            boundary.message.id,
+        ] as unknown as IDBValidKey,
+        [chatId, Number.POSITIVE_INFINITY, KEY_MAX] as unknown as IDBValidKey,
+        true,
+        false
+    );
+    const removedHashes = new Set<string>();
+    const cursorReq = index.openCursor(range);
+    await new Promise<void>((resolve, reject) => {
+        cursorReq.onsuccess = () => {
+            try {
+                const cursor = cursorReq.result;
+                if (!cursor) {
+                    resolve();
+                    return;
+                }
+                const row = cursor.value as StoredMessage;
+                for (const hash of messageAttachmentHashes(row.message)) {
+                    removedHashes.add(hash);
+                }
+                cursor.delete();
+                cursor.continue();
+            } catch (err) {
+                reject(err);
+            }
+        };
+        cursorReq.onerror = () => reject(cursorReq.error);
+    });
+    return removedHashes;
+}
+
+export async function dbPrepareTurn(
+    meta: ChatMeta,
+    msg: HydratedStoredMessage
+): Promise<ProviderFileRef[]> {
+    log.info('db: prepare turn', meta.id, msg.message.id);
+    if (msg.chatId !== meta.id) {
+        throw new Error(`Message chat ${msg.chatId} does not match ${meta.id}`);
+    }
+    if (msg.message.role !== 'user') {
+        throw new Error(`Message ${msg.message.id} is not a user message`);
+    }
+    const createdAt = messageCreatedAt(msg);
+    const db = await getDb();
+    const { tx, stores } = fileTx(db);
+    try {
+        const existing = (await reqAsPromise(
+            stores.chatMetaStore.get(meta.id)
+        )) as ChatMeta | undefined;
+        const removed = await putMessageInStores(stores, msg);
+        for (const draft of existing?.draftAttachments ?? []) {
+            removed.add(draft.hash);
+        }
+        stores.chatMetaStore.put(
+            mergeChatMeta(
+                existing,
+                {
+                    ...meta,
+                    lastMessageAt: Math.max(meta.lastMessageAt ?? 0, createdAt),
+                },
+                []
+            )
+        );
+        const refs = await reconcileChatFileRefs(stores, meta.id, removed);
+        await txDone(tx);
+        return refs;
+    } catch (err) {
+        abortActiveTransaction(tx);
+        throw err;
+    }
+}
+
+export async function dbPrepareRetry(
+    meta: ChatMeta,
+    lastKeptId: string
+): Promise<ProviderFileRef[]> {
+    log.info('db: prepare retry', meta.id, lastKeptId);
+    const db = await getDb();
+    const { tx, stores } = fileTx(db);
+    try {
+        const existing = (await reqAsPromise(
+            stores.chatMetaStore.get(meta.id)
+        )) as ChatMeta | undefined;
+        if (!existing) {
+            throw new Error(`Chat ${meta.id} not found for retry`);
+        }
+        stores.chatMetaStore.put(mergeChatMeta(existing, meta));
+        const removed = await deleteMessagesAfterInStores(
+            stores,
+            meta.id,
+            lastKeptId
+        );
+        const refs = await reconcileChatFileRefs(stores, meta.id, removed);
+        await txDone(tx);
+        return refs;
+    } catch (err) {
+        abortActiveTransaction(tx);
+        throw err;
+    }
+}
+
+export async function dbPutMessage(
+    msg: HydratedStoredMessage
+): Promise<ProviderFileRef[]> {
+    log.info('db: put message', msg.chatId, msg.message.id);
+    const createdAt = messageCreatedAt(msg);
+    const db = await getDb();
+    const { tx, stores } = fileTx(db);
+    try {
+        const meta = (await reqAsPromise(
+            stores.chatMetaStore.get(msg.chatId)
+        )) as ChatMeta | undefined;
+        if (!meta) {
+            throw new Error(`Chat ${msg.chatId} not found for message`);
+        }
+        if (createdAt > (meta.lastMessageAt ?? 0)) {
+            stores.chatMetaStore.put({ ...meta, lastMessageAt: createdAt });
+        }
+        const removed = await putMessageInStores(stores, msg);
+        const refs = await reconcileChatFileRefs(stores, msg.chatId, removed);
+        await txDone(tx);
+        return refs;
+    } catch (err) {
+        abortActiveTransaction(tx);
+        throw err;
+    }
 }
 
 export async function dbDeleteMessage(
@@ -345,59 +504,6 @@ export async function dbDeleteMessage(
     return refs;
 }
 
-export async function dbDeleteMessagesAfter(
-    chatId: string,
-    lastKeptId: string
-): Promise<ProviderFileRef[]> {
-    log.info('db: delete messages after', chatId, lastKeptId);
-    const db = await getDb();
-    const { tx, stores } = fileTx(db);
-
-    const boundary = (await reqAsPromise(
-        stores.messagesStore.get([chatId, lastKeptId])
-    )) as StoredMessage | undefined;
-    if (!boundary) {
-        log.info('db: boundary message missing, nothing to truncate');
-        await txDone(tx);
-        return [];
-    }
-    const boundaryCreatedAt = boundary.message.metadata?.createdAt ?? 0;
-
-    const index = stores.messagesStore.index(INDEX_CHAT_ORDER);
-    const range = IDBKeyRange.bound(
-        [
-            chatId,
-            boundaryCreatedAt,
-            boundary.message.id,
-        ] as unknown as IDBValidKey,
-        [chatId, Number.POSITIVE_INFINITY, KEY_MAX] as unknown as IDBValidKey,
-        true,
-        false
-    );
-    const refs: ProviderFileRef[] = [];
-    const removedHashes = new Set<string>();
-    const cursorReq = index.openCursor(range);
-    await new Promise<void>((resolve, reject) => {
-        cursorReq.onsuccess = () => {
-            const cursor = cursorReq.result;
-            if (!cursor) {
-                resolve();
-                return;
-            }
-            const row = cursor.value as StoredMessage;
-            for (const hash of messageAttachmentHashes(row.message)) {
-                removedHashes.add(hash);
-            }
-            cursor.delete();
-            cursor.continue();
-        };
-        cursorReq.onerror = () => reject(cursorReq.error);
-    });
-    refs.push(...(await reconcileChatFileRefs(stores, chatId, removedHashes)));
-    await txDone(tx);
-    return refs;
-}
-
 export async function dbSaveMeta(meta: ChatMeta): Promise<void> {
     log.info('db: save meta', meta.id);
     const db = await getDb();
@@ -405,18 +511,7 @@ export async function dbSaveMeta(meta: ChatMeta): Promise<void> {
     const store = tx.objectStore(STORE_META);
     const existing = (await reqAsPromise(store.get(meta.id))) as
         ChatMeta | undefined;
-    const lastMessageAt = Math.max(
-        existing?.lastMessageAt ?? 0,
-        meta.lastMessageAt ?? 0
-    );
-    store.put({
-        ...meta,
-        ...(lastMessageAt ? { lastMessageAt } : {}),
-        draftAttachments: existing?.draftAttachments,
-        containerId: existing?.containerId,
-        containerExpiresAt: existing?.containerExpiresAt,
-        containerFileIds: existing?.containerFileIds,
-    });
+    store.put(mergeChatMeta(existing, meta));
     await txDone(tx);
 }
 
@@ -447,19 +542,16 @@ export async function dbSetContainer(
     await txDone(tx);
 }
 
-export async function dbStageDraftAttachment(
+async function stageDraftAttachmentInStores(
+    stores: FileStores,
     chatId: string,
     attachment: DraftAttachment,
-    base64: string
+    blob: Blob
 ): Promise<void> {
     const hash = attachment.hash;
-    log.info('db: stage draft attachment', chatId, hash);
-    const db = await getDb();
-    const { tx, stores } = fileTx(db);
     const meta = (await reqAsPromise(stores.chatMetaStore.get(chatId))) as
         ChatMeta | undefined;
     if (!meta) {
-        tx.abort();
         throw new Error(`Chat ${chatId} not found for draft attachment`);
     }
     const drafts = meta.draftAttachments ?? [];
@@ -470,14 +562,30 @@ export async function dbStageDraftAttachment(
             hash,
             attachment.name,
             attachment.mediaType,
-            base64ToBlob(base64, attachment.mediaType)
+            blob
         );
         stores.chatMetaStore.put({
             ...meta,
             draftAttachments: [...drafts, attachment],
         });
     }
-    await txDone(tx);
+}
+
+export async function dbStageDraftAttachment(
+    chatId: string,
+    attachment: DraftAttachment,
+    blob: Blob
+): Promise<void> {
+    log.info('db: stage draft attachment', chatId, attachment.hash);
+    const db = await getDb();
+    const { tx, stores } = fileTx(db);
+    try {
+        await stageDraftAttachmentInStores(stores, chatId, attachment, blob);
+        await txDone(tx);
+    } catch (err) {
+        abortActiveTransaction(tx);
+        throw err;
+    }
 }
 
 export async function dbRemoveDraftAttachment(
@@ -696,15 +804,6 @@ export async function dbGetStorageUsage(): Promise<IdbUsage> {
         total,
     });
     return { chatHistoryBytes, filesBytes };
-}
-
-export async function dbGetFileBlobBase64(
-    hash: string
-): Promise<{ mediaType: string; base64: string } | null> {
-    const blob = await dbGetFileBlob(hash);
-    if (!blob) return null;
-    const bytes = new Uint8Array(await blob.arrayBuffer());
-    return { mediaType: blob.type, base64: bytesToBase64(bytes) };
 }
 
 export async function dbGetFileBlob(hash: string): Promise<Blob | null> {

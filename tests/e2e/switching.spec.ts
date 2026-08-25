@@ -1,5 +1,7 @@
 import { expect, test } from './fixtures';
 
+test.use({ seedModelTier: 'legacy' });
+
 test('switching provider repopulates the model list', async ({ airmailai }) => {
     await airmailai.goto();
 
@@ -16,6 +18,7 @@ test('switching provider repopulates the model list', async ({ airmailai }) => {
 
 test('switching model updates Model Details', async ({ airmailai }) => {
     await airmailai.goto();
+    await airmailai.setModelById('claude-haiku-4-5');
 
     await expect(airmailai.contextUsage()).toContainText('200,000');
     await expect(airmailai.page.getByText('Feb 2025')).toBeVisible();

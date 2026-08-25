@@ -6,13 +6,17 @@ import type {
     AirmailAIToolName,
     ProviderStreamArgs,
 } from '@airmailai/shared';
-import { bytesToBase64, hashBytes } from '../storage/encoding';
+import {
+    bytesToBase64,
+    decodeBase64Text,
+    hashBytes,
+} from '../storage/encoding';
 import { FILES_BETA } from './anthropic-files';
 import { type ProviderReplicas, resolveAttachments } from './attachments';
 import { makeDebugFetch } from './debug-fetch';
 import { foldReplayIntoText } from './fold-replay';
 
-const BUDGET_TOKENS: Record<string, number> = {
+const BUDGET_TOKENS: Record<Effort, number> = {
     low: 2048,
     medium: 8192,
     high: 16000,
@@ -118,13 +122,6 @@ function parseCodeCommand(json: string): string | undefined {
         if (typeof v === 'string') return v;
     }
     return undefined;
-}
-
-function decodeBase64Text(base64: string): string {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return new TextDecoder().decode(bytes);
 }
 
 function attachmentBlock(
@@ -296,7 +293,8 @@ export async function* streamAnthropic(
                 : {
                       type: 'enabled',
                       budget_tokens: Math.min(
-                          BUDGET_TOKENS[thinkingLevel] ?? BUDGET_TOKENS.high,
+                          BUDGET_TOKENS[thinkingLevel as Effort] ??
+                              BUDGET_TOKENS.high,
                           Math.max(1024, maxTokens - 1024)
                       ),
                   }

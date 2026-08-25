@@ -1,27 +1,62 @@
 import type { OpenRouterModel } from '../../packages/shared/src/messages';
+import {
+    modelHasTier,
+    PROVIDERS,
+    type ModelOption,
+} from '../../packages/airmailai_web/src/lib/models';
 
 export const DEFAULT_PROVIDER = 'anthropic';
-export const DEFAULT_MODEL = 'claude-haiku-4-5';
+
+function testProviderModel(providerId: string): {
+    label: string;
+    model: ModelOption;
+} {
+    const provider = PROVIDERS.find((candidate) => candidate.id === providerId);
+    if (!provider) throw new Error(`Unknown provider: ${providerId}`);
+    const models = provider.models.filter((model) =>
+        modelHasTier(model.id, 'test')
+    );
+    if (models.length !== 1) {
+        throw new Error(
+            `Expected exactly one test model for ${providerId}, found ${models.length}`
+        );
+    }
+    return { label: provider.name, model: models[0] };
+}
+
+const ANTHROPIC_TEST = testProviderModel('anthropic');
+const OPENAI_TEST = testProviderModel('openai');
+const GOOGLE_TEST = testProviderModel('google');
+
+export const DEFAULT_MODEL = ANTHROPIC_TEST.model.id;
+export const DEFAULT_MODEL_PARAMS = ANTHROPIC_TEST.model.params;
 
 export const PROVIDER_MODELS = {
     anthropic: {
-        label: 'Anthropic',
-        chat: 'claude-haiku-4-5',
-        tools: 'claude-sonnet-5',
+        label: ANTHROPIC_TEST.label,
+        chat: ANTHROPIC_TEST.model.id,
+        chatName: ANTHROPIC_TEST.model.name,
+        tools: ANTHROPIC_TEST.model.id,
+        toolsName: ANTHROPIC_TEST.model.name,
     },
     openai: {
-        label: 'OpenAI',
-        chat: 'gpt-5.4-mini',
-        tools: 'gpt-5.5',
+        label: OPENAI_TEST.label,
+        chat: OPENAI_TEST.model.id,
+        chatName: OPENAI_TEST.model.name,
+        tools: OPENAI_TEST.model.id,
+        toolsName: OPENAI_TEST.model.name,
     },
     google: {
-        label: 'Google',
-        chat: 'gemini-3.5-flash',
-        tools: 'gemini-3.5-flash',
+        label: GOOGLE_TEST.label,
+        chat: GOOGLE_TEST.model.id,
+        chatName: GOOGLE_TEST.model.name,
+        tools: GOOGLE_TEST.model.id,
+        toolsName: GOOGLE_TEST.model.name,
     },
     openrouter: {
         label: 'OpenRouter',
         chat: '~anthropic/claude-haiku-latest',
+        chatName: 'Anthropic: Claude Haiku',
         // *** A non-Claude model for the web-search recall step: OpenRouter can't
         // round-trip native tool results, so sources replay via our text-fold.
         // Once search is toggled off on the recall turn, Claude models (any tier)
@@ -30,6 +65,7 @@ export const PROVIDER_MODELS = {
         // (Anthropic-native Claude is unaffected; it round-trips real web_search
         // results.)
         tools: '~openai/gpt-latest',
+        toolsName: 'OpenAI: GPT-Latest',
     },
 } as const;
 
@@ -52,18 +88,18 @@ export const OPENROUTER_CACHE_MODELS: OpenRouterModel[] = [
         contextWindow: 200_000,
         maxOutputTokens: 8192,
         inputModalities: ['text', 'image'],
-        supportedParams: ['tools', 'reasoning', 'temperature', 'max_tokens'],
+        supportedParams: ['tools', 'reasoning', 'max_tokens'],
         free: false,
         created: 1_730_000_000,
     },
     {
         id: '~openai/gpt-latest',
-        name: 'OpenAI: GPT-5.5',
+        name: 'OpenAI: GPT-Latest',
         vendor: '~openai',
         contextWindow: 400_000,
         maxOutputTokens: 128_000,
         inputModalities: ['text', 'image'],
-        supportedParams: ['tools', 'reasoning', 'temperature', 'max_tokens'],
+        supportedParams: ['tools', 'reasoning', 'max_tokens'],
         free: false,
         created: 1_730_000_000,
     },

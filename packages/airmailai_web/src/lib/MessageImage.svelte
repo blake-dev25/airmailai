@@ -18,14 +18,7 @@
         getFileBlob(currentHash)
             .then((blob) => {
                 if (!blob || cancelled) return;
-                const binary = atob(blob.base64);
-                const bytes = new Uint8Array(binary.length);
-                for (let i = 0; i < binary.length; i++) {
-                    bytes[i] = binary.charCodeAt(i);
-                }
-                objectUrl = URL.createObjectURL(
-                    new Blob([bytes], { type: blob.mediaType })
-                );
+                objectUrl = URL.createObjectURL(blob);
                 url = objectUrl;
             })
             .catch((err) => {

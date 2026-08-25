@@ -64,6 +64,7 @@
                 <div class="nav-links">
                     <a href="/">Home</a>
                     <a href="/faq/" aria-current="page">FAQ</a>
+                    <a href="/design-security/">Design &amp; Security</a>
                     <a href="/app/" target="_blank" rel="noopener"
                         >App
                         <svg
@@ -247,6 +248,9 @@
                         >What if I want to use a provider/model that isn't
                         listed on the site?</a
                     >
+                    <a href="#security-report"
+                        >How do I report a security issue?</a
+                    >
                     <a href="#bug-report"
                         >I found a bug or ran into an error. Where do I report
                         it?</a
@@ -276,19 +280,18 @@
             <h3 id="browsers">What browsers does AirmailAI support?</h3>
             <p>
                 AirmailAI supports desktop Chromium-based browsers such as
-                Chrome, Edge, and Brave. The AirmailAI browser extension is
-                required.
+                Chrome, Edge, and Brave.
             </p>
 
             <h3 id="why-extension">
                 Why do I need to install a browser extension?
             </h3>
             <p>
-                The AirmailAI website is just static files served from a CDN -
-                there are no AirmailAI servers that your keys, chats, or API
-                requests ever pass through. The browser extension acts as that
-                backend: it stores your API keys and sends your requests
-                directly to the provider.
+                The AirmailAI website is static files served from a CDN - there
+                are no AirmailAI servers that your keys, chats, or API requests
+                ever pass through. The browser extension acts as that backend:
+                it stores your API keys and sends your requests directly to the
+                provider.
             </p>
 
             <h3 id="why-not-direct">
@@ -298,9 +301,9 @@
                 Not all providers support calling their API directly from a
                 website. Additionally, calling APIs from a website can be
                 dangerous because the website has to store your API keys, where
-                any script running on the page can read them. Our extension
-                keeps your keys isolated from every website, even the official
-                AirmailAI website, by design.
+                any script running on the page can read them. The AirmailAI
+                extension keeps your keys isolated from every website, even the
+                official AirmailAI website, by design.
             </p>
 
             <h3 id="providers">What providers does AirmailAI support?</h3>
@@ -339,10 +342,9 @@
             </h3>
             <p>
                 AirmailAI is built to be lightweight, fast, and low-friction.
-                There's no account, no desktop app you have to install, and no
-                AirmailAI server between you and the provider. You install the
-                browser extension, open the app, add your API keys, and it just
-                works.
+                There's no account and no bulky desktop app you have to install.
+                You install the browser extension, open the app, add your API
+                keys, and it just works.
             </p>
 
             <h2 id="privacy">Privacy, Security, &amp; Data</h2>
@@ -353,15 +355,6 @@
                 model/request settings are sent from the website UI to the
                 browser extension, then directly to the provider and back to the
                 UI. Your conversations never touch our servers.
-            </p>
-            <p>
-                The provider you select still receives and processes the data
-                needed to fulfill your request under its own terms, privacy
-                policy, and retention settings. Requests sent through OpenRouter
-                are processed by OpenRouter and the downstream model provider it
-                routes the request to. Provider tools such as web search, URL
-                retrieval, file storage, and code execution may involve
-                additional provider services.
             </p>
 
             <h3 id="host-models">Does AirmailAI host any models?</h3>
@@ -452,10 +445,10 @@
                 API key and may need to set up API billing with that provider.
             </p>
 
-            <h3 id="free">Is AirmailAI free?</h3>
+            <h3 id="free">Is AirmailAI free to use?</h3>
             <p>
-                Yes, the AirmailAI website and extension are free. API usage is
-                billed by the respective providers.
+                Yes, the AirmailAI website and extension are free to use. API
+                usage is billed by respective providers.
             </p>
 
             <h3 id="api-costs">
@@ -472,10 +465,7 @@
             <h3 id="markup">
                 Does AirmailAI add a markup to provider API costs?
             </h3>
-            <p>
-                No, AirmailAI does not add a markup or charge per request. Your
-                API usage is billed directly by the providers you use.
-            </p>
+            <p>No, AirmailAI does not add a markup or charge per request.</p>
 
             <h3 id="free-models">
                 Are there free models I can use with AirmailAI?
@@ -484,7 +474,8 @@
                 Yes! OpenRouter offers access to free models, so you can use
                 AirmailAI without paying for API usage. Note that free model
                 providers may retain or train on your prompts and responses, and
-                some may publish your prompts and responses if you opt in.
+                some may publish your prompts and responses if you opt in. More
+                details are available in OpenRouter settings.
             </p>
 
             <h3 id="get-keys">Where can I get API keys?</h3>
@@ -531,6 +522,14 @@
             </h3>
             <p>
                 Let us know! We're working on adding support for more providers.
+            </p>
+
+            <h3 id="security-report">How do I report a security issue?</h3>
+            <p>
+                Please report security issues privately by emailing
+                security@blake-dev.net. Do not include API keys, private
+                conversations, or other sensitive data, and do not report
+                vulnerabilities through a public GitHub issue.
             </p>
 
             <h3 id="bug-report">

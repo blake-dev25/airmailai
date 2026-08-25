@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <link
+            rel="icon"
+            type="image/svg+xml"
+            href="/airmailai-stamp-logo.svg"
+        />
+        <link
+            rel="icon"
+            type="image/png"
+            sizes="32x32"
+            href="/airmailai-stamp-logo-32.png"
+        />
+        <link
+            rel="icon"
+            type="image/png"
+            sizes="16x16"
+            href="/airmailai-stamp-logo-16.png"
+        />
+        <link
+            rel="apple-touch-icon"
+            sizes="180x180"
+            href="/airmailai-stamp-logo-180.png"
+        />
+        <title>AirmailAI | Design &amp; Security</title>
+        <meta
+            name="description"
+            content="A technical overview of AirmailAI's architecture, data flow, API key handling, local storage, and security boundaries."
+        />
+        <link rel="canonical" href="https://airmailai.net/design-security/" />
+        <meta property="og:type" content="website" />
+        <meta property="og:site_name" content="AirmailAI" />
+        <meta property="og:title" content="AirmailAI Design &amp; Security" />
+        <meta
+            property="og:description"
+            content="A technical overview of AirmailAI's architecture, data flow, API key handling, local storage, and security boundaries."
+        />
+        <meta
+            property="og:url"
+            content="https://airmailai.net/design-security/"
+        />
+        <meta
+            property="og:image"
+            content="https://airmailai.net/airmailai-og-1200x630.png"
+        />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta
+            property="og:image:alt"
+            content="AirmailAI stamp logo and wordmark under an airmail stripe"
+        />
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:site" content="@airmailai" />
+        <link rel="stylesheet" href="/src/site.css" />
+    </head>
+    <body>
+        <div class="stripe-band" aria-hidden="true"></div>
+        <header>
+            <nav class="nav" aria-label="Main">
+                <a class="brand" href="/">
+                    <img src="/airmailai-stamp-logo.svg" alt="" />
+                    <span>AirmailAI</span>
+                </a>
+                <div class="nav-links">
+                    <a href="/">Home</a>
+                    <a href="/faq/">FAQ</a>
+                    <a href="/design-security/" aria-current="page"
+                        >Design &amp; Security</a
+                    >
+                    <a href="/app/" target="_blank" rel="noopener"
+                        >App
+                        <svg
+                            class="ext-icon"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            aria-hidden="true"
+                        >
+                            <path d="M15 3h6v6" />
+                            <path d="M10 14 21 3" />
+                            <path
+                                d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"
+                            />
+                        </svg>
+                    </a>
+                </div>
+                <div class="nav-icons">
+                    <a
+                        href="https://github.com/blake-dev25/airmailai"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label="AirmailAI on GitHub"
+                    >
+                        <svg viewBox="0 0 16 16" aria-hidden="true">
+                            <path
+                                d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"
+                            />
+                        </svg>
+                    </a>
+                    <a
+                        href="https://x.com/airmailai"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label="AirmailAI on X"
+                    >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path
+                                d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z"
+                            />
+                        </svg>
+                    </a>
+                </div>
+            </nav>
+        </header>
+        <main class="page">
+            <h1>Design &amp; Security</h1>
+            <h2>Design</h2>
+            <h3>Two-part architecture</h3>
+            <ul>
+                <li>
+                    <strong>Website frontend:</strong> the chat interface, model
+                    lists, provider configuration, and other user-facing
+                    features.
+                </li>
+                <li>
+                    <strong>Browser extension backend:</strong> the local
+                    backend that stores API keys, chats, files, and settings,
+                    and communicates with provider APIs.
+                </li>
+            </ul>
+
+            <h3>Data flow</h3>
+            <pre
+                class="architecture-flow"
+            ><code>Website UI                 Browser extension              Provider API
+    |                              |                            |
+    |-- Save API key -------------&gt;|                            |
+    |                              |-- Store key locally        |
+    |&lt;-- Saved --------------------|                            |
+    |                              |                            |
+    |-- Chat request -------------&gt;|                            |
+    |                              |-- HTTPS request + key ----&gt;|
+    |                              |&lt;-- Streamed response ------|
+    |&lt;-- Streamed response --------|                            |
+    |                              |-- Save chat locally        |
+    |                              |                            |</code></pre>
+            <p>
+                The website sends requests to the extension through Chrome's
+                extension messaging system, and the extension communicates
+                directly with the selected provider.
+            </p>
+
+            <h3>Why the split?</h3>
+            <p>The two-component design meets four requirements:</p>
+            <ul>
+                <li>
+                    <strong>Easy installation:</strong> the backend extension is
+                    installed and updated through the Chrome Web Store.
+                </li>
+                <li>
+                    <strong>API key separation:</strong> stored keys remain
+                    inside extension storage instead of website storage.
+                </li>
+                <li>
+                    <strong>Fast updates:</strong> website-owned model lists,
+                    provider configuration, and UI features can be released
+                    quickly.
+                </li>
+                <li>
+                    <strong>Lightweight hosting:</strong> AirmailAI.net is
+                    static files served from a CDN.
+                </li>
+            </ul>
+
+            <h2>Security</h2>
+
+            <h3>Website and extension identity</h3>
+            <p>
+                Release builds validate both sides of the website-extension
+                connection before sharing data. The extension accepts external
+                connections only from AirmailAI.net, while the website connects
+                only to the fixed extension ID published through the Chrome Web
+                Store. Local development access is opt-in and excluded from
+                production builds.
+            </p>
+
+            <h3>API key handling</h3>
+            <p>
+                When you save an API key, the website sends it to the extension
+                for storage in local, non-synchronized extension storage. The
+                extension only uses the key when authenticating a request to the
+                specified provider. The website-extension protocol can save a
+                key, delete it, check whether it exists, or ask the extension to
+                use it, but it has no operation that returns the stored key to
+                the website.
+            </p>
+            <p>
+                Once a key is saved, your browser keeps it in storage scoped to
+                the AirmailAI extension. Websites cannot access that storage,
+                and theextension only accepts requests from AirmailAI.net. Even
+                AirmailAI.net has no protocol operation for retrieving the raw
+                key. Under your browser's normal security model, visiting a
+                malicious website cannot expose your saved keys.
+            </p>
+
+            <h3>Untrusted content and injection</h3>
+            <p>
+                User messages, imported chats, and provider responses are
+                treated as untrusted content. Chat imports are parsed into a
+                narrow schema, bounded by file, chat, message, and field-size
+                limits, and only recognized fields are retained.
+            </p>
+            <p>
+                Messages support Markdown, but raw HTML is displayed as plain
+                text. Before anything is shown, DOMPurify removes potentially
+                unsafe content. Features such as search highlighting also ensure
+                message content is treated as text, not executable code.
+                AirmailAI does not include third-party analytics or remotely
+                hosted application scripts.<sup
+                    ><a
+                        href="#google-search-suggestions-note"
+                        aria-label="Google Search Suggestions note"
+                        >*</a
+                    ></sup
+                >
+            </p>
+
+            <h3>Local data and extension permissions</h3>
+            <p>
+                AirmailAI relies on Chrome's extension security boundaries to
+                separate AirmailAI extension data and privileges from other
+                websites. The extension requests the storage permission plus
+                host access for the supported provider API domains.
+            </p>
+            <ul>
+                <li>
+                    API keys are stored in non-synchronized
+                    <code>chrome.storage.local</code>.
+                </li>
+                <li>
+                    Chats, attachments, and file metadata are stored in the
+                    extension's local IndexedDB database.
+                </li>
+                <li>
+                    UI, model, and feature settings use
+                    <code>chrome.storage.sync</code> and may sync through your
+                    browser account when browser sync is enabled.
+                </li>
+                <li>
+                    Small website-only display preferences are cached in the
+                    website's local storage.
+                </li>
+            </ul>
+            <p>
+                The website can request chats and files as needed to display and
+                manage them.
+            </p>
+
+            <h3>Provider boundaries</h3>
+            <p>
+                Provider requests use HTTPS and travel directly from the
+                extension to the selected provider. Depending on the features
+                used, the provider may receive the API key, prompts, relevant
+                conversation history, files, tool inputs, and settings required
+                to fulfill the request. OpenRouter requests may also be handled
+                by its downstream model and feature providers.
+            </p>
+            <p>
+                Provider-side files, containers, requests, and responses are
+                governed by that provider's controls and policies. Deleting
+                local AirmailAI data does not necessarily delete copies held by
+                a provider.
+            </p>
+
+            <h3>Security boundaries</h3>
+            <p>
+                AirmailAI's protections operate within your browser's normal
+                security model. They do not attempt to protect data from someone
+                who controls your device or browser profile, or from another
+                extension you have granted permission to inspect or modify
+                AirmailAI.net. Once data is sent to a provider, that provider's
+                security and privacy controls apply.
+            </p>
+
+            <h3>Report a security issue</h3>
+            <p>
+                Please report security issues privately by emailing
+                security@blake-dev.net. Do not include API keys, private
+                conversations, or other sensitive data, and do not report
+                vulnerabilities through a public GitHub issue. AirmailAI's
+                source code is available on
+                <a
+                    href="https://github.com/blake-dev25/airmailai"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >GitHub</a
+                >.
+            </p>
+            <aside
+                class="page-note"
+                id="google-search-suggestions-note"
+                aria-label="Google Search Suggestions note"
+            >
+                <p>
+                    <span aria-hidden="true">*</span>
+                    <strong>Google Search Suggestions:</strong> when Web Search
+                    is enabled for a Google model and the provider returns a
+                    response with search results, Google requires associated
+                    Search Suggestions to be displayed. Google returns those
+                    suggestions as HTML and CSS. AirmailAI renders them in a
+                    sandboxed iframe without script or same-origin access to the
+                    AirmailAI page. Following a suggestion opens Google in a new
+                    tab, where Google's terms and privacy policy apply.
+                </p>
+            </aside>
+        </main>
+        <footer class="site-footer">
+            <a href="/legal/terms.md">Terms of Service</a>
+            <span aria-hidden="true">/</span>
+            <a href="/legal/privacy.md">Privacy Policy</a>
+        </footer>
+        <div class="stripe-band" aria-hidden="true"></div>
+    </body>
+</html>

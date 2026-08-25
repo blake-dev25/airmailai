@@ -8,15 +8,18 @@ const PROVIDERS: ProviderKey[] = [
 ];
 
 for (const key of PROVIDERS) {
-    const { label, chat } = PROVIDER_MODELS[key];
+    const { label, chat, chatName } = PROVIDER_MODELS[key];
 
     test(`${label} multiturn retains context and persists`, async ({
         airmailai,
     }) => {
         await airmailai.goto();
         await airmailai.setProvider(label);
-        if (key === 'openrouter') await airmailai.waitForOpenRouterCatalog();
-        await airmailai.setModelById(chat);
+        if (key === 'openrouter') {
+            await airmailai.waitForOpenRouterCatalog();
+            await airmailai.setModelById(chat);
+        }
+        await expect(airmailai.modelTrigger()).toContainText(chatName);
 
         await airmailai.send('My name is Banana. Remember it.');
         await airmailai.send("What's my name? Reply with just the name.");

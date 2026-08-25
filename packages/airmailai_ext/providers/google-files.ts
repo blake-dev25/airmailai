@@ -23,13 +23,13 @@ function toEntry(file: GoogleFile): ProviderFileEntry {
 
 export async function uploadGoogleFile(
     apiKey: string,
-    bytes: Uint8Array<ArrayBuffer>,
+    blob: Blob,
     mediaType: string,
     filename: string
 ): Promise<ProviderFileEntry> {
     const client = fileClient(apiKey);
     let file = await client.files.upload({
-        file: new Blob([bytes], { type: mediaType }),
+        file: blob,
         config: { mimeType: mediaType, displayName: filename },
     });
     let polls = 0;

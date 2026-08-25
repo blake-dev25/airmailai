@@ -11,6 +11,7 @@ import {
 } from './attachments';
 import { makeDebugFetch } from './debug-fetch';
 import { foldReplayIntoText } from './fold-replay';
+import { decodeBase64Text } from '../storage/encoding';
 
 type Effort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 
@@ -38,13 +39,6 @@ function isContainerExpired(e: unknown): boolean {
     );
 }
 
-function decodeBase64Text(base64: string): string {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return new TextDecoder().decode(bytes);
-}
-
 function buildContent(
     msg: AirmailAIMessage,
     atts: ResolvedAttachment[],
@@ -52,6 +46,16 @@ function buildContent(
     sandboxFileIds: string[]
 ): string | OpenAI.Responses.ResponseInputContent[] {
     const text = foldReplayIntoText(msg);
+    if (msg.role === 'assistant') {
+        if (codeExecEnabled) {
+            for (const att of atts) {
+                if (att.kind === 'provider' && att.providerId === 'openai') {
+                    sandboxFileIds.push(att.fileId);
+                }
+            }
+        }
+        return text;
+    }
     const content: OpenAI.Responses.ResponseInputContent[] = [];
     for (const att of atts) {
         if (att.kind === 'provider') {
@@ -62,7 +66,7 @@ function buildContent(
                     detail: 'auto',
                     file_id: att.fileId,
                 });
-            } else if (msg.role === 'user' && codeExecEnabled) {
+            } else if (codeExecEnabled) {
                 sandboxFileIds.push(att.fileId);
             } else if (att.mediaType.startsWith('text/') && att.base64) {
                 content.push({
@@ -121,8 +125,8 @@ function buildInput(
             role: msg.role,
             content: buildContent(msg, atts, codeExecEnabled, sandboxFileIds),
         });
+        sandboxAllFileIds.push(...sandboxFileIds);
         if (msg.role === 'user') {
-            sandboxAllFileIds.push(...sandboxFileIds);
             sandboxLastTurnFileIds = sandboxFileIds;
         }
     }
@@ -236,12 +240,16 @@ export async function* streamOpenAI(
     const openReasoning = new Set<string>();
     const seenSourceIds = new Set<string>();
     let containerId: string | undefined;
+    let refused = false;
 
     try {
         for await (const event of stream) {
             switch (event.type) {
                 case 'response.content_part.added': {
-                    if (event.part.type === 'output_text') {
+                    if (
+                        event.part.type === 'output_text' ||
+                        event.part.type === 'refusal'
+                    ) {
                         const id = `${event.item_id}:${event.content_index}`;
                         openText.add(id);
                         yield { type: 'text-start', id };
@@ -254,6 +262,19 @@ export async function* streamOpenAI(
                         id: `${event.item_id}:${event.content_index}`,
                         delta: event.delta,
                     };
+                    break;
+                }
+                case 'response.refusal.delta': {
+                    refused = true;
+                    yield {
+                        type: 'text-delta',
+                        id: `${event.item_id}:${event.content_index}`,
+                        delta: event.delta,
+                    };
+                    break;
+                }
+                case 'response.refusal.done': {
+                    refused = true;
                     break;
                 }
                 case 'response.output_text.annotation.added': {
@@ -418,7 +439,9 @@ export async function* streamOpenAI(
                               'content_filter'
                                 ? ('content-filter' as const)
                                 : ('length' as const)
-                            : undefined;
+                            : refused
+                              ? ('refusal' as const)
+                              : undefined;
                     yield {
                         type: 'finish',
                         metadata: {

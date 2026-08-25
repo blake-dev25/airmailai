@@ -1,10 +1,15 @@
+import type { OpenRouterModel } from '@airmailai/shared';
 import {
     buildOpenRouterProvider,
     PROVIDERS,
     type ProviderOption,
 } from './constants';
 import { reportAppError } from './errorStore.svelte';
-import { checkApiKeys, loadOpenRouterModels } from './extension';
+import {
+    checkApiKeys,
+    loadOpenRouterModels,
+    refreshOpenRouterModels,
+} from './extension';
 import { settingsStore } from './settingsStore.svelte';
 
 import { log } from './log';
@@ -30,6 +35,15 @@ class ProvidersStore {
     async hydrateOpenRouter(): Promise<void> {
         const raw = await loadOpenRouterModels();
         if (!raw || raw.length === 0) return;
+        this.setOpenRouterModels(raw);
+    }
+
+    async refreshOpenRouterModels(): Promise<void> {
+        const raw = await refreshOpenRouterModels();
+        this.setOpenRouterModels(raw);
+    }
+
+    private setOpenRouterModels(raw: OpenRouterModel[]): void {
         const built = buildOpenRouterProvider(raw);
         this.providers = this.providers.map((p) =>
             p.id === 'openrouter' ? built : p

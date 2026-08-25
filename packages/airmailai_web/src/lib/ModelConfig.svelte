@@ -5,27 +5,23 @@
     import {
         defaultModelForProvider,
         filterProvidersByTier,
-        MODEL_TIERS,
         type ModelOption,
-        type ModelTier,
+        type VisibleModelTier,
+        visibleModelTier,
     } from './constants';
     import Icon from './Icon.svelte';
     import ModelPicker, { type ModelGroup } from './ModelPicker.svelte';
     import { providersStore } from './providersStore.svelte';
     import { settingsStore } from './settingsStore.svelte';
 
-    const TIER_ORDER: ModelTier[] = ['latest', 'previous', 'legacy'];
-    const TIER_LABELS: Record<ModelTier, string> = {
+    const TIER_ORDER: VisibleModelTier[] = ['latest', 'previous', 'legacy'];
+    const TIER_LABELS: Record<VisibleModelTier, string> = {
         latest: 'Latest',
         previous: 'Previous',
         legacy: 'Legacy',
     };
     const OPENROUTER_EMPTY_LABEL =
         'Please load an OpenRouter API key to download their model catalog.';
-
-    function getTier(id: string): ModelTier {
-        return MODEL_TIERS[id] ?? 'legacy';
-    }
 
     let filteredProviders = $derived(
         filterProvidersByTier(providersStore.providers, settingsStore.modelTier)
@@ -90,10 +86,10 @@
             groups.push({ label: 'From this chat', models: [stored] });
         }
 
-        const byTier = new Map<ModelTier, ModelOption[]>();
+        const byTier = new Map<VisibleModelTier, ModelOption[]>();
         for (const m of provider.models) {
             if (!inTier.has(m.id)) continue;
-            const tier = getTier(m.id);
+            const tier = visibleModelTier(m.id);
             if (!byTier.has(tier)) byTier.set(tier, []);
             byTier.get(tier)!.push(m);
         }
@@ -784,7 +780,7 @@
         </div>
     </div>
 
-    {#if settingsStore.showBranding}
+    {#if settingsStore.brandingMode === 'on'}
         <div
             class="py-2 text-[12px] text-fg opacity-40 text-center border-t border-border"
         >
@@ -795,7 +791,9 @@
                 class="text-inherit no-underline hover:underline">@blake__dev</a
             > + AI
         </div>
+    {/if}
 
+    {#if settingsStore.brandingMode !== 'off'}
         <svg
             width={mcW}
             height={mcStripeH}

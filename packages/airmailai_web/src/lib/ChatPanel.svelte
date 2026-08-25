@@ -1,5 +1,8 @@
 <script lang="ts">
-    import type { DraftAttachment, FileAvailability } from '@airmailai/shared';
+    import type {
+        DraftAttachmentMeta,
+        FileAvailability,
+    } from '@airmailai/shared';
     import { tick, untrack } from 'svelte';
     import { SvelteSet } from 'svelte/reactivity';
     import { appLifecycle } from './appLifecycle.svelte';
@@ -11,7 +14,6 @@
         formatFileSize,
         getAcceptForProvider,
         getFilePolicy,
-        hashBytes,
         resolveFileMediaType,
         validateFilename,
         validateReadyAttachments,
@@ -95,6 +97,7 @@
     });
 
     let uploadGeneration = 0;
+    let fileProcessingQueue = Promise.resolve();
     let filePolicyOpts = $derived({
         openRouterPdfEngine: settingsStore.openRouterPdfEngine,
     });
@@ -126,7 +129,7 @@
     let canAttachFiles = $derived(filePolicy.mimeTypes.size > 0);
     let attachmentTotalBytes = $derived(
         pendingAttachments.reduce(
-            (total, attachment) => total + attachment.encodedSizeBytes,
+            (total, attachment) => total + attachment.sizeBytes,
             0
         )
     );
@@ -258,7 +261,7 @@
         }
     }
 
-    function submit() {
+    async function submit() {
         const text = inputText.trim();
         if (
             (!text && !pendingAttachments.length) ||
@@ -287,11 +290,20 @@
             return;
         }
 
-        chatStore.sendMessage(text);
-        scrolledChatId = chatStore.activeChatId;
-        chatScroll.onSubmit();
+        const submittedInput = inputText;
         inputText = '';
         if (textareaEl) textareaEl.style.height = '';
+        const started = await chatStore.sendMessage(text);
+        if (!started) {
+            inputText = inputText
+                ? `${submittedInput}\n${inputText}`
+                : submittedInput;
+            await tick();
+            if (textareaEl) resizeTextarea(textareaEl);
+            return;
+        }
+        scrolledChatId = chatStore.activeChatId;
+        chatScroll.onSubmit();
     }
 
     function stop() {
@@ -334,27 +346,6 @@
         processingAttachments = processingAttachments.filter(
             (attachment) => attachment.id !== id
         );
-    }
-
-    function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as ArrayBuffer);
-            reader.onerror = () =>
-                reject(reader.error ?? new Error('Could not read file.'));
-            reader.readAsArrayBuffer(file);
-        });
-    }
-
-    function bytesToBase64(bytes: Uint8Array): string {
-        let binary = '';
-        const CHUNK = 0x8000;
-        for (let i = 0; i < bytes.length; i += CHUNK) {
-            binary += String.fromCharCode(
-                ...bytes.subarray(i, Math.min(i + CHUNK, bytes.length))
-            );
-        }
-        return btoa(binary);
     }
 
     async function processFile(
@@ -407,33 +398,12 @@
                 return;
             }
 
-            setProcessingProgress(id, 50);
-            const buffer = await readFileAsArrayBuffer(file);
-            if (!isCurrent()) return;
-
-            setProcessingProgress(id, 64);
-            const hash = await hashBytes(buffer);
-            if (!isCurrent()) return;
-
-            const data = bytesToBase64(new Uint8Array(buffer));
-            const encodedSizeBytes = data.length;
-
-            setProcessingProgress(id, 72);
-            if (encodedSizeBytes > policy.maxFileBytes) {
-                addFileError(
-                    `${file.name} is ${formatFileSize(encodedSizeBytes)} after encoding. Limit: ${formatFileSize(policy.maxFileBytes)}.`
-                );
-                removeProcessingAttachment(id);
-                return;
-            }
-
-            setProcessingProgress(id, 86);
-            const draftAtt: DraftAttachment = {
+            setProcessingProgress(id, 48);
+            const draftAtt: DraftAttachmentMeta = {
                 name: file.name,
                 mediaType,
                 sizeBytes: file.size,
-                encodedSizeBytes,
-                hash,
+                encodedSizeBytes: Math.ceil(file.size / 3) * 4,
             };
             const nextAttachments = [
                 ...untrack(() => pendingAttachments),
@@ -451,16 +421,16 @@
                 return;
             }
 
-            setProcessingProgress(id, 100);
-            const attachedChatId = await chatStore.addDraftAttachment(
+            const staged = await chatStore.addDraftAttachment(
                 draftAtt,
-                data
+                file,
+                (progress) => setProcessingProgress(id, 50 + progress * 50)
             );
             if (!isCurrent()) {
-                if (attachedChatId) {
+                if (staged) {
                     await chatStore.removeDraftAttachment(
-                        draftAtt.hash,
-                        attachedChatId
+                        staged.attachment.hash,
+                        staged.chatId
                     );
                 }
                 return;
@@ -511,21 +481,30 @@
             );
         }
 
-        for (const file of toAdd) {
-            const id = crypto.randomUUID();
-            processingAttachments = [
-                ...processingAttachments,
-                { id, name: file.name, progress: 0 },
-            ];
-            void processFile(
-                file,
+        const queued = toAdd.map((file) => ({
+            file,
+            id: crypto.randomUUID(),
+        }));
+        processingAttachments = [
+            ...processingAttachments,
+            ...queued.map(({ file, id }) => ({
                 id,
-                uploadProviderId,
-                uploadModel,
-                uploadOpts,
-                generation
-            );
-        }
+                name: file.name,
+                progress: 0,
+            })),
+        ];
+        fileProcessingQueue = fileProcessingQueue.then(async () => {
+            for (const { file, id } of queued) {
+                await processFile(
+                    file,
+                    id,
+                    uploadProviderId,
+                    uploadModel,
+                    uploadOpts,
+                    generation
+                );
+            }
+        });
     }
 
     let canAcceptFileDrops = $derived(
@@ -572,8 +551,7 @@
         addFiles(files);
     }
 
-    function autoResize(e: Event) {
-        const ta = e.target as HTMLTextAreaElement;
+    function resizeTextarea(ta: HTMLTextAreaElement) {
         const styles = getComputedStyle(ta);
         const verticalBorder =
             parseFloat(styles.borderTopWidth) +
@@ -584,6 +562,10 @@
             ta.scrollHeight + verticalBorder,
             Number.isFinite(maxHeight) ? maxHeight : Infinity
         )}px`;
+    }
+
+    function autoResize(e: Event) {
+        resizeTextarea(e.target as HTMLTextAreaElement);
     }
 
     function startEdit(

@@ -9,12 +9,12 @@ import {
 test.use({ seedCodeExecEnabled: true });
 
 const AIRMAILAI_SHA256 =
-    '59d1aef073ffe17cb27ad0bae25c9b75bb7a94b6aa98944563bbf45efd4dc8a8';
+    'af0ee59d2a627d4e3aac6123be7cb87e9e79c7df311fd7b46ef2c3255f1f0ab4';
 
 const PROVIDERS: ProviderKey[] = ['anthropic', 'openai', 'google'];
 
 for (const key of PROVIDERS) {
-    const { label, tools } = PROVIDER_MODELS[key];
+    const { label, toolsName } = PROVIDER_MODELS[key];
 
     test(`${label} code execution runs Python and returns the digest`, async ({
         airmailai,
@@ -22,7 +22,7 @@ for (const key of PROVIDERS) {
         test.setTimeout(180_000);
         await airmailai.goto();
         await airmailai.setProvider(label);
-        await airmailai.setModelById(tools);
+        await expect(airmailai.modelTrigger()).toContainText(toolsName);
         await airmailai.setChatCodeExecution(true);
 
         await airmailai.send(

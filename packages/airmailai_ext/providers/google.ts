@@ -31,15 +31,25 @@ function outputFilename(index: number, mediaType: string): string {
 function mapStopReason(
     reason: string | undefined
 ): AirmailAIMessageMetadata['stopReason'] {
-    if (!reason) return undefined;
-    if (reason === 'MAX_TOKENS') return 'length';
-    if (
-        reason === 'SAFETY' ||
-        reason === 'RECITATION' ||
-        reason === 'BLOCKLIST'
-    )
-        return 'content-filter';
-    return 'stop';
+    switch (reason) {
+        case undefined:
+            return undefined;
+        case 'STOP':
+            return 'stop';
+        case 'MAX_TOKENS':
+            return 'length';
+        case 'SAFETY':
+        case 'RECITATION':
+        case 'BLOCKLIST':
+        case 'PROHIBITED_CONTENT':
+        case 'SPII':
+        case 'IMAGE_SAFETY':
+        case 'IMAGE_PROHIBITED_CONTENT':
+        case 'IMAGE_RECITATION':
+            return 'content-filter';
+        default:
+            throw new Error(`Google response stopped: ${reason}`);
+    }
 }
 
 function buildThinkingConfig(
@@ -188,6 +198,14 @@ export async function* streamGoogle(
     try {
         const stream = await client.models.generateContentStream(requestBody);
         for await (const chunk of stream) {
+            const promptFeedback = chunk.promptFeedback;
+            if (promptFeedback?.blockReason) {
+                throw new Error(
+                    promptFeedback.blockReasonMessage
+                        ? `Google blocked the prompt: ${promptFeedback.blockReasonMessage}`
+                        : `Google blocked the prompt (${promptFeedback.blockReason})`
+                );
+            }
             const candidate = chunk.candidates?.[0];
 
             for (const query of candidate?.groundingMetadata

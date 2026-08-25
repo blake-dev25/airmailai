@@ -16,7 +16,7 @@ export const OPENAI: ProviderOption = {
                 knowledgeCutoff: 'Feb 2026',
                 thinking: {
                     levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
-                    defaultLevel: 'none',
+                    defaultLevel: 'medium',
                 },
             },
         },
@@ -30,7 +30,7 @@ export const OPENAI: ProviderOption = {
                 knowledgeCutoff: 'Feb 2026',
                 thinking: {
                     levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
-                    defaultLevel: 'none',
+                    defaultLevel: 'medium',
                 },
             },
         },
@@ -44,7 +44,7 @@ export const OPENAI: ProviderOption = {
                 knowledgeCutoff: 'Feb 2026',
                 thinking: {
                     levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
-                    defaultLevel: 'none',
+                    defaultLevel: 'medium',
                 },
             },
         },
@@ -133,16 +133,6 @@ export const OPENAI: ProviderOption = {
             },
         },
         {
-            id: 'gpt-5.3-chat-latest',
-            name: 'GPT-5.3 Chat',
-            params: {
-                contextWindow: 128000,
-                maxOutputTokens: 16384,
-                defaultMaxTokens: 8192,
-                knowledgeCutoff: 'Aug 2025',
-            },
-        },
-        {
             id: 'gpt-5.3-codex',
             name: 'GPT-5.3-Codex',
             params: {
@@ -154,30 +144,6 @@ export const OPENAI: ProviderOption = {
                     levels: ['none', 'low', 'medium', 'high', 'xhigh'],
                     defaultLevel: 'none',
                 },
-            },
-        },
-        {
-            id: 'gpt-5.2-codex',
-            name: 'GPT-5.2-Codex',
-            params: {
-                contextWindow: 400000,
-                maxOutputTokens: 128000,
-                defaultMaxTokens: 8192,
-                knowledgeCutoff: 'Aug 2025',
-                thinking: {
-                    levels: ['none', 'low', 'medium', 'high', 'xhigh'],
-                    defaultLevel: 'none',
-                },
-            },
-        },
-        {
-            id: 'gpt-5.2-chat-latest',
-            name: 'GPT-5.2 Chat',
-            params: {
-                contextWindow: 128000,
-                maxOutputTokens: 16384,
-                defaultMaxTokens: 8192,
-                knowledgeCutoff: 'Aug 2025',
             },
         },
         {
@@ -209,48 +175,6 @@ export const OPENAI: ProviderOption = {
             },
         },
         {
-            id: 'gpt-5.1-codex-max',
-            name: 'GPT-5.1-Codex-Max',
-            params: {
-                contextWindow: 400000,
-                maxOutputTokens: 128000,
-                defaultMaxTokens: 8192,
-                knowledgeCutoff: 'Sep 2024',
-                thinking: {
-                    levels: ['none', 'low', 'medium', 'high', 'xhigh'],
-                    defaultLevel: 'none',
-                },
-            },
-        },
-        {
-            id: 'gpt-5.1-codex-mini',
-            name: 'GPT-5.1-Codex-Mini',
-            params: {
-                contextWindow: 400000,
-                maxOutputTokens: 128000,
-                defaultMaxTokens: 8192,
-                knowledgeCutoff: 'Sep 2024',
-                thinking: {
-                    levels: ['none', 'low', 'medium', 'high'],
-                    defaultLevel: 'none',
-                },
-            },
-        },
-        {
-            id: 'gpt-5.1-codex',
-            name: 'GPT-5.1-Codex',
-            params: {
-                contextWindow: 400000,
-                maxOutputTokens: 128000,
-                defaultMaxTokens: 8192,
-                knowledgeCutoff: 'Sep 2024',
-                thinking: {
-                    levels: ['none', 'low', 'medium', 'high'],
-                    defaultLevel: 'none',
-                },
-            },
-        },
-        {
             id: 'gpt-5.1',
             name: 'GPT-5.1',
             params: {
@@ -265,16 +189,6 @@ export const OPENAI: ProviderOption = {
             },
         },
         {
-            id: 'gpt-5.1-chat-latest',
-            name: 'GPT-5.1 Chat',
-            params: {
-                contextWindow: 128000,
-                maxOutputTokens: 16384,
-                defaultMaxTokens: 8192,
-                knowledgeCutoff: 'Sep 2024',
-            },
-        },
-        {
             id: 'gpt-5-pro',
             name: 'GPT-5 Pro',
             params: {
@@ -285,20 +199,6 @@ export const OPENAI: ProviderOption = {
                 thinking: {
                     levels: ['high'],
                     defaultLevel: 'high',
-                },
-            },
-        },
-        {
-            id: 'gpt-5-codex',
-            name: 'GPT-5 Codex',
-            params: {
-                contextWindow: 400000,
-                maxOutputTokens: 128000,
-                defaultMaxTokens: 8192,
-                knowledgeCutoff: 'Sep 2024',
-                thinking: {
-                    levels: ['minimal', 'low', 'medium', 'high'],
-                    defaultLevel: 'minimal',
                 },
             },
         },
@@ -341,44 +241,6 @@ export const OPENAI: ProviderOption = {
                 thinking: {
                     levels: ['minimal', 'low', 'medium', 'high'],
                     defaultLevel: 'minimal',
-                },
-            },
-        },
-        {
-            id: 'gpt-5-chat-latest',
-            name: 'GPT-5 Chat',
-            params: {
-                contextWindow: 128000,
-                maxOutputTokens: 16384,
-                defaultMaxTokens: 8192,
-                knowledgeCutoff: 'Sep 2024',
-            },
-        },
-        {
-            id: 'o4-mini-deep-research',
-            name: 'o4 Mini Deep Research',
-            params: {
-                contextWindow: 200000,
-                maxOutputTokens: 100000,
-                defaultMaxTokens: 8192,
-                knowledgeCutoff: 'Jun 2024',
-                thinking: {
-                    levels: ['low', 'medium', 'high'],
-                    defaultLevel: 'medium',
-                },
-            },
-        },
-        {
-            id: 'o3-deep-research',
-            name: 'o3 Deep Research',
-            params: {
-                contextWindow: 200000,
-                maxOutputTokens: 100000,
-                defaultMaxTokens: 8192,
-                knowledgeCutoff: 'Jun 2024',
-                thinking: {
-                    levels: ['low', 'medium', 'high'],
-                    defaultLevel: 'medium',
                 },
             },
         },
@@ -548,6 +410,18 @@ export const OPENAI: ProviderOption = {
                 temperatureMax: 2,
                 defaultTemperature: 1,
                 knowledgeCutoff: 'Dec 2023',
+            },
+        },
+        {
+            id: 'gpt-3.5-turbo-16k',
+            name: 'GPT-3.5 Turbo 16k',
+            params: {
+                contextWindow: 16385,
+                maxOutputTokens: 4096,
+                defaultMaxTokens: 4096,
+                temperatureMax: 2,
+                defaultTemperature: 1,
+                knowledgeCutoff: 'Sep 2021',
             },
         },
         {

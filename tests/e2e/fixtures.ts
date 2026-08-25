@@ -17,6 +17,7 @@ import {
 } from '../../packages/airmailai_ext/openrouter-models';
 import {
     DEFAULT_MODEL,
+    DEFAULT_MODEL_PARAMS,
     DEFAULT_PROVIDER,
     OPENROUTER_CACHE_MODELS,
 } from './models';
@@ -86,12 +87,14 @@ async function seedExtension(
         webFetch,
         codeExec,
         fileUploads,
+        modelTier,
     }: {
         withKeys: boolean;
         webSearch: boolean;
         webFetch: boolean;
         codeExec: boolean;
         fileUploads: boolean;
+        modelTier: 'test' | 'legacy';
     }
 ): Promise<void> {
     const local: Record<string, unknown> = withKeys ? apiKeysFromEnv() : {};
@@ -102,17 +105,15 @@ async function seedExtension(
             fetchedAt: Date.now(),
         };
     }
-    // *** Seeded settings must stay self-consistent with DEFAULT_MODEL, like a
-    // real stored profile: the app's boot defaults come from the picker's
-    // default model (Sonnet 5, thinking 'high'), and a bare modelId seed would
-    // leave that thinking level active on Haiku.
     const settings: Record<string, unknown> = {
         legalAcceptedVersion: legalVersion(),
         smoothTextMode: 'raw',
+        modelTier,
         providerId: DEFAULT_PROVIDER,
         modelId: DEFAULT_MODEL,
-        thinkingLevel: 'none',
-        adaptiveThinking: false,
+        maxTokens: DEFAULT_MODEL_PARAMS.defaultMaxTokens,
+        thinkingLevel: DEFAULT_MODEL_PARAMS.thinking?.defaultLevel ?? 'none',
+        adaptiveThinking: DEFAULT_MODEL_PARAMS.thinking?.adaptive !== undefined,
     };
     if (webSearch) settings.enableWebSearch = true;
     if (webFetch) settings.enableWebFetch = true;
@@ -265,11 +266,6 @@ export class AirmailAI {
         await this.providerSelect().selectOption({ label: name });
     }
 
-    async setModel(name: string): Promise<void> {
-        await this.modelTrigger().click();
-        await this.page.getByRole('option', { name }).click();
-    }
-
     async setModelById(id: string): Promise<void> {
         await this.modelTrigger().click();
         const search = this.modelSearch();
@@ -301,16 +297,6 @@ export class AirmailAI {
         await expect(toggle).toBeVisible();
         if ((await toggle.getAttribute('aria-checked')) !== String(on))
             await toggle.click();
-    }
-
-    async setTemperature(value: number): Promise<void> {
-        const badge = this.page.getByRole('spinbutton', {
-            name: 'Temperature',
-        });
-        await badge.click();
-        await this.page.keyboard.press('ControlOrMeta+a');
-        await this.page.keyboard.type(String(value));
-        await this.page.keyboard.press('Enter');
     }
 
     async setSystemPrompt(text: string): Promise<void> {
@@ -428,6 +414,62 @@ export class AirmailAI {
         return readExtDb(this.sw);
     }
 
+    async failNextDbPut(storeName: string): Promise<void> {
+        await this.sw.evaluate((targetStore) => {
+            const original = IDBObjectStore.prototype.put;
+            IDBObjectStore.prototype.put = function (
+                value: unknown,
+                key?: IDBValidKey
+            ) {
+                if (this.name === targetStore) {
+                    IDBObjectStore.prototype.put = original;
+                    throw new DOMException(
+                        `Injected ${targetStore} put failure`,
+                        'QuotaExceededError'
+                    );
+                }
+                return key === undefined
+                    ? original.call(this, value)
+                    : original.call(this, value, key);
+            };
+        }, storeName);
+    }
+
+    async failNextCursorDelete(): Promise<void> {
+        await this.sw.evaluate(() => {
+            const original = IDBCursor.prototype.delete;
+            IDBCursor.prototype.delete = function () {
+                IDBCursor.prototype.delete = original;
+                throw new DOMException(
+                    'Injected cursor delete failure',
+                    'QuotaExceededError'
+                );
+            };
+        });
+    }
+
+    sendStorageRequest(
+        request: unknown
+    ): Promise<{ type: string; message?: string }> {
+        return this.page.evaluate(
+            (storageRequest) =>
+                new Promise((resolve, reject) => {
+                    const extensionId =
+                        document.documentElement.dataset.airmailaiExtId;
+                    if (!extensionId) {
+                        reject(new Error('Extension ID unavailable'));
+                        return;
+                    }
+                    chrome.runtime.sendMessage(
+                        extensionId,
+                        storageRequest,
+                        resolve
+                    );
+                }),
+            request
+        );
+    }
+
     private async chatMessages(
         role: 'user' | 'assistant',
         chatId?: string
@@ -521,6 +563,7 @@ interface AirmailAIOptions {
     seedWebFetchEnabled: boolean;
     seedCodeExecEnabled: boolean;
     seedFileUploadsEnabled: boolean;
+    seedModelTier: 'test' | 'legacy';
 }
 
 interface AirmailAIFixtures {
@@ -536,6 +579,7 @@ export const test = base.extend<AirmailAIOptions & AirmailAIFixtures>({
     seedWebFetchEnabled: [false, { option: true }],
     seedCodeExecEnabled: [false, { option: true }],
     seedFileUploadsEnabled: [false, { option: true }],
+    seedModelTier: ['test', { option: true }],
     // eslint-disable-next-line no-empty-pattern
     context: async ({}, use) => {
         // *** '' = ephemeral profile, auto-removed on close. headed: MV3 extensions
@@ -596,6 +640,7 @@ export const test = base.extend<AirmailAIOptions & AirmailAIFixtures>({
             seedWebFetchEnabled,
             seedCodeExecEnabled,
             seedFileUploadsEnabled,
+            seedModelTier,
         },
         use
     ) => {
@@ -605,6 +650,7 @@ export const test = base.extend<AirmailAIOptions & AirmailAIFixtures>({
             webFetch: seedWebFetchEnabled,
             codeExec: seedCodeExecEnabled,
             fileUploads: seedFileUploadsEnabled,
+            modelTier: seedModelTier,
         });
         await use(new AirmailAI(page, serviceWorker));
     },

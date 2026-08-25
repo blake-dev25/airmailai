@@ -74,6 +74,10 @@ export default defineConfig({
                 main: resolve(__dirname, 'index.html'),
                 app: resolve(__dirname, 'app/index.html'),
                 faq: resolve(__dirname, 'faq/index.html'),
+                designSecurity: resolve(
+                    __dirname,
+                    'design-security/index.html'
+                ),
             },
         },
     },

@@ -1,5 +1,6 @@
 import type { BroadcastEvent } from '@airmailai/shared';
 import { chatStore } from './chatStore.svelte';
+import { reportAppError } from './errorStore.svelte';
 import { subscribeToBroadcast, tabId } from './extension';
 import { versionCheck } from './versionCheck.svelte';
 
@@ -38,6 +39,13 @@ function handleBroadcastEvent(event: BroadcastEvent): void {
             return;
         case 'files-changed':
             void chatStore.refreshLoadedChats(event.chatIds);
+            return;
+        case 'replica-warning':
+            reportAppError(
+                `draft replica upload failed (chatId=${event.chatId})`,
+                `Saved ${event.filename} on this device, but couldn't copy it to ${event.provider} storage (will retry when you send)`,
+                new Error(event.message)
+            );
             return;
         case 'meta-changed':
             chatStore.applyRemoteMetaChanged(event.meta);

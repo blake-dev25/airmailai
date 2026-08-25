@@ -4,9 +4,12 @@ import type {
     ChatMeta,
     AirmailAIChunk,
     DraftAttachment,
+    DraftAttachmentMeta,
     ExtensionStreamEvent,
     FileAvailability,
     FileDeleteTarget,
+    FileTransferRequest,
+    FileTransferResponse,
     HydratedStoredMessage,
     LocalFileInfo,
     OpenRouterModel,
@@ -19,6 +22,7 @@ import type {
     TurnStartRequest,
     UserSettings,
 } from '@airmailai/shared';
+import { FILE_TRANSFER_CHUNK_BYTES } from '@airmailai/shared';
 
 export interface StreamHandlers {
     onChunk: (chunk: AirmailAIChunk) => void;
@@ -132,6 +136,75 @@ async function sendStorageMessage(
     return response;
 }
 
+const FILE_TRANSFER_WINDOW = 3;
+
+interface FileTransferChannel {
+    request: (message: FileTransferRequest) => Promise<FileTransferResponse>;
+    disconnect: () => void;
+}
+
+function openFileTransferChannel(): FileTransferChannel {
+    if (!extensionId) throw new Error('Extension not detected.');
+    const port = chrome.runtime.connect(extensionId, { name: 'file-transfer' });
+    const pending: Array<{
+        resolve: (response: FileTransferResponse) => void;
+        reject: (error: Error) => void;
+    }> = [];
+    let failure: Error | null = null;
+
+    const failAll = (error: Error) => {
+        failure = error;
+        for (const waiter of pending.splice(0)) waiter.reject(error);
+    };
+
+    port.onMessage.addListener((response: FileTransferResponse) => {
+        if (response.type === 'error') {
+            failAll(new Error(response.message));
+            return;
+        }
+        pending.shift()?.resolve(response);
+    });
+    port.onDisconnect.addListener(() => {
+        failAll(
+            new Error(
+                chrome.runtime.lastError?.message ??
+                    'Extension disconnected during file transfer.'
+            )
+        );
+    });
+
+    return {
+        request(message: FileTransferRequest) {
+            return new Promise((resolve, reject) => {
+                if (failure) {
+                    reject(failure);
+                    return;
+                }
+                pending.push({ resolve, reject });
+                try {
+                    port.postMessage(message);
+                } catch (error) {
+                    pending.pop();
+                    reject(
+                        error instanceof Error
+                            ? error
+                            : new Error(String(error))
+                    );
+                }
+            });
+        },
+        disconnect: () => port.disconnect(),
+    };
+}
+
+async function settleBeforeThrow(
+    inFlight: Promise<void>[],
+    error: unknown
+): Promise<never> {
+    await Promise.allSettled(inFlight);
+    throw error;
+}
+
 export async function saveApiKey(
     provider: string,
     apiKey: string
@@ -180,6 +253,30 @@ export async function saveMeta(meta: ChatMeta): Promise<void> {
     await sendStorageMessage({ type: 'save_meta', meta, sourceTabId: tabId });
 }
 
+export async function prepareTurn(
+    meta: ChatMeta,
+    message: HydratedStoredMessage
+): Promise<void> {
+    await sendStorageMessage({
+        type: 'prepare_turn',
+        meta,
+        message,
+        sourceTabId: tabId,
+    });
+}
+
+export async function prepareRetry(
+    meta: ChatMeta,
+    lastKeptId: string
+): Promise<void> {
+    await sendStorageMessage({
+        type: 'prepare_retry',
+        meta,
+        lastKeptId,
+        sourceTabId: tabId,
+    });
+}
+
 export async function putMessage(
     message: HydratedStoredMessage
 ): Promise<void> {
@@ -188,19 +285,71 @@ export async function putMessage(
 
 export async function stageDraftAttachment(
     chatId: string,
-    attachment: DraftAttachment,
-    base64: string,
-    replicateTo?: string
-): Promise<string | undefined> {
-    const response = await sendStorageMessage({
-        type: 'stage_draft_attachment',
-        chatId,
-        attachment,
-        base64,
-        ...(replicateTo ? { replicateTo } : {}),
-    });
-    if (response.type === 'saved') return response.warning;
-    throw new Error(`Unexpected response: ${response.type}`);
+    attachment: DraftAttachmentMeta,
+    file: File,
+    replicateTo?: string,
+    onProgress?: (progress: number) => void
+): Promise<DraftAttachment> {
+    const chunkCount = Math.ceil(file.size / FILE_TRANSFER_CHUNK_BYTES);
+    const channel = openFileTransferChannel();
+    try {
+        const ready = await channel.request({
+            type: 'upload_start',
+            chatId,
+            attachment,
+            chunkCount,
+            sourceTabId: tabId,
+            ...(replicateTo ? { replicateTo } : {}),
+        });
+        if (ready.type !== 'upload_ready') {
+            throw new Error(`Unexpected response: ${ready.type}`);
+        }
+        const inFlight: Promise<void>[] = [];
+        let savedChunks = 0;
+        try {
+            for (let index = 0; index < chunkCount; index++) {
+                const start = index * FILE_TRANSFER_CHUNK_BYTES;
+                const bytes = new Uint8Array(
+                    await file
+                        .slice(start, start + FILE_TRANSFER_CHUNK_BYTES)
+                        .arrayBuffer()
+                );
+                const ack = channel
+                    .request({
+                        type: 'upload_chunk',
+                        index,
+                        base64: bytes.toBase64(),
+                    })
+                    .then((response) => {
+                        if (
+                            response.type !== 'upload_chunk_saved' ||
+                            response.index !== index
+                        ) {
+                            throw new Error(
+                                `Unexpected response: ${response.type}`
+                            );
+                        }
+                        savedChunks++;
+                        onProgress?.(savedChunks / chunkCount);
+                    });
+                inFlight.push(ack);
+                if (inFlight.length >= FILE_TRANSFER_WINDOW) {
+                    await inFlight.shift();
+                }
+            }
+            await Promise.all(inFlight);
+        } catch (error) {
+            await settleBeforeThrow(inFlight, error);
+        }
+        const saved = await channel.request({ type: 'upload_complete' });
+        if (saved.type !== 'upload_saved') {
+            throw new Error(`Unexpected response: ${saved.type}`);
+        }
+        onProgress?.(1);
+        return { ...attachment, hash: saved.hash };
+    } finally {
+        channel.disconnect();
+    }
 }
 
 export async function removeDraftAttachment(
@@ -219,17 +368,6 @@ export async function deleteMessage(
     messageId: string
 ): Promise<void> {
     await sendStorageMessage({ type: 'delete_message', chatId, messageId });
-}
-
-export async function deleteMessagesAfter(
-    chatId: string,
-    lastKeptId: string
-): Promise<void> {
-    await sendStorageMessage({
-        type: 'delete_messages_after',
-        chatId,
-        lastKeptId,
-    });
 }
 
 export async function deleteChat(chatId: string): Promise<void> {
@@ -271,12 +409,75 @@ export async function loadOpenRouterModels(): Promise<
     throw new Error(`Unexpected response: ${response.type}`);
 }
 
-export async function getFileBlob(
-    hash: string
-): Promise<{ mediaType: string; base64: string } | null> {
-    const response = await sendStorageMessage({ type: 'get_file_blob', hash });
-    if (response.type === 'file_blob') return response.blob;
+export async function getOpenRouterRefreshStatus(): Promise<number | null> {
+    const response = await sendStorageMessage({
+        type: 'get_openrouter_refresh_status',
+    });
+    if (response.type === 'openrouter_refresh_status') {
+        return response.lastAttemptAt;
+    }
     throw new Error(`Unexpected response: ${response.type}`);
+}
+
+export async function refreshOpenRouterModels(): Promise<OpenRouterModel[]> {
+    const response = await sendStorageMessage({
+        type: 'refresh_openrouter_models',
+    });
+    if (response.type === 'openrouter_models' && response.models) {
+        return response.models;
+    }
+    throw new Error(`Unexpected response: ${response.type}`);
+}
+
+export async function getFileBlob(hash: string): Promise<Blob | null> {
+    const channel = openFileTransferChannel();
+    try {
+        const ready = await channel.request({
+            type: 'download_start',
+            hash,
+        });
+        if (ready.type === 'download_missing') return null;
+        if (ready.type !== 'download_ready') {
+            throw new Error(`Unexpected response: ${ready.type}`);
+        }
+        const chunks: Blob[] = [];
+        const inFlight: Promise<void>[] = [];
+        try {
+            for (let index = 0; index < ready.chunkCount; index++) {
+                const receipt = channel
+                    .request({ type: 'download_chunk', index })
+                    .then((response) => {
+                        if (response.type !== 'download_chunk') {
+                            throw new Error(
+                                `Unexpected response: ${response.type}`
+                            );
+                        }
+                        if (response.index !== index) {
+                            throw new Error(
+                                'File chunks arrived out of order.'
+                            );
+                        }
+                        chunks[index] = new Blob([
+                            Uint8Array.fromBase64(response.base64),
+                        ]);
+                    });
+                inFlight.push(receipt);
+                if (inFlight.length >= FILE_TRANSFER_WINDOW) {
+                    await inFlight.shift();
+                }
+            }
+            await Promise.all(inFlight);
+        } catch (error) {
+            await settleBeforeThrow(inFlight, error);
+        }
+        const blob = new Blob(chunks, { type: ready.mediaType });
+        if (blob.size !== ready.sizeBytes) {
+            throw new Error('Downloaded file size does not match storage.');
+        }
+        return blob;
+    } finally {
+        channel.disconnect();
+    }
 }
 
 export async function getFileStatuses(

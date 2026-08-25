@@ -42,7 +42,7 @@ class VersionCheck {
         if (this.extStatus === 'outdated') {
             return {
                 message:
-                    'A AirmailAI extension update is rolling out. Chrome will install it automatically within a few hours, or restart your browser to get it now.',
+                    'An AirmailAI extension update is rolling out. Chrome will install it automatically within a few hours, or restart your browser to get it now.',
                 refresh: false,
             };
         }
@@ -59,6 +59,7 @@ class VersionCheck {
         versionName: string | null
     ): void {
         this.knownExtVersion = version;
+        if (window.location.hostname !== 'airmailai.net') return;
         const outdated = !version || versionLessThan(version, MIN_EXT_VERSION);
         if (!outdated) return;
         if (versionName?.includes('-local')) {

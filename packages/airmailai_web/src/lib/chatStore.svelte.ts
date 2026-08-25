@@ -3,6 +3,7 @@ import type {
     AirmailAIChunk,
     AirmailAIMessage,
     DraftAttachment,
+    DraftAttachmentMeta,
     HydratedStoredMessage,
     MessageAssemblerState,
     StoredChat,
@@ -34,10 +35,11 @@ import {
     clearDraftAttachments,
     deleteChat,
     deleteMessage,
-    deleteMessagesAfter,
     loadChat,
     loadChatMetas,
     loadChatsByIds,
+    prepareRetry,
+    prepareTurn,
     putMessage,
     removeDraftAttachment as reqRemoveDraftAttachment,
     saveMeta,
@@ -139,6 +141,14 @@ function chatToMeta(chat: Chat): ChatMeta {
         webFetch: chat.webFetch,
         codeExecution: chat.codeExecution,
         systemPrompt: chat.systemPrompt,
+    };
+}
+
+function snapshotChat(chat: Chat): Chat {
+    return {
+        ...chat,
+        messages: [...chat.messages],
+        draftAttachments: [...(chat.draftAttachments ?? [])],
     };
 }
 
@@ -887,9 +897,10 @@ class ChatStore {
     }
 
     async addDraftAttachment(
-        attachment: DraftAttachment,
-        base64: string
-    ): Promise<string | null> {
+        attachment: DraftAttachmentMeta,
+        file: File,
+        onProgress?: (progress: number) => void
+    ): Promise<{ chatId: string; attachment: DraftAttachment } | null> {
         if (this.demoMode) return null;
         const chatId = await this.ensureActiveChat();
         const activeChat = this.chats.find((c) => c.id === chatId);
@@ -897,27 +908,18 @@ class ChatStore {
         const replicateTo = settingsStore.enableProviderFileStorage
             ? (activeChat?.providerId ?? settingsStore.providerId)
             : undefined;
-        const warning = await stageDraftAttachment(
+        const staged = await stageDraftAttachment(
             chatId,
             attachment,
-            base64,
-            replicateTo
+            file,
+            replicateTo,
+            onProgress
         );
-        if (warning) {
-            reportAppError(
-                `draft replica upload failed (chatId=${chatId})`,
-                `Saved ${attachment.name} on this device, but couldn't copy it to ${replicateTo} storage (will retry when you send)`,
-                new Error(warning)
-            );
-        }
         const chat = this.chats.find((c) => c.id === chatId);
         if (chat) {
-            chat.draftAttachments = [
-                ...(chat.draftAttachments ?? []),
-                attachment,
-            ];
+            chat.draftAttachments = [...(chat.draftAttachments ?? []), staged];
         }
-        return chatId;
+        return { chatId, attachment: staged };
     }
 
     async removeDraftAttachment(
@@ -943,16 +945,17 @@ class ChatStore {
         if (!this.demoMode) await clearDraftAttachments(chatId);
     }
 
-    sendMessage(content: string): void {
+    async sendMessage(content: string): Promise<boolean> {
         if (
             this.activeChatId &&
             (this.streamingChatIds.has(this.activeChatId) ||
                 this.remoteStreamingChatIds.has(this.activeChatId))
         )
-            return;
+            return false;
 
         let chatId = this.activeChatId;
         let createdNewChat = false;
+        let previousChat: Chat | null = null;
         if (!chatId) {
             chatId = crypto.randomUUID();
             createdNewChat = true;
@@ -972,8 +975,9 @@ class ChatStore {
                     'This chat is still loading, try again in a moment',
                     new Error('active chat missing from memory')
                 );
-                return;
+                return false;
             }
+            previousChat = snapshotChat(existing);
             const isFirst = existing.messages.length === 0;
             Object.assign(existing, settingsStore.snapshotChatConfig());
             if (isFirst)
@@ -1016,44 +1020,41 @@ class ChatStore {
 
         if (this.demoMode) {
             this.streamForChat(chatId, assistantId);
-            return;
+            return true;
         }
 
         const chat = this.chats.find((c) => c.id === chatId);
         if (!chat) {
             this.streamingChatIds.delete(chatId);
-            return;
+            return false;
         }
         const id = chatId;
-        void (async () => {
-            try {
-                await saveMeta(chatToMeta(chat));
-            } catch (err) {
-                reportAppError(
-                    createdNewChat
-                        ? 'persist new chat failed'
-                        : 'persist meta failed',
-                    "Couldn't save chat",
-                    err
-                );
+        try {
+            await prepareTurn(chatToMeta(chat), messageToHydrated(id, userMsg));
+        } catch (err) {
+            this.streamingChatIds.delete(id);
+            if (createdNewChat) {
+                const index = this.chats.findIndex((item) => item.id === id);
+                if (index >= 0) this.chats.splice(index, 1);
+                if (this.activeChatId === id) this.activeChatId = null;
+            } else if (previousChat) {
+                const index = this.chats.findIndex((item) => item.id === id);
+                if (index >= 0) this.chats[index] = previousChat;
             }
-            try {
-                await putMessage(messageToHydrated(id, userMsg));
-                if (draftAttachments.length) {
-                    await clearDraftAttachments(id);
-                }
-            } catch (err) {
-                reportAppError(
-                    'persist user msg failed',
-                    "Couldn't save your message",
-                    err
-                );
-            }
-            this.streamForChat(id, assistantId);
-        })();
+            reportAppError(
+                createdNewChat
+                    ? 'prepare new chat turn failed'
+                    : 'prepare turn failed',
+                "Couldn't save your message",
+                err
+            );
+            return false;
+        }
+        this.streamForChat(id, assistantId);
+        return true;
     }
 
-    retry(index: number): void {
+    async retry(index: number): Promise<void> {
         if (!this.activeChatId) return;
         const chatId = this.activeChatId;
         const chat = this.chats.find((c) => c.id === chatId);
@@ -1065,6 +1066,7 @@ class ChatStore {
         if (!msg) return;
         const keepUpTo = msg.role === 'user' ? index : index - 1;
         if (keepUpTo < 0) return;
+        const previousChat = snapshotChat(chat);
 
         const lastKeptMsg = chat.messages[keepUpTo];
         const assistantId = crypto.randomUUID();
@@ -1089,27 +1091,22 @@ class ChatStore {
             return;
         }
 
-        void (async () => {
-            try {
-                await saveMeta(chatToMeta(chat));
-            } catch (err) {
-                reportAppError(
-                    'retry: meta save failed',
-                    "Couldn't save chat config",
-                    err
-                );
-            }
-            try {
-                await deleteMessagesAfter(chatId, lastKeptMsg.id);
-            } catch (err) {
-                reportAppError(
-                    'retry: truncate failed',
-                    "Couldn't truncate chat history",
-                    err
-                );
-            }
-            this.streamForChat(chatId, assistantId);
-        })();
+        try {
+            await prepareRetry(chatToMeta(chat), lastKeptMsg.id);
+        } catch (err) {
+            this.streamingChatIds.delete(chatId);
+            const currentIndex = this.chats.findIndex(
+                (item) => item.id === chatId
+            );
+            if (currentIndex >= 0) this.chats[currentIndex] = previousChat;
+            reportAppError(
+                'prepare retry failed',
+                "Couldn't prepare chat retry",
+                err
+            );
+            return;
+        }
+        this.streamForChat(chatId, assistantId);
     }
 
     stop(visibleChars: number): void {

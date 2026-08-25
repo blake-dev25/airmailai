@@ -62,6 +62,7 @@ export default defineConfig({
     manifest: {
         name: 'AirmailAI',
         description: 'The fast, secure, and private BYOK LLM chat app.',
+        minimum_chrome_version: '140',
         icons: {
             16: '/icon-16.png',
             32: '/icon-32.png',

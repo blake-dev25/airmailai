@@ -32,7 +32,6 @@ export const ANTHROPIC: ProviderOption = {
                 contextWindow: 1000000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
-                knowledgeCutoff: 'Jan 2026',
                 thinking: {
                     levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
                     defaultLevel: 'high',
@@ -52,7 +51,6 @@ export const ANTHROPIC: ProviderOption = {
                 contextWindow: 1000000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
-                knowledgeCutoff: 'Jan 2026',
                 thinking: {
                     levels: ['low', 'medium', 'high', 'xhigh', 'max'],
                     defaultLevel: 'high',
@@ -72,7 +70,6 @@ export const ANTHROPIC: ProviderOption = {
                 contextWindow: 1000000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
-                knowledgeCutoff: 'Jan 2026',
                 thinking: {
                     levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
                     defaultLevel: 'high',
@@ -92,7 +89,6 @@ export const ANTHROPIC: ProviderOption = {
                 contextWindow: 1000000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
-                knowledgeCutoff: 'Jan 2026',
                 thinking: {
                     levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
                     defaultLevel: 'high',
@@ -114,7 +110,6 @@ export const ANTHROPIC: ProviderOption = {
                 defaultMaxTokens: 8192,
                 temperatureMax: 1,
                 defaultTemperature: 1,
-                knowledgeCutoff: 'Aug 2025',
                 thinking: {
                     levels: ['none', 'low', 'medium', 'high', 'max'],
                     defaultLevel: 'high',
@@ -136,7 +131,6 @@ export const ANTHROPIC: ProviderOption = {
                 defaultMaxTokens: 8192,
                 temperatureMax: 1,
                 defaultTemperature: 1,
-                knowledgeCutoff: 'May 2025',
                 thinking: {
                     levels: ['none', 'low', 'medium', 'high', 'max'],
                     defaultLevel: 'high',
@@ -158,7 +152,6 @@ export const ANTHROPIC: ProviderOption = {
                 defaultMaxTokens: 8192,
                 temperatureMax: 1,
                 defaultTemperature: 1,
-                knowledgeCutoff: 'May 2025',
                 thinking: {
                     levels: ['none', 'low', 'medium', 'high'],
                     defaultLevel: 'high',
@@ -179,7 +172,6 @@ export const ANTHROPIC: ProviderOption = {
                 defaultMaxTokens: 8192,
                 temperatureMax: 1,
                 defaultTemperature: 1,
-                knowledgeCutoff: 'Feb 2025',
                 thinking: {
                     levels: ['none', 'low', 'medium', 'high'],
                     defaultLevel: 'none',
@@ -200,7 +192,6 @@ export const ANTHROPIC: ProviderOption = {
                 defaultMaxTokens: 8192,
                 temperatureMax: 1,
                 defaultTemperature: 1,
-                knowledgeCutoff: 'Jan 2025',
                 thinking: {
                     levels: ['none', 'low', 'medium', 'high'],
                     defaultLevel: 'none',
@@ -210,27 +201,6 @@ export const ANTHROPIC: ProviderOption = {
                 webSearch: 'web_search_20250305',
                 webFetch: 'web_fetch_20250910',
                 codeExecution: 'code_execution_20260521',
-            },
-        },
-        {
-            id: 'claude-opus-4-1-20250805',
-            name: 'Claude Opus 4.1',
-            params: {
-                contextWindow: 200000,
-                maxOutputTokens: 32000,
-                defaultMaxTokens: 8192,
-                temperatureMax: 1,
-                defaultTemperature: 1,
-                knowledgeCutoff: 'Jan 2025',
-                thinking: {
-                    levels: ['none', 'low', 'medium', 'high'],
-                    defaultLevel: 'none',
-                },
-            },
-            tools: {
-                webSearch: 'web_search_20250305',
-                webFetch: 'web_fetch_20250910',
-                codeExecution: 'code_execution_20250825',
             },
         },
     ],

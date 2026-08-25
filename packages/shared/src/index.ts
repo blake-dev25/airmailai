@@ -2,6 +2,7 @@ export type {
     BroadcastEvent,
     BroadcastKeepaliveRequest,
     BroadcastRequest,
+    BrandingMode,
     ChatMeta,
     DraftAttachment,
     DraftAttachmentMeta,
@@ -20,6 +21,8 @@ export type {
     AirmailAIFilePart,
     FileAvailability,
     FileDeleteTarget,
+    FileTransferRequest,
+    FileTransferResponse,
     ProviderStream,
     ProviderStreamArgs,
     ExtensionStreamEvent,
@@ -40,7 +43,7 @@ export type {
     TurnStopRequest,
     UserSettings,
 } from './messages';
-export { SETTINGS_KEYS } from './messages';
+export { FILE_TRANSFER_CHUNK_BYTES, SETTINGS_KEYS } from './messages';
 export {
     createMessageAssembler,
     applyAirmailAIChunk,
