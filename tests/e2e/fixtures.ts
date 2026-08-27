@@ -87,14 +87,12 @@ async function seedExtension(
         webFetch,
         codeExec,
         fileUploads,
-        modelTier,
     }: {
         withKeys: boolean;
         webSearch: boolean;
         webFetch: boolean;
         codeExec: boolean;
         fileUploads: boolean;
-        modelTier: 'test' | 'legacy';
     }
 ): Promise<void> {
     const local: Record<string, unknown> = withKeys ? apiKeysFromEnv() : {};
@@ -108,7 +106,7 @@ async function seedExtension(
     const settings: Record<string, unknown> = {
         legalAcceptedVersion: legalVersion(),
         smoothTextMode: 'raw',
-        modelTier,
+        modelTier: 'test',
         providerId: DEFAULT_PROVIDER,
         modelId: DEFAULT_MODEL,
         maxTokens: DEFAULT_MODEL_PARAMS.defaultMaxTokens,
@@ -563,7 +561,6 @@ interface AirmailAIOptions {
     seedWebFetchEnabled: boolean;
     seedCodeExecEnabled: boolean;
     seedFileUploadsEnabled: boolean;
-    seedModelTier: 'test' | 'legacy';
 }
 
 interface AirmailAIFixtures {
@@ -579,7 +576,6 @@ export const test = base.extend<AirmailAIOptions & AirmailAIFixtures>({
     seedWebFetchEnabled: [false, { option: true }],
     seedCodeExecEnabled: [false, { option: true }],
     seedFileUploadsEnabled: [false, { option: true }],
-    seedModelTier: ['test', { option: true }],
     // eslint-disable-next-line no-empty-pattern
     context: async ({}, use) => {
         // *** '' = ephemeral profile, auto-removed on close. headed: MV3 extensions
@@ -640,7 +636,6 @@ export const test = base.extend<AirmailAIOptions & AirmailAIFixtures>({
             seedWebFetchEnabled,
             seedCodeExecEnabled,
             seedFileUploadsEnabled,
-            seedModelTier,
         },
         use
     ) => {
@@ -650,7 +645,6 @@ export const test = base.extend<AirmailAIOptions & AirmailAIFixtures>({
             webFetch: seedWebFetchEnabled,
             codeExec: seedCodeExecEnabled,
             fileUploads: seedFileUploadsEnabled,
-            modelTier: seedModelTier,
         });
         await use(new AirmailAI(page, serviceWorker));
     },

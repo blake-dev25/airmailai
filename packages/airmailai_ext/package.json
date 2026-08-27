@@ -9,12 +9,12 @@
         "zip": "WXT_ALLOW_LOCALHOST=false AIRMAILAI_LOG_LEVEL=errors wxt zip"
     },
     "dependencies": {
-        "@anthropic-ai/sdk": "^0.120.0",
+        "@anthropic-ai/sdk": "^0.122.0",
         "@airmailai/shared": "workspace:*",
-        "@google/genai": "^2.18.0",
-        "@noble/hashes": "^2.3.0",
-        "@openrouter/sdk": "^1.2.54",
-        "openai": "^7.5.0"
+        "@google/genai": "^2.19.0",
+        "@noble/hashes": "^2.4.0",
+        "@openrouter/sdk": "^1.2.79",
+        "openai": "^7.8.0"
     },
     "devDependencies": {
         "@types/chrome": "^0.2.7",

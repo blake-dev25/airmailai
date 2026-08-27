@@ -14,13 +14,17 @@ export async function uploadOpenAIFile(
     apiKey: string,
     blob: Blob,
     mediaType: string,
-    filename: string
+    filename: string,
+    signal?: AbortSignal
 ): Promise<string> {
     const file = toStreamingFile(blob.stream(), filename, { type: mediaType });
-    const result = await fileClient(apiKey).files.create({
-        file,
-        purpose: 'user_data',
-    });
+    const result = await fileClient(apiKey).files.create(
+        {
+            file,
+            purpose: 'user_data',
+        },
+        { signal }
+    );
     return result.id;
 }
 

@@ -437,9 +437,11 @@ export async function* streamAnthropic(
                                 };
                             }
                         }
+                        const errorText = toolResultError(content);
                         yield {
                             type: 'tool-result',
                             toolCallId: block.tool_use_id,
+                            ...(errorText ? { errorText } : {}),
                         };
                     } else if (block.type === 'web_fetch_tool_result') {
                         const fetched = readWebFetchResult(block.content);

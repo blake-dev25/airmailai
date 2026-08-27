@@ -42,6 +42,14 @@ bun run test --ui          # interactive (time-travel DOM snapshots)
   `{ mode: 'contains' }` for web-search turns, whose link URLs / Sources UI live
   on only one side). Lower-level helpers: `readDb()`, `persistedTexts()`,
   `persistedSourceUrls()`.
+- **Model selection:** specs never name a model. The fixture seeds
+  `modelTier: 'test'`, which narrows each first-party provider to the single
+  model tagged `['<tier>', 'test']` in
+  `packages/airmailai_web/src/lib/models/tiers.ts`, and `models.ts` resolves
+  that model into `PROVIDER_MODELS` (id, display name, context window). A new
+  model release is therefore a one-line move of the `'test'` tag in
+  `tiers.ts` - no spec edits. OpenRouter bypasses tier curation, so its entries
+  pin `~vendor/*-latest` ids, which stay valid on their own.
 - **No-key tests:** a spec can opt out of key seeding with
   `test.use({ seedApiKeys: false })` to exercise the "No API key saved" error
   path with zero API cost (see `errors.spec.ts`).
@@ -52,9 +60,9 @@ bun run test --ui          # interactive (time-travel DOM snapshots)
   through `confirm()`. Playwright dismisses dialogs by default, so specs that
   exercise them register `page.on('dialog', (d) => void d.accept())` first.
 - **OpenRouter catalog:** the fixture pre-seeds the extension's
-  `openrouter_models_cache` (a one-model fixture) alongside the keys, so app
-  boot serves the catalog from cache instead of doing a live `GET /models/user`
-  on every test. The OpenRouter specs still make real OR chat calls.
+  `openrouter_models_cache` (the two models the OR specs select) alongside the
+  keys, so app boot serves the catalog from cache instead of doing a live
+  `GET /models/user` on every test. The OpenRouter specs still make real OR chat calls.
 - **Console log:** page warnings/errors + uncaught errors are written to
   `test-results/<test>/console-warnings.log` and echoed to the terminal when
   any occur - a focused view without digging through the full trace. The app's

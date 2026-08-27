@@ -16,13 +16,17 @@ export async function uploadAnthropicFile(
     apiKey: string,
     blob: Blob,
     mediaType: string,
-    filename: string
+    filename: string,
+    signal?: AbortSignal
 ): Promise<string> {
     const file = new File([blob], filename, { type: mediaType });
-    const result = await fileClient(apiKey).beta.files.upload({
-        file,
-        betas: [FILES_BETA],
-    });
+    const result = await fileClient(apiKey).beta.files.upload(
+        {
+            file,
+            betas: [FILES_BETA],
+        },
+        { signal }
+    );
     return result.id;
 }
 

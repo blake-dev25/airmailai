@@ -108,6 +108,10 @@
             filePolicyOpts
         )
     );
+    let providerName = $derived(
+        providersStore.providers.find((p) => p.id === settingsStore.providerId)
+            ?.name ?? settingsStore.providerId
+    );
     let filePolicyKey = $derived(
         [
             filePolicy.providerId,
@@ -154,6 +158,10 @@
     });
 
     $effect(() => {
+        return () => smooth.cancel();
+    });
+
+    $effect(() => {
         if (!messagesEl || !messagesContentEl) return;
         return chatScroll.attach(
             messagesEl,
@@ -189,7 +197,6 @@
                 chatStore.activeMessages[chatStore.activeMessages.length - 1];
             smooth.setRaw(last ? messageText(last) : '');
         }
-        return () => smooth.cancel();
     });
 
     $effect(() => {
@@ -758,6 +765,8 @@
                             {messageContent}
                             {displayContent}
                             {fileStatuses}
+                            maxFileBytes={filePolicy.maxFileBytes}
+                            {providerName}
                             isStreaming={chatStore.isActiveStreaming}
                             isLastStreaming={isLastStreaming ||
                                 displayContent !== messageContent}

@@ -64,11 +64,14 @@ function mimeFromFilename(filename: string): string {
 
 export async function listOpenAIContainerFiles(
     apiKey: string,
-    containerId: string
+    containerId: string,
+    signal?: AbortSignal
 ): Promise<OpenAIContainerFile[]> {
     const out: OpenAIContainerFile[] = [];
     for await (const f of fileClient(apiKey).containers.files.list(
-        containerId
+        containerId,
+        undefined,
+        { signal }
     )) {
         const filename = f.path.split('/').pop() || f.id;
         out.push({
@@ -85,11 +88,13 @@ export async function listOpenAIContainerFiles(
 export async function downloadOpenAIContainerFile(
     apiKey: string,
     containerId: string,
-    fileId: string
+    fileId: string,
+    signal?: AbortSignal
 ): Promise<ArrayBuffer> {
     const resp = await fileClient(apiKey).containers.files.content.retrieve(
         fileId,
-        { container_id: containerId }
+        { container_id: containerId },
+        { signal }
     );
     return resp.arrayBuffer();
 }

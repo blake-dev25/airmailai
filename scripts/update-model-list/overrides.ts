@@ -113,7 +113,7 @@ export const ANTHROPIC_OVERRIDES: Record<string, ModelOverride> = {
     'claude-haiku-4-5-20251001': {
         idAlias: 'claude-haiku-4-5',
         tools: ANTHROPIC_TOOLS_LEGACY,
-    }
+    },
 };
 
 // *** OpenAI's own /models endpoint is barebones, but OpenRouter fills most of the
@@ -137,7 +137,7 @@ export const OPENAI_OVERRIDES: Record<string, ModelOverride> = {
     o3: { thinking: O_SERIES_THINKING },
     'o3-mini': { thinking: O_SERIES_THINKING },
     'o3-pro': { thinking: O_SERIES_THINKING },
-    'o4-mini': { thinking: O_SERIES_THINKING }
+    'o4-mini': { thinking: O_SERIES_THINKING },
 };
 
 // *** Google's API gives token limits and temperature. Thinking levels come

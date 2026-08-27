@@ -1,6 +1,4 @@
-import { expect, test } from './fixtures';
-
-test.use({ seedModelTier: 'legacy' });
+import { expect, PROVIDER_MODELS, test } from './fixtures';
 
 test('New Chat button creates a fresh empty chat', async ({ airmailai }) => {
     await airmailai.goto();
@@ -118,8 +116,9 @@ test('chats and messages persist across reload', async ({ airmailai }) => {
 test('model config persists across reload', async ({ airmailai }) => {
     await airmailai.goto();
 
-    await airmailai.setProvider('OpenAI');
-    await airmailai.setModelById('gpt-5.4-mini');
+    const openai = PROVIDER_MODELS.openai;
+    await airmailai.setProvider(openai.label);
+    await airmailai.setModelById(openai.chat);
     await airmailai.setMaxTokens(5);
     await airmailai.page.waitForTimeout(500);
 
@@ -127,6 +126,6 @@ test('model config persists across reload', async ({ airmailai }) => {
     await expect(airmailai.composer()).toBeVisible();
 
     await expect(airmailai.providerSelect()).toHaveValue('openai');
-    await expect(airmailai.modelTrigger()).toContainText('GPT-5.4 Mini');
+    await expect(airmailai.modelTrigger()).toContainText(openai.chatName);
     await expect(airmailai.maxTokensBadge()).toHaveText('5');
 });

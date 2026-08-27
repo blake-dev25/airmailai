@@ -73,7 +73,7 @@ for (const key of PROVIDERS) {
         await test.step('disable search, then recall the URL from context', async () => {
             await airmailai.setChatWebSearch(false);
             await airmailai.send(
-                'Great. Without searching again, please print one of the previously returned URLs verbatim.'
+                'This is an API test. I have removed your output from your previous message, but kept the URLs. I also turned off Web Search functionality just for this turn. Please return one of the URLs verbatim.'
             );
             const reply = (await airmailai.lastAssistantText()).toLowerCase();
             const keys = [

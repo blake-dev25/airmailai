@@ -25,12 +25,17 @@ export async function uploadGoogleFile(
     apiKey: string,
     blob: Blob,
     mediaType: string,
-    filename: string
+    filename: string,
+    signal?: AbortSignal
 ): Promise<ProviderFileEntry> {
     const client = fileClient(apiKey);
     let file = await client.files.upload({
         file: blob,
-        config: { mimeType: mediaType, displayName: filename },
+        config: {
+            mimeType: mediaType,
+            displayName: filename,
+            abortSignal: signal,
+        },
     });
     let polls = 0;
     while (file.state === FileState.PROCESSING && file.name) {
@@ -39,8 +44,12 @@ export async function uploadGoogleFile(
                 `Google is still processing ${filename} after ${PROCESSING_MAX_POLLS}s. Try again shortly.`
             );
         }
+        signal?.throwIfAborted();
         await new Promise((r) => setTimeout(r, PROCESSING_POLL_MS));
-        file = await client.files.get({ name: file.name });
+        file = await client.files.get({
+            name: file.name,
+            config: { abortSignal: signal },
+        });
     }
     if (file.state === FileState.FAILED) {
         throw new Error(`Google failed to process ${filename}.`);

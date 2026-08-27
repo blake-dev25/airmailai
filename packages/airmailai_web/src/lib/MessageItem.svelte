@@ -23,6 +23,8 @@
         messageContent,
         displayContent,
         fileStatuses = {},
+        maxFileBytes,
+        providerName,
         isStreaming,
         isLastStreaming,
         editing,
@@ -52,6 +54,8 @@
         messageContent: string;
         displayContent: string;
         fileStatuses?: Record<string, FileAvailability>;
+        maxFileBytes: number;
+        providerName: string;
         isStreaming: boolean;
         isLastStreaming: boolean;
         editing: boolean;
@@ -244,6 +248,10 @@
 {#snippet chip(c: ChipModel)}
     {@const status = chipStatus(c)}
     {@const unavailableText = chipUnavailableText(status)}
+    {@const oversizedText =
+        status === 'local' && c.sizeBytes > maxFileBytes
+            ? `Too large to send to ${providerName} (${formatFileSize(maxFileBytes)} limit). It won't be sent with future messages, but you can still download it.`
+            : null}
     <span
         class={[
             'inline-flex items-center gap-1.5 px-2.5 py-1 bg-canvas border rounded-lg text-xs max-w-full',
@@ -259,6 +267,16 @@
         >
         {#if c.sizeBytes > 0}
             <span class="opacity-50">{formatFileSize(c.sizeBytes)}</span>
+        {/if}
+        {#if oversizedText}
+            <span
+                class="flex items-center justify-center w-4 h-4 shrink-0 opacity-60"
+                role="img"
+                title={oversizedText}
+                aria-label={oversizedText}
+            >
+                <Icon name="info" />
+            </span>
         {/if}
         {#if status === 'local'}
             <button

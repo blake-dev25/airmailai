@@ -4,7 +4,6 @@ CLAUDE.md
 !packages/airmailai_web/static/legal/third-party-licenses.txt
 !packages/airmailai_ext/public/third-party-licenses.txt
 !packages/airmailai_web/static/robots.txt
-collab/
 
 # dependencies
 node_modules/
@@ -28,17 +27,10 @@ logs/
 !.env.example
 *.local
 
-# os/editor/ai/etc
+# os/editor/etc
 .DS_Store
 Thumbs.db
-.vscode/
-.claude/
-.codex/
-.agents/
-
-# deploy scratch/etc
-.deploy-tmp/
-.tmp/
+**/.*
 
 # playwright generated artifacts
 test-results/

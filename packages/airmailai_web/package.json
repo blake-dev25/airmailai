@@ -11,20 +11,20 @@
     },
     "dependencies": {
         "@airmailai/shared": "workspace:*",
-        "@lucide/svelte": "^1.33.0",
+        "@lucide/svelte": "^1.34.0",
         "@tailwindcss/typography": "^0.5.20",
         "dompurify": "^3.4.14",
-        "marked": "^18.0.10",
+        "marked": "^18.0.11",
         "marked-footnote": "^1.4.0",
         "shiki": "^4.4.3",
-        "virtua": "^0.50.4"
+        "virtua": "^0.50.6"
     },
     "devDependencies": {
         "@sveltejs/vite-plugin-svelte": "^7.3.0",
         "@tailwindcss/vite": "^4.3.3",
         "@tsconfig/svelte": "^5.0.8",
         "@types/chrome": "^0.2.7",
-        "@types/node": "^26.2.0",
+        "@types/node": "^26.4.0",
         "svelte": "^5.56.10",
         "svelte-check": "^4.7.6",
         "tailwindcss": "^4.3.3",

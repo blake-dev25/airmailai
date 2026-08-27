@@ -1,4 +1,10 @@
-import { expect, PROVIDER_MODELS, test } from './fixtures';
+import { expect, PROVIDER_MODELS, QUICK_TIMEOUT, test } from './fixtures';
+
+const STOP_AFTER_WORDS = 8;
+
+function wordCount(text: string): number {
+    return text.trim().split(/\s+/).filter(Boolean).length;
+}
 
 test('Stop halts mid-stream, keeps partial, and persists the chopped answer', async ({
     airmailai,
@@ -13,10 +19,14 @@ test('Stop halts mid-stream, keeps partial, and persists the chopped answer', as
 
     await test.step('stop mid-stream keeps partial and reverts the button', async () => {
         await airmailai.compose(
-            'Write twelve detailed paragraphs about the history of sailing ships.'
+            'Write twelve detailed paragraphs about the history of sailing ships. Start with plain prose immediately - no title, no headings, no preamble.'
         );
         await expect(airmailai.stopButton()).toBeVisible();
-        await airmailai.page.waitForTimeout(2000);
+        await expect
+            .poll(async () => wordCount(await airmailai.lastAssistantText()), {
+                timeout: QUICK_TIMEOUT,
+            })
+            .toBeGreaterThanOrEqual(STOP_AFTER_WORDS);
         await airmailai.stopButton().click();
 
         await expect(airmailai.stopButton()).toBeHidden();
