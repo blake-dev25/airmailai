@@ -7,7 +7,14 @@
     let {
         content,
         citations,
-    }: { content: string; citations?: CitationAnchor[] } = $props();
+        streaming = false,
+        deferred = false,
+    }: {
+        content: string;
+        citations?: CitationAnchor[];
+        streaming?: boolean;
+        deferred?: boolean;
+    } = $props();
 
     let hasCodeBlock = $derived(content.includes('```'));
 
@@ -30,6 +37,8 @@
         content,
         highlighterReady: isHighlighterReady(),
         citations,
+        streaming,
+        deferred,
     }}
 ></div>
 

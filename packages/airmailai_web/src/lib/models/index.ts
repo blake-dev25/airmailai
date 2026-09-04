@@ -23,10 +23,6 @@ export type {
     VisibleModelTier,
 } from './types';
 
-// Google/OpenAI version their server tools globally, not per-model (unlike
-// Anthropic's dated tool variants), so we attach a provider-wide default here
-// rather than in the generated model files. `true` = versionless; the ext uses
-// the provider's default tool factory.
 const GOOGLE_TOOLS: ModelTools = {
     webSearch: true,
     webFetch: true,
@@ -36,11 +32,9 @@ const OPENAI_TOOLS: ModelTools = {
     webSearch: true,
     webFetch: true,
     codeExecution: true,
-    // OpenAI funnels search + fetch through one web_search server tool.
     searchFetchLinked: true,
 };
 
-// `{ tools, ...m }` so any future per-model override in the data file wins.
 function withDefaultTools(
     provider: ProviderOption,
     tools: ModelTools
@@ -51,8 +45,6 @@ function withDefaultTools(
     };
 }
 
-// OpenRouter ships with an empty model list and is hydrated at runtime by the
-// extension. Until that resolves, the Models config shows a loading state.
 export const PROVIDERS: ProviderOption[] = [
     { ...ANTHROPIC, sandboxFileAttach: true },
     { ...withDefaultTools(OPENAI, OPENAI_TOOLS), sandboxFileAttach: true },
@@ -75,9 +67,6 @@ export function modelMatchesTier(
     return TIER_RANK[modelTier] <= TIER_RANK[selected];
 }
 
-// The model picker displays models grouped by tier (latest -> previous ->
-// legacy), so "the top of the list" is the first model of the best tier
-// present, not models[0] of the raw catalog order.
 export function defaultModelForProvider(
     provider: ProviderOption
 ): ModelOption | undefined {
@@ -96,8 +85,6 @@ export function filterProvidersByTier(
 ): ProviderOption[] {
     return providers
         .map((p) => {
-            // Marketplace providers (OpenRouter) bypass tier curation -
-            // their catalogs are too large and churn too fast to curate by hand.
             if (p.marketplace) return p;
             return {
                 ...p,

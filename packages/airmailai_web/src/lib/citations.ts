@@ -122,7 +122,10 @@ export function buildCitationView(msg: AirmailAIMessage): CitationView {
     return { sources, anchors };
 }
 
-function unsafePositions(text: string): (pos: number) => boolean {
+function unsafePositions(
+    text: string,
+    scanEnd: number
+): (pos: number) => boolean {
     const fences: Array<{ start: number; end: number }> = [];
     let fence: FenceState | null = null;
     let fenceStart = 0;
@@ -137,7 +140,7 @@ function unsafePositions(text: string): (pos: number) => boolean {
             fences.push({ start: fenceStart, end });
         }
         fence = next;
-        if (lineEnd === -1) break;
+        if (lineEnd === -1 || lineStart > scanEnd) break;
         lineStart = lineEnd + 1;
     }
     if (fence !== null) fences.push({ start: fenceStart, end: text.length });
@@ -159,7 +162,7 @@ export function spliceCitationMarkers(
     anchors: CitationAnchor[]
 ): string {
     if (!anchors.length) return text;
-    const isUnsafe = unsafePositions(text);
+    const isUnsafe = unsafePositions(text, anchors[anchors.length - 1].pos);
     let out = text;
     for (let i = anchors.length - 1; i >= 0; i--) {
         const anchor = anchors[i];

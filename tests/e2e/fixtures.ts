@@ -1,4 +1,4 @@
-import './env';
+import { PROVIDER_ENV } from './env';
 import {
     test as base,
     expect,
@@ -41,13 +41,6 @@ const BASE_URL = process.env.AIRMAILAI_BASE_URL ?? 'http://localhost:5173';
 
 export const QUICK_TIMEOUT = 30_000;
 export const TOOL_TURN_TIMEOUT = 120_000;
-
-const PROVIDER_ENV: Record<string, string> = {
-    anthropic: 'ANTHROPIC_API_KEY',
-    openai: 'OPENAI_API_KEY',
-    google: 'GOOGLE_API_KEY',
-    openrouter: 'OPENROUTER_API_KEY',
-};
 
 function legalVersion(): string {
     const hash = createHash('sha256');
@@ -277,7 +270,7 @@ export class AirmailAI {
         });
     }
 
-    async setThinkingNone(): Promise<void> {
+    async setThinkingLowest(): Promise<void> {
         await this.page.getByRole('slider', { name: 'Thinking' }).press('Home');
     }
 

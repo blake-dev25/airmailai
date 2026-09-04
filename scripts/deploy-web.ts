@@ -23,7 +23,7 @@ try {
     await $`aws sts get-caller-identity --query Account --output text`.quiet();
 } catch {
     throw new Error(
-        `AWS credentials expired or missing - run: aws sso login --profile ${process.env.AWS_PROFILE}`
+        `AWS credentials expired or missing - run: aws login --profile ${process.env.AWS_PROFILE}`
     );
 }
 

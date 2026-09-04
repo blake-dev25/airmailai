@@ -2,11 +2,14 @@
     import { VList } from 'virtua/svelte';
     import { appLifecycle } from './appLifecycle.svelte';
     import { chatStore } from './chatStore.svelte';
+    import { cleanInline, MAX_TITLE_CHARS } from './chatTransfer';
+    import { escapeHtml } from './escapeHtml';
     import Icon from './Icon.svelte';
     import { providersStore } from './providersStore.svelte';
     import SettingsPopover from './SettingsPopover.svelte';
     import StampLogo from './StampLogo.svelte';
     import { settingsStore } from './settingsStore.svelte';
+    import Stripes from './Stripes.svelte';
     import type { Chat } from './types';
 
     let showSettings = $state(false);
@@ -19,7 +22,6 @@
     );
     let historyHovered = $state(false);
     let searchValue = $state('');
-    let listRef = $state<VList<Chat> | undefined>(undefined);
 
     const exportFormats: {
         format: 'md' | 'airmailai' | 'lmstudio' | 'sillytavern';
@@ -31,37 +33,14 @@
         { format: 'sillytavern', label: 'SillyTavern JSONL' },
     ];
 
-    const LOAD_MORE_THRESHOLD_PX = 300;
-
-    function maybeLoadMore() {
-        if (!listRef || !chatStore.hasMoreChats || chatStore.isLoadingMore)
-            return;
-        const offset = listRef.getScrollOffset();
-        const total = listRef.getScrollSize();
-        const viewport = listRef.getViewportSize();
-        if (total - offset - viewport < LOAD_MORE_THRESHOLD_PX)
-            chatStore.loadMore();
-    }
-
-    $effect(() => {
-        if (chatStore.chats.length === 0) return;
-        const frame = requestAnimationFrame(maybeLoadMore);
-        return () => cancelAnimationFrame(frame);
-    });
-
     function highlightSnippet(raw: string, query: string): string {
         const q = query.toLowerCase();
         const idx = raw.toLowerCase().indexOf(q);
-        const esc = (s: string) =>
-            s
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;');
-        if (idx === -1) return esc(raw);
+        if (idx === -1) return escapeHtml(raw);
         return (
-            esc(raw.slice(0, idx)) +
-            `<mark class="search-mark">${esc(raw.slice(idx, idx + query.length))}</mark>` +
-            esc(raw.slice(idx + query.length))
+            escapeHtml(raw.slice(0, idx)) +
+            `<mark class="search-mark">${escapeHtml(raw.slice(idx, idx + query.length))}</mark>` +
+            escapeHtml(raw.slice(idx + query.length))
         );
     }
 
@@ -95,11 +74,7 @@
     }
 
     function commitRename() {
-        const title = Array.from(renameValue)
-            .filter((c) => c.charCodeAt(0) >= 32)
-            .join('')
-            .trim()
-            .slice(0, 255);
+        const title = cleanInline(renameValue, MAX_TITLE_CHARS);
         if (renamingChatId && title) {
             chatStore.rename(renamingChatId, title);
         }
@@ -107,63 +82,19 @@
         renameValue = '';
     }
 
-    const stripeH = 20;
-    const stripeW = 40;
-    const gap = 40;
-    const pitch = stripeW + gap;
-    const sidebarW = 256;
-    const startI = -Math.ceil(stripeH / pitch) - 1;
-    const endI = Math.ceil(sidebarW / pitch) + 1;
-    const stripes = Array.from({ length: endI - startI + 1 }, (_, idx) => {
-        const i = startI + idx;
-        const x = i * pitch - 22;
-        return {
-            points: `${x + stripeH},0 ${x + stripeH + stripeW},0 ${x + stripeW},${stripeH} ${x},${stripeH}`,
-            red: i % 2 === 0,
-        };
-    });
-
     const chatItemClass =
         'flex-1 min-w-0 px-2.5 py-2 bg-transparent border-0 rounded-md cursor-pointer text-left';
     const chatTitleClass =
         'block text-sm text-fg overflow-hidden text-ellipsis whitespace-nowrap';
 </script>
 
-<svelte:window onclick={() => closeMenu()} onresize={maybeLoadMore} />
+<svelte:window onclick={() => closeMenu()} />
 
 <aside
     class="sidebar w-64 shrink-0 flex flex-col bg-canvas border-r border-border overflow-hidden select-none [&_input]:select-text"
 >
     {#if settingsStore.brandingMode !== 'off'}
-        <svg
-            width={sidebarW}
-            height={stripeH}
-            viewBox="0 0 {sidebarW} {stripeH}"
-            class="block shrink-0"
-            aria-hidden="true"
-        >
-            <defs>
-                <clipPath id="stripe-clip">
-                    <rect width={sidebarW} height={stripeH} />
-                </clipPath>
-            </defs>
-            <g clip-path="url(#stripe-clip)">
-                <rect
-                    width={sidebarW}
-                    height={stripeH}
-                    fill="var(--color-canvas)"
-                />
-                <!-- eslint-disable-next-line svelte/require-each-key -->
-                {#each stripes as stripe}
-                    <polygon
-                        points={stripe.points}
-                        fill={stripe.red
-                            ? 'var(--color-accent-bg)'
-                            : 'var(--color-accent-2-bg)'}
-                    />
-                {/each}
-            </g>
-        </svg>
+        <Stripes width={256} shift={-22} />
     {/if}
 
     {#if settingsStore.brandingMode === 'on'}
@@ -269,7 +200,7 @@
                     ? ''
                     : 's'}
             </p>
-            {#if (chatStore.hasMoreChats && !chatStore.allChatsSearched) || chatStore.searchingAll}
+            {#if (chatStore.unsearchedChatCount > 0 && !chatStore.allChatsSearched) || chatStore.searchingAll}
                 <button
                     type="button"
                     class="flex items-center justify-center gap-1.5 w-full px-2.5 py-1.5 mb-1 bg-transparent border border-border rounded-md text-xs text-fg-muted cursor-pointer transition-[background-color,color] duration-100 hover:bg-surface-raised hover:text-fg disabled:cursor-default"
@@ -280,7 +211,7 @@
                         <Icon name="spinner" />
                         Searching all chats...
                     {:else}
-                        Search all chats ({chatStore.unloadedMetas.length} more)
+                        Search all chats ({chatStore.unsearchedChatCount} more)
                     {/if}
                 </button>
             {/if}
@@ -362,11 +293,9 @@
             {:else}
                 <div class="flex-1 min-h-0">
                     <VList
-                        bind:this={listRef}
                         data={chatStore.sortedChats}
                         getKey={(c) => c.id}
                         itemSize={32}
-                        onscroll={maybeLoadMore}
                         class="chat-vlist"
                     >
                         {#snippet children(chat: Chat)}
@@ -456,7 +385,6 @@
             <button
                 type="button"
                 class="key-prompt absolute bottom-full left-3 right-3 mb-2.5 px-3 py-2.5 bg-accent-bg text-on-accent-bg border-0 rounded-lg text-sm font-medium text-left cursor-pointer z-20 shadow-[0_4px_16px_rgba(0,0,0,0.18)] animate-fade-up hover:underline"
-                onclick={() => (showSettings = true)}
             >
                 Add an API key here to get started
             </button>
@@ -468,10 +396,6 @@
                 showSettings && 'bg-surface-raised text-accent-fg',
             ]}
             onclick={() => {
-                if (chatStore.demoMode) {
-                    appLifecycle.requestExtension();
-                    return;
-                }
                 showSettings = !showSettings;
             }}
         >

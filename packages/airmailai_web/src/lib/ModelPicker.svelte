@@ -310,16 +310,3 @@
         </div>
     {/if}
 </div>
-
-<style>
-    .thin-scrollbar::-webkit-scrollbar {
-        width: 3px;
-    }
-    .thin-scrollbar::-webkit-scrollbar-track {
-        background: transparent;
-    }
-    .thin-scrollbar::-webkit-scrollbar-thumb {
-        background-color: var(--color-border);
-        border-radius: 3px;
-    }
-</style>

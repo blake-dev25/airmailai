@@ -2,7 +2,7 @@ import type {
     ChatMeta,
     AirmailAIMessage,
     DraftAttachment,
-    HydratedStoredMessage,
+    ImportChatEntry,
     LocalFileInfo,
     ProviderFileEntry,
     ProviderFileRef,
@@ -10,7 +10,6 @@ import type {
     StoredMessage,
 } from '@airmailai/shared';
 import { log } from '../debug';
-import { base64ToBytes } from './encoding';
 
 interface IdbUsage {
     chatHistoryBytes: number;
@@ -248,21 +247,7 @@ async function reconcileChatFileRefs(
     return unlistChatFromHashes(stores, chatId, gone);
 }
 
-function base64ToBlob(base64: string, mediaType: string): Blob {
-    return new Blob([base64ToBytes(base64)], { type: mediaType });
-}
-
-function freshBlobsFromHydrated(msg: HydratedStoredMessage): Map<string, Blob> {
-    const blobs = new Map<string, Blob>();
-    if (!msg.freshBlobs) return blobs;
-    for (const [hash, entry] of Object.entries(msg.freshBlobs)) {
-        if (blobs.has(hash)) continue;
-        blobs.set(hash, base64ToBlob(entry.base64, entry.mediaType));
-    }
-    return blobs;
-}
-
-function messageCreatedAt(msg: HydratedStoredMessage): number {
+function messageCreatedAt(msg: StoredMessage): number {
     const createdAt = msg.message.metadata?.createdAt;
     if (!Number.isFinite(createdAt)) {
         throw new Error(
@@ -305,9 +290,9 @@ function abortActiveTransaction(tx: IDBTransaction): void {
 
 async function putMessageInStores(
     stores: FileStores,
-    msg: HydratedStoredMessage
+    msg: StoredMessage,
+    freshBlobs?: Map<string, Blob>
 ): Promise<Set<string>> {
-    const freshBlobs = freshBlobsFromHydrated(msg);
     const prior = (await reqAsPromise(
         stores.messagesStore.get([msg.chatId, msg.message.id])
     )) as StoredMessage | undefined;
@@ -320,7 +305,7 @@ async function putMessageInStores(
             hash,
             info.filename,
             info.mediaType,
-            freshBlobs.get(hash)
+            freshBlobs?.get(hash)
         );
     }
 
@@ -384,7 +369,7 @@ async function deleteMessagesAfterInStores(
 
 export async function dbPrepareTurn(
     meta: ChatMeta,
-    msg: HydratedStoredMessage
+    msg: StoredMessage
 ): Promise<ProviderFileRef[]> {
     log.info('db: prepare turn', meta.id, msg.message.id);
     if (msg.chatId !== meta.id) {
@@ -453,7 +438,8 @@ export async function dbPrepareRetry(
 }
 
 export async function dbPutMessage(
-    msg: HydratedStoredMessage
+    msg: StoredMessage,
+    freshBlobs?: Map<string, Blob>
 ): Promise<ProviderFileRef[]> {
     log.info('db: put message', msg.chatId, msg.message.id);
     const createdAt = messageCreatedAt(msg);
@@ -469,10 +455,45 @@ export async function dbPutMessage(
         if (createdAt > (meta.lastMessageAt ?? 0)) {
             stores.chatMetaStore.put({ ...meta, lastMessageAt: createdAt });
         }
-        const removed = await putMessageInStores(stores, msg);
+        const removed = await putMessageInStores(stores, msg, freshBlobs);
         const refs = await reconcileChatFileRefs(stores, msg.chatId, removed);
         await txDone(tx);
         return refs;
+    } catch (err) {
+        abortActiveTransaction(tx);
+        throw err;
+    }
+}
+
+export async function dbImportChats(entries: ImportChatEntry[]): Promise<void> {
+    log.info('db: import chats', `${entries.length} chats`);
+    if (entries.length === 0) return;
+    const db = await getDb();
+    const tx = db.transaction([STORE_MESSAGES, STORE_META], 'readwrite');
+    const messagesStore = tx.objectStore(STORE_MESSAGES);
+    const chatMetaStore = tx.objectStore(STORE_META);
+    try {
+        for (const entry of entries) {
+            const chatId = entry.meta.id;
+            const existing = (await reqAsPromise(chatMetaStore.get(chatId))) as
+                ChatMeta | undefined;
+            let lastMessageAt = entry.meta.lastMessageAt ?? 0;
+            for (const message of entry.messages) {
+                const stored: StoredMessage = { chatId, message };
+                lastMessageAt = Math.max(
+                    lastMessageAt,
+                    messageCreatedAt(stored)
+                );
+                messagesStore.put(stored);
+            }
+            chatMetaStore.put(
+                mergeChatMeta(existing, {
+                    ...entry.meta,
+                    ...(lastMessageAt ? { lastMessageAt } : {}),
+                })
+            );
+        }
+        await txDone(tx);
     } catch (err) {
         abortActiveTransaction(tx);
         throw err;
@@ -726,34 +747,28 @@ export async function dbLoadChatMetas(): Promise<ChatMeta[]> {
     });
 }
 
-async function loadMessagesForChat(
-    db: IDBDatabase,
+function requestMessagesForChat(
+    messagesStore: IDBObjectStore,
     chatId: string
 ): Promise<StoredMessage[]> {
-    return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_MESSAGES, 'readonly');
-        const index = tx.objectStore(STORE_MESSAGES).index(INDEX_CHAT_ORDER);
-        const range = IDBKeyRange.bound(
-            [chatId, Number.NEGATIVE_INFINITY, ''] as unknown as IDBValidKey,
-            [
-                chatId,
-                Number.POSITIVE_INFINITY,
-                KEY_MAX,
-            ] as unknown as IDBValidKey
-        );
-        const req = index.getAll(range);
-        req.onsuccess = () => resolve(req.result as StoredMessage[]);
-        req.onerror = () => reject(req.error);
-    });
+    const range = IDBKeyRange.bound(
+        [chatId, Number.NEGATIVE_INFINITY, ''] as unknown as IDBValidKey,
+        [chatId, Number.POSITIVE_INFINITY, KEY_MAX] as unknown as IDBValidKey
+    );
+    return reqAsPromise(
+        messagesStore.index(INDEX_CHAT_ORDER).getAll(range)
+    ) as Promise<StoredMessage[]>;
 }
 
 export async function dbLoadChatsByIds(ids: string[]): Promise<StoredChat[]> {
     if (ids.length === 0) return [];
     const db = await getDb();
+    const tx = db.transaction(STORE_MESSAGES, 'readonly');
+    const messagesStore = tx.objectStore(STORE_MESSAGES);
     const chats = await Promise.all(
         ids.map(async (id) => ({
             id,
-            messages: await loadMessagesForChat(db, id),
+            messages: await requestMessagesForChat(messagesStore, id),
         }))
     );
     log.info('db: load chats by ids', `${chats.length} chats`);
@@ -762,15 +777,18 @@ export async function dbLoadChatsByIds(ids: string[]): Promise<StoredChat[]> {
 
 export async function dbLoadChat(chatId: string): Promise<StoredChat | null> {
     const db = await getDb();
-    const tx = db.transaction(STORE_META, 'readonly');
-    const meta = (await reqAsPromise(
-        tx.objectStore(STORE_META).get(chatId)
-    )) as ChatMeta | undefined;
+    const tx = db.transaction([STORE_META, STORE_MESSAGES], 'readonly');
+    const metaReq = reqAsPromise(tx.objectStore(STORE_META).get(chatId));
+    const messagesReq = requestMessagesForChat(
+        tx.objectStore(STORE_MESSAGES),
+        chatId
+    );
+    const meta = (await metaReq) as ChatMeta | undefined;
+    const messages = await messagesReq;
     if (!meta) {
         log.info('db: load chat', chatId, 'not found');
         return null;
     }
-    const messages = await loadMessagesForChat(db, chatId);
     log.info('db: load chat', chatId, `(${messages.length} messages)`);
     return { id: chatId, messages };
 }
@@ -882,13 +900,18 @@ export async function dbGetFileFacts(
     const tx = db.transaction([STORE_FILES, STORE_FILE_META], 'readonly');
     const filesStore = tx.objectStore(STORE_FILES);
     const fileMetaStore = tx.objectStore(STORE_FILE_META);
+    const lookups = hashes.map((hash) => ({
+        hash,
+        blobKey: reqAsPromise(filesStore.getKey(hash)),
+        rec: reqAsPromise(fileMetaStore.get(hash)) as Promise<
+            FileMetaRecord | undefined
+        >,
+    }));
     const facts: Record<string, FileFacts> = {};
-    for (const hash of hashes) {
-        const blobKey = await reqAsPromise(filesStore.getKey(hash));
-        const rec = (await reqAsPromise(fileMetaStore.get(hash))) as
-            FileMetaRecord | undefined;
-        const entry = rec?.providers[provider];
-        facts[hash] = {
+    for (const lookup of lookups) {
+        const blobKey = await lookup.blobKey;
+        const entry = (await lookup.rec)?.providers[provider];
+        facts[lookup.hash] = {
             local: blobKey !== undefined,
             ...(entry ? { providerEntry: entry } : {}),
         };

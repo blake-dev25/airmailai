@@ -2,13 +2,17 @@ import type {
     AirmailAIChunk,
     AirmailAIMessage,
     ExtensionStreamEvent,
-    HydratedStoredMessage,
     ProviderFileEntry,
     ProviderFileRef,
+    StoredMessage,
     StreamErrorSource,
     TurnRequest,
 } from '@airmailai/shared';
-import { applyAirmailAIChunk, createMessageAssembler } from '@airmailai/shared';
+import {
+    applyAirmailAIChunk,
+    createMessageAssembler,
+    truncateMessageTextParts,
+} from '@airmailai/shared';
 import { log } from '../debug';
 import {
     downloadOpenAIContainerFile,
@@ -22,8 +26,13 @@ import {
     dbRecordProviderFile,
     dbSetContainer,
 } from '../storage/db';
-import { bytesToBase64, hashBytes } from '../storage/encoding';
-import { broadcast, releaseStreamPort, trackStreamPort } from './ports';
+import { base64ToBytes, bytesToBase64, hashBytes } from '../storage/encoding';
+import {
+    broadcast,
+    broadcastTo,
+    releaseStreamPort,
+    trackStreamPort,
+} from './ports';
 import {
     FILE_PROVIDERS,
     deleteProviderFile,
@@ -39,7 +48,7 @@ import {
 const inflightTurns = new Set<string>();
 
 interface OpenAICaptureResult {
-    freshBlobs: HydratedStoredMessage['freshBlobs'];
+    freshBlobs: Map<string, Blob>;
     containerFileIds: string[];
     warning?: string;
 }
@@ -57,8 +66,7 @@ async function captureOpenAIOutputs(
         meta?.containerId === containerId ? (meta.containerFileIds ?? []) : []
     );
     const files = await listOpenAIContainerFiles(apiKey, containerId, signal);
-    const freshBlobs: Record<string, { mediaType: string; base64: string }> =
-        {};
+    const freshBlobs = new Map<string, Blob>();
     const capturedParts: AirmailAIMessage['parts'] = [];
     const containerFileIds: string[] = [];
     const warnings: string[] = [];
@@ -83,10 +91,8 @@ async function captureOpenAIOutputs(
         }
         const bytes = new Uint8Array(buf);
         const hash = await hashBytes(buf);
-        freshBlobs[hash] = {
-            mediaType: f.mediaType,
-            base64: bytesToBase64(bytes),
-        };
+        const blob = new Blob([bytes], { type: f.mediaType });
+        freshBlobs.set(hash, blob);
         capturedParts.push({
             type: 'file',
             filename: f.filename,
@@ -109,7 +115,7 @@ async function captureOpenAIOutputs(
                     hash,
                     'openai',
                     apiKey,
-                    new Blob([bytes], { type: f.mediaType }),
+                    blob,
                     f.mediaType,
                     f.filename,
                     signal
@@ -125,7 +131,7 @@ async function captureOpenAIOutputs(
     }
     message.parts.push(...capturedParts);
     return {
-        freshBlobs: Object.keys(freshBlobs).length ? freshBlobs : undefined,
+        freshBlobs,
         containerFileIds,
         ...(warnings.length ? { warning: warnings.join('; ') } : {}),
     };
@@ -172,30 +178,6 @@ async function hydrateBlobs(
         }
     }
     return blobs;
-}
-
-function truncateAssistantParts(msg: AirmailAIMessage, maxChars: number): void {
-    let textConsumed = 0;
-    let i = 0;
-    while (i < msg.parts.length) {
-        const part = msg.parts[i];
-        if (!part) break;
-        if (part.type === 'text') {
-            const remaining = maxChars - textConsumed;
-            if (remaining <= 0) {
-                msg.parts.splice(i);
-                return;
-            }
-            if (part.text.length > remaining) {
-                part.text = part.text.slice(0, remaining);
-                part.state = 'done';
-                msg.parts.splice(i + 1);
-                return;
-            }
-            textConsumed += part.text.length;
-        }
-        i++;
-    }
 }
 
 export function handleTurnPort(port: chrome.runtime.Port): void {
@@ -300,10 +282,7 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
         let apiKey: string | undefined;
         let ephemeralInputFiles: ProviderFileRef[] = [];
         const outputWarnings: string[] = [];
-        const streamOutputBlobs: Record<
-            string,
-            { mediaType: string; base64: string }
-        > = {};
+        const streamOutputBlobs = new Map<string, Blob>();
 
         try {
             apiKey = await readApiKey(msg.provider);
@@ -395,10 +374,12 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
             for await (const chunk of chunkStream) {
                 let outbound = chunk;
                 if (chunk.type === 'file' && chunk.base64) {
-                    streamOutputBlobs[chunk.hash] = {
-                        mediaType: chunk.mediaType,
-                        base64: chunk.base64,
-                    };
+                    streamOutputBlobs.set(
+                        chunk.hash,
+                        new Blob([base64ToBytes(chunk.base64)], {
+                            type: chunk.mediaType,
+                        })
+                    );
                     if (chunk.replicaFileId) {
                         try {
                             if (storageOn) {
@@ -466,9 +447,10 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
             }
         } finally {
             let disp = disposition as Disposition;
+            let orphanedReplicas: ProviderFileRef[] = [];
             const assembled = assembler.message;
             if (truncateTo !== null) {
-                truncateAssistantParts(assembled, truncateTo);
+                truncateMessageTextParts(assembled, truncateTo);
             }
             if (
                 disp !== 'aborted' &&
@@ -491,7 +473,7 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
                             : {}),
                     },
                 };
-                let freshBlobs: HydratedStoredMessage['freshBlobs'];
+                const freshBlobs = new Map(streamOutputBlobs);
                 let containerFileIds: string[] | undefined;
                 if (
                     apiKey &&
@@ -507,7 +489,9 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
                             storageOn,
                             controller.signal
                         );
-                        freshBlobs = captured.freshBlobs;
+                        for (const [hash, blob] of captured.freshBlobs) {
+                            freshBlobs.set(hash, blob);
+                        }
                         containerFileIds = captured.containerFileIds;
                         if (captured.warning) {
                             outputWarnings.push(
@@ -524,17 +508,12 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
                         }
                     }
                 }
-                if (Object.keys(streamOutputBlobs).length) {
-                    freshBlobs = { ...streamOutputBlobs, ...freshBlobs };
-                }
-                const stored: HydratedStoredMessage = {
+                const stored: StoredMessage = {
                     chatId: lockedChatId,
                     message: finalMessage,
-                    ...(freshBlobs ? { freshBlobs } : {}),
                 };
                 try {
-                    const refs = await dbPutMessage(stored);
-                    await deleteProviderFiles(refs);
+                    orphanedReplicas = await dbPutMessage(stored, freshBlobs);
                 } catch (err) {
                     log.error('save failed', err);
                     const m = err instanceof Error ? err.message : String(err);
@@ -554,15 +533,6 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
                         log.error('container persist failed', err);
                     }
                 }
-            }
-
-            if (apiKey && ephemeralInputFiles.length) {
-                outputWarnings.push(
-                    ...(await deleteTemporaryProviderFiles(
-                        ephemeralInputFiles,
-                        apiKey
-                    ))
-                );
             }
 
             if (outputWarnings.length && disp !== 'errored') {
@@ -606,7 +576,35 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
 
             if (lockedChatId) inflightTurns.delete(lockedChatId);
             if (portOpen) port.disconnect();
+            await cleanupProviderFiles(
+                lockedChatId,
+                lockedSourceTabId ?? undefined,
+                apiKey,
+                ephemeralInputFiles,
+                orphanedReplicas
+            );
             releaseStreamPort(port);
         }
     });
+}
+
+async function cleanupProviderFiles(
+    chatId: string | null,
+    sourceTabId: string | undefined,
+    apiKey: string | undefined,
+    ephemeral: ProviderFileRef[],
+    orphaned: ProviderFileRef[]
+): Promise<void> {
+    const [ephemeralWarnings, orphanWarnings] = await Promise.all([
+        apiKey && ephemeral.length
+            ? deleteTemporaryProviderFiles(ephemeral, apiKey)
+            : Promise.resolve([] as string[]),
+        deleteProviderFiles(orphaned),
+    ]);
+    const warnings = [...ephemeralWarnings, ...orphanWarnings];
+    if (!warnings.length || !chatId) return;
+    broadcastTo(
+        { type: 'turn-warning', chatId, message: warnings.join('\n') },
+        sourceTabId
+    );
 }

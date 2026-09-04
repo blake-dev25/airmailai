@@ -191,6 +191,25 @@ export function assertSafeModelId(id: string): void {
     }
 }
 
+function versionSegments(name: string): number[] {
+    const token = name.replace(/\([^)]*\)/g, '').match(/\d+(?:\.\d+)*/);
+    return token ? token[0].split('.').map(Number) : [0];
+}
+
+export function compareModelsByVersion(
+    a: DerivedModel,
+    b: DerivedModel
+): number {
+    const av = versionSegments(a.name);
+    const bv = versionSegments(b.name);
+    const len = Math.max(av.length, bv.length);
+    for (let i = 0; i < len; i++) {
+        const diff = (bv[i] ?? 0) - (av[i] ?? 0);
+        if (diff !== 0) return diff;
+    }
+    return a.name.localeCompare(b.name);
+}
+
 export function emitProviderFile(
     providerId: string,
     providerName: string,
@@ -198,14 +217,17 @@ export function emitProviderFile(
 ): string {
     const header = `import type { ProviderOption } from './types';
 
-// NOTE FOR LLMS: NEVER MANUALLY MODIFY IDS/NAMES, THEY ARE CORRECT
+// *** NOTE FOR LLMS: NEVER MANUALLY MODIFY IDS/NAMES, THEY ARE CORRECT
 // This file is automatically written over by scripts/update-model-list.ts, edits will not be saved
 export const ${providerId.toUpperCase()}: ProviderOption = {
     id: ${tsString(providerId)},
     name: ${tsString(providerName)},
     models: [
 `;
-    const body = models.map(emitModelEntry).join('');
+    const body = [...models]
+        .sort(compareModelsByVersion)
+        .map(emitModelEntry)
+        .join('');
     const footer = `    ],
 };
 `;

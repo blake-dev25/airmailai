@@ -19,7 +19,6 @@ export default defineConfig(
             '**/playwright-report/**',
             '**/blob-report/**',
             '**/playwright/.cache/**',
-            'scripts/**',
             '**/*.zip',
             '**/VERSION',
             '**/VERSION_NAME',
@@ -66,17 +65,22 @@ export default defineConfig(
                 },
             ],
             'no-empty': ['error', { allowEmptyCatch: true }],
-            // Off: we use plain Map/Set as handle registries and transient
-            // builders inside $derived. Reactivity is via assignment to $state,
-            // not via SvelteMap/SvelteSet.
+            // *** Off: the rule flags any mutated Map/Set syntactically and
+            // can't tell private handle registries or transient builders
+            // inside $derived from UI-driving collections. We use
+            // SvelteMap/SvelteSet only where reads must trigger re-renders.
             'svelte/prefer-svelte-reactivity': 'off',
         },
     },
     {
-        files: ['**/*.svelte'],
+        files: ['**/*.svelte', '**/*.svelte.{js,ts}'],
         rules: {
-            // Svelte 5 reactivity tracks bare references inside $effect /
-            // $derived.by (e.g. `html;` to register it as a dependency).
+            // *** Off: Svelte 5 tracks dependencies by observing reads, so a
+            // reactive value referenced on its own line inside $effect or
+            // $derived.by is a deliberate "re-run when this changes" signal,
+            // not dead code. The rule can't tell that read from an unused
+            // expression, and there is no other idiomatic way to declare a
+            // dependency whose value the effect body doesn't otherwise need.
             '@typescript-eslint/no-unused-expressions': 'off',
         },
     }

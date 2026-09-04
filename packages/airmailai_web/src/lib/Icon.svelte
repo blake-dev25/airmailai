@@ -1,4 +1,4 @@
-<script lang="ts">
+<script module lang="ts">
     import Check from '@lucide/svelte/icons/check';
     import ChevronDown from '@lucide/svelte/icons/chevron-down';
     import CircleAlert from '@lucide/svelte/icons/circle-alert';
@@ -49,22 +49,6 @@
         | 'stop'
         | 'trash'
         | 'upload';
-
-    interface Props {
-        name: IconName;
-        size?: number;
-        strokeWidth?: number;
-        fill?: string;
-        class?: string;
-    }
-
-    let {
-        name,
-        size,
-        strokeWidth,
-        fill,
-        class: className = '',
-    }: Props = $props();
 
     const ICONS = {
         check: Check,
@@ -119,6 +103,24 @@
         trash: 12,
         upload: 14,
     };
+</script>
+
+<script lang="ts">
+    interface Props {
+        name: IconName;
+        size?: number;
+        strokeWidth?: number;
+        fill?: string;
+        class?: string;
+    }
+
+    let {
+        name,
+        size,
+        strokeWidth,
+        fill,
+        class: className = '',
+    }: Props = $props();
 
     let Component = $derived(ICONS[name]);
     let resolvedSize = $derived(size ?? DEFAULT_SIZE[name]);

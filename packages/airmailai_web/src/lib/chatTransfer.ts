@@ -38,7 +38,7 @@ export const MAX_IMPORT_FILE_BYTES = 100 * 1024 * 1024;
 const MAX_CHATS_PER_BACKUP = 5000;
 const MAX_MESSAGES_PER_CHAT = 20000;
 const MAX_TEXT_CHARS_PER_MESSAGE = 5 * 1024 * 1024;
-const MAX_TITLE_CHARS = 255;
+export const MAX_TITLE_CHARS = 255;
 const MAX_MODEL_CHARS = 200;
 const MAX_SYSTEM_PROMPT_CHARS = 100000;
 
@@ -52,9 +52,9 @@ function isControlOrBidiChar(c: string): boolean {
     );
 }
 
-function cleanInline(value: unknown, maxChars: number): string {
+export function cleanInline(value: unknown, maxChars: number): string {
     if (typeof value !== 'string') return '';
-    return Array.from(value)
+    return Array.from(value.slice(0, maxChars * 2))
         .filter((c) => !isControlOrBidiChar(c))
         .join('')
         .trim()
@@ -250,15 +250,25 @@ export function buildSillyTavernExport(
     return lines.join('\n') + '\n';
 }
 
+function pad2(n: number): string {
+    return String(n).padStart(2, '0');
+}
+
+function safeFilenameTitle(title: string): string {
+    return title.replace(/[/\\:*?"<>|]/g, '-');
+}
+
+function dateStamp(d: Date): string {
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
 export function sillyTavernFilename(title: string, createdAt: number): string {
     const created = new Date(createdAt);
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const safeTitle = title.replace(/[/\\:*?"<>|]/g, '-');
     const stamp =
-        `${created.getFullYear()}-${pad(created.getMonth() + 1)}-${pad(created.getDate())}` +
-        `@${pad(created.getHours())}h${pad(created.getMinutes())}m${pad(created.getSeconds())}s` +
+        `${dateStamp(created)}` +
+        `@${pad2(created.getHours())}h${pad2(created.getMinutes())}m${pad2(created.getSeconds())}s` +
         `${String(created.getMilliseconds()).padStart(3, '0')}ms`;
-    return `${safeTitle} - ${stamp}.jsonl`;
+    return `${safeFilenameTitle(title)} - ${stamp}.jsonl`;
 }
 
 export function exportFilename(
@@ -267,24 +277,12 @@ export function exportFilename(
     extension: string
 ): string {
     const created = new Date(createdAt);
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const stamp = `${created.getFullYear()}-${pad(created.getMonth() + 1)}-${pad(created.getDate())} ${pad(created.getHours())}.${pad(created.getMinutes())}`;
-    const safeTitle = title.replace(/[/\\:*?"<>|]/g, '-');
-    return `${safeTitle} - ${stamp}${extension}`;
+    const stamp = `${dateStamp(created)} ${pad2(created.getHours())}.${pad2(created.getMinutes())}`;
+    return `${safeFilenameTitle(title)} - ${stamp}${extension}`;
 }
 
-export function downloadTextFile(
-    filename: string,
-    content: string,
-    mimeType: string
-): void {
-    const blob = new Blob([content], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
+export function backupFilename(now: Date): string {
+    return `airmailai-backup-${dateStamp(now)}-${pad2(now.getHours())}.${pad2(now.getMinutes())}.${pad2(now.getSeconds())}.yaml`;
 }
 
 function titleFromFilename(filename: string): string {

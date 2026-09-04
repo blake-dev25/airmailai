@@ -1,8 +1,10 @@
 <script lang="ts">
     import type { StorageUsage } from '@airmailai/shared';
+    import { appLifecycle } from './appLifecycle.svelte';
     import { chatStore } from './chatStore.svelte';
     import { PROVIDERS, THEMES } from './constants';
     import { formatErr, reportAppError } from './errorStore.svelte';
+    import { formatFileSize } from './files';
     import {
         clearAllChats,
         clearAllStorage,
@@ -20,9 +22,11 @@
 
     let { onclose }: { onclose: () => void } = $props();
 
+    const demo = chatStore.demoMode;
+
     let activeTab = $state<
         'keys' | 'ui' | 'tools' | 'storage' | 'advanced' | 'changelog'
-    >('keys');
+    >(demo ? 'ui' : 'keys');
 
     const WEB_SEARCH_INFO =
         'Lets models search the internet using a provider server-side search tool. May have additional costs, see provider API documentation for details.';
@@ -43,6 +47,7 @@
     const OPENROUTER_REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
     const OPENROUTER_REFRESH_COOLDOWN_TITLE =
         'Recently refreshed, please wait 5m to try again.';
+    const DEMO_LOCKED_TITLE = 'Requires the AirmailAI extension';
 
     let storageUsage = $state<StorageUsage | null>(null);
     let storageLoading = $state(false);
@@ -92,6 +97,7 @@
 
     function openStorageTab() {
         activeTab = 'storage';
+        if (demo) return;
         if (storageUsage === null && !storageLoading) refreshStorageUsage();
     }
 
@@ -116,14 +122,6 @@
     function openChangelogTab() {
         activeTab = 'changelog';
         if (changelogMd === null && !changelogLoading) loadChangelog();
-    }
-
-    function formatBytes(bytes: number): string {
-        if (bytes < 1024) return `${bytes} B`;
-        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-        if (bytes < 1024 * 1024 * 1024)
-            return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-        return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
     }
 
     async function handleClearChats() {
@@ -270,6 +268,7 @@
     }
 
     $effect(() => {
+        if (demo) return;
         let cancelled = false;
         waitForExtension()
             .then(() => getOpenRouterRefreshStatus())
@@ -320,6 +319,7 @@
     );
 
     $effect(() => {
+        if (demo) return;
         waitForExtension().then(() => {
             providersStore.refreshSavedKeys().catch((err) => {
                 reportAppError(
@@ -417,6 +417,13 @@
 
     const tdBase = 'py-2 px-3 text-fg align-middle';
 
+    const lockedPanel = ['flex flex-col gap-5', demo && 'opacity-40'];
+
+    function openInstallPrompt() {
+        onclose();
+        appLifecycle.requestExtension();
+    }
+
     function onWindowKeydown(e: KeyboardEvent) {
         if (e.key === 'Escape') onclose();
     }
@@ -488,142 +495,151 @@
             ]}
             aria-hidden={activeTab !== 'keys'}
         >
-            <table class="w-full border-collapse text-sm">
-                <thead>
-                    <tr>
-                        <th
-                            class="text-left font-medium text-fg px-3 pb-2.5 border-b border-border"
-                            >Provider</th
-                        >
-                        <th
-                            class="text-center font-medium text-fg px-3 pb-2.5 border-b border-border"
-                            >Saved</th
-                        >
-                        <th
-                            class="text-left font-medium text-fg px-3 pb-2.5 border-b border-border w-full"
-                            >API Key</th
-                        >
-                        <th
-                            class="text-left font-medium text-fg px-3 pb-2.5 border-b border-border whitespace-nowrap"
-                            >Options</th
-                        >
-                    </tr>
-                </thead>
-                <tbody>
-                    {#each PROVIDERS as provider, i (provider.id)}
-                        {@const isLast = i === PROVIDERS.length - 1}
-                        <tr>
-                            <td
-                                class={[
-                                    tdBase,
-                                    'font-medium whitespace-nowrap',
-                                    !isLast && 'border-b border-border',
-                                ]}>{provider.name}</td
-                            >
-                            <td
-                                class={[
-                                    tdBase,
-                                    'text-center [&_svg]:block [&_svg]:mx-auto',
-                                    !isLast && 'border-b border-border',
-                                ]}
-                            >
-                                {#if providersStore.savedKeys?.[provider.id]}
-                                    <Icon name="check" class="icon-check" />
-                                {:else}
-                                    <Icon
-                                        name="close"
-                                        size={15}
-                                        class="icon-x"
-                                    />
-                                {/if}
-                            </td>
-                            <td
-                                class={[
-                                    tdBase,
-                                    'w-full',
-                                    !isLast && 'border-b border-border',
-                                ]}
-                            >
-                                <input
-                                    class="w-full px-2.5 py-1.5 bg-surface-raised border border-border rounded-md text-sm text-fg font-mono box-border outline-none transition-[border-color] duration-150 focus:border-accent-fg placeholder:font-sans placeholder:text-fg-muted"
-                                    type="password"
-                                    placeholder="Paste key..."
-                                    bind:value={keyInputs[provider.id]}
-                                    onkeydown={(e) => {
-                                        if (e.key === 'Enter')
-                                            handleSave(provider.id);
-                                    }}
-                                />
-                            </td>
-                            <td
-                                class={[
-                                    tdBase,
-                                    'whitespace-nowrap',
-                                    !isLast && 'border-b border-border',
-                                ]}
-                            >
-                                <div class="flex items-center gap-1.5">
-                                    <button
-                                        type="button"
-                                        class="shrink-0 px-2.5 py-1.25 border-0 rounded-md text-xs font-medium cursor-pointer whitespace-nowrap transition-[background-color,color,opacity] duration-150 disabled:opacity-[0.35] disabled:cursor-not-allowed bg-accent-bg text-on-accent-bg enabled:hover:bg-accent-bg-hover enabled:hover:text-on-accent-bg-hover"
-                                        disabled={!keyInputs[
-                                            provider.id
-                                        ].trim()}
-                                        onclick={() => handleSave(provider.id)}
-                                    >
-                                        Save
-                                    </button>
-                                    <button
-                                        type="button"
-                                        class="shrink-0 px-2.5 py-1.25 border border-border rounded-md text-xs font-medium cursor-pointer whitespace-nowrap transition-[background-color,opacity] duration-150 disabled:opacity-[0.35] disabled:cursor-not-allowed bg-surface-raised text-fg enabled:hover:bg-surface-sunken"
-                                        disabled={!providersStore.savedKeys?.[
-                                            provider.id
-                                        ]}
-                                        onclick={() => handleClear(provider.id)}
-                                    >
-                                        Clear
-                                    </button>
-                                    <button
-                                        type="button"
-                                        class={[
-                                            'shrink-0 w-13 px-1 py-1.25 border rounded-md text-xs font-medium cursor-pointer whitespace-nowrap transition-[background-color,opacity,color,border-color] duration-150 disabled:opacity-[0.35] disabled:cursor-not-allowed bg-surface-raised enabled:hover:bg-surface-sunken [&_svg]:mx-auto',
-                                            keyTests[provider.id] === 'ok'
-                                                ? 'text-[#4caf6e]! border-[#4caf6e]!'
-                                                : keyTests[provider.id] ===
-                                                    'fail'
-                                                  ? 'text-accent-fg! border-accent-fg!'
-                                                  : 'text-fg border-border',
-                                        ]}
-                                        disabled={!providersStore.savedKeys?.[
-                                            provider.id
-                                        ] ||
-                                            keyTests[provider.id] === 'testing'}
-                                        onclick={() => handleTest(provider)}
-                                    >
-                                        {#if keyTests[provider.id] === 'testing'}
-                                            <Icon name="spinner" />
-                                        {:else if keyTests[provider.id] === 'ok'}
-                                            Valid
-                                        {:else if keyTests[provider.id] === 'fail'}
-                                            Invalid
-                                        {:else}
-                                            Test
-                                        {/if}
-                                    </button>
-                                </div>
-                            </td>
-                        </tr>
-                    {/each}
-                </tbody>
-            </table>
-            {#if keyTestError}
-                <p
-                    class="m-0 -mt-2 px-3 text-xs text-accent-fg wrap-break-word"
-                    role="alert"
-                >
-                    {keyTestError}
-                </p>
+            {#if demo}
+                {@render demoNotice()}
             {/if}
+            <div class={lockedPanel} inert={demo}>
+                <table class="w-full border-collapse text-sm">
+                    <thead>
+                        <tr>
+                            <th
+                                class="text-left font-medium text-fg px-3 pb-2.5 border-b border-border"
+                                >Provider</th
+                            >
+                            <th
+                                class="text-center font-medium text-fg px-3 pb-2.5 border-b border-border"
+                                >Saved</th
+                            >
+                            <th
+                                class="text-left font-medium text-fg px-3 pb-2.5 border-b border-border w-full"
+                                >API Key</th
+                            >
+                            <th
+                                class="text-left font-medium text-fg px-3 pb-2.5 border-b border-border whitespace-nowrap"
+                                >Options</th
+                            >
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {#each PROVIDERS as provider, i (provider.id)}
+                            {@const isLast = i === PROVIDERS.length - 1}
+                            <tr>
+                                <td
+                                    class={[
+                                        tdBase,
+                                        'font-medium whitespace-nowrap',
+                                        !isLast && 'border-b border-border',
+                                    ]}>{provider.name}</td
+                                >
+                                <td
+                                    class={[
+                                        tdBase,
+                                        'text-center [&_svg]:block [&_svg]:mx-auto',
+                                        !isLast && 'border-b border-border',
+                                    ]}
+                                >
+                                    {#if providersStore.savedKeys?.[provider.id]}
+                                        <Icon name="check" class="icon-check" />
+                                    {:else}
+                                        <Icon
+                                            name="close"
+                                            size={15}
+                                            class="icon-x"
+                                        />
+                                    {/if}
+                                </td>
+                                <td
+                                    class={[
+                                        tdBase,
+                                        'w-full',
+                                        !isLast && 'border-b border-border',
+                                    ]}
+                                >
+                                    <input
+                                        class="w-full px-2.5 py-1.5 bg-surface-raised border border-border rounded-md text-sm text-fg font-mono box-border outline-none transition-[border-color] duration-150 focus:border-accent-fg placeholder:font-sans placeholder:text-fg-muted [-webkit-text-security:disc]"
+                                        type="text"
+                                        autocomplete="off"
+                                        autocapitalize="off"
+                                        spellcheck="false"
+                                        placeholder="Paste key..."
+                                        bind:value={keyInputs[provider.id]}
+                                        onkeydown={(e) => {
+                                            if (e.key === 'Enter')
+                                                handleSave(provider.id);
+                                        }}
+                                    />
+                                </td>
+                                <td
+                                    class={[
+                                        tdBase,
+                                        'whitespace-nowrap',
+                                        !isLast && 'border-b border-border',
+                                    ]}
+                                >
+                                    <div class="flex items-center gap-1.5">
+                                        <button
+                                            type="button"
+                                            class="shrink-0 px-2.5 py-1.25 border-0 rounded-md text-xs font-medium cursor-pointer whitespace-nowrap transition-[background-color,color,opacity] duration-150 disabled:opacity-[0.35] disabled:cursor-not-allowed bg-accent-bg text-on-accent-bg enabled:hover:bg-accent-bg-hover enabled:hover:text-on-accent-bg-hover"
+                                            disabled={!keyInputs[
+                                                provider.id
+                                            ].trim()}
+                                            onclick={() =>
+                                                handleSave(provider.id)}
+                                        >
+                                            Save
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="shrink-0 px-2.5 py-1.25 border border-border rounded-md text-xs font-medium cursor-pointer whitespace-nowrap transition-[background-color,opacity] duration-150 disabled:opacity-[0.35] disabled:cursor-not-allowed bg-surface-raised text-fg enabled:hover:bg-surface-sunken"
+                                            disabled={!providersStore
+                                                .savedKeys?.[provider.id]}
+                                            onclick={() =>
+                                                handleClear(provider.id)}
+                                        >
+                                            Clear
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class={[
+                                                'shrink-0 w-13 px-1 py-1.25 border rounded-md text-xs font-medium cursor-pointer whitespace-nowrap transition-[background-color,opacity,color,border-color] duration-150 disabled:opacity-[0.35] disabled:cursor-not-allowed bg-surface-raised enabled:hover:bg-surface-sunken [&_svg]:mx-auto',
+                                                keyTests[provider.id] === 'ok'
+                                                    ? 'text-[#4caf6e]! border-[#4caf6e]!'
+                                                    : keyTests[provider.id] ===
+                                                        'fail'
+                                                      ? 'text-accent-fg! border-accent-fg!'
+                                                      : 'text-fg border-border',
+                                            ]}
+                                            disabled={!providersStore
+                                                .savedKeys?.[provider.id] ||
+                                                keyTests[provider.id] ===
+                                                    'testing'}
+                                            onclick={() => handleTest(provider)}
+                                        >
+                                            {#if keyTests[provider.id] === 'testing'}
+                                                <Icon name="spinner" />
+                                            {:else if keyTests[provider.id] === 'ok'}
+                                                Valid
+                                            {:else if keyTests[provider.id] === 'fail'}
+                                                Invalid
+                                            {:else}
+                                                Test
+                                            {/if}
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        {/each}
+                    </tbody>
+                </table>
+                {#if keyTestError}
+                    <p
+                        class="m-0 -mt-2 px-3 text-xs text-accent-fg wrap-break-word"
+                        role="alert"
+                    >
+                        {keyTestError}
+                    </p>
+                {/if}
+            </div>
         </div>
 
         <div
@@ -754,142 +770,154 @@
             ]}
             aria-hidden={activeTab !== 'tools'}
         >
-            <div class={[rowBase, themeRow]}>
-                <div class="flex items-center gap-1.25">
-                    <label for="enable-web-search" class={labelClass}
-                        >Web Search</label
+            {#if demo}
+                {@render demoNotice()}
+            {/if}
+            <div class={lockedPanel} inert={demo}>
+                <div class={[rowBase, themeRow]}>
+                    <div class="flex items-center gap-1.25">
+                        <label for="enable-web-search" class={labelClass}
+                            >Web Search</label
+                        >
+                        {@render toolInfo('About web search', WEB_SEARCH_INFO)}
+                    </div>
+                    <button
+                        id="enable-web-search"
+                        type="button"
+                        class={[
+                            switchClass,
+                            settingsStore.enableWebSearch && 'on',
+                        ]}
+                        role="switch"
+                        aria-checked={settingsStore.enableWebSearch}
+                        aria-label="Enable Web Search"
+                        onclick={() => {
+                            settingsStore.enableWebSearch =
+                                !settingsStore.enableWebSearch;
+                        }}
                     >
-                    {@render toolInfo('About web search', WEB_SEARCH_INFO)}
+                        <span class="toggle-switch-thumb"></span>
+                    </button>
                 </div>
-                <button
-                    id="enable-web-search"
-                    type="button"
-                    class={[switchClass, settingsStore.enableWebSearch && 'on']}
-                    role="switch"
-                    aria-checked={settingsStore.enableWebSearch}
-                    aria-label="Enable Web Search"
-                    onclick={() => {
-                        settingsStore.enableWebSearch =
-                            !settingsStore.enableWebSearch;
-                    }}
-                >
-                    <span class="toggle-switch-thumb"></span>
-                </button>
-            </div>
-            <div class={[rowBase, themeRow]}>
-                <div class="flex items-center gap-1.25">
-                    <label for="enable-web-fetch" class={labelClass}
-                        >Web Fetch</label
+                <div class={[rowBase, themeRow]}>
+                    <div class="flex items-center gap-1.25">
+                        <label for="enable-web-fetch" class={labelClass}
+                            >Web Fetch</label
+                        >
+                        {@render toolInfo('About web fetch', WEB_FETCH_INFO)}
+                    </div>
+                    <button
+                        id="enable-web-fetch"
+                        type="button"
+                        class={[
+                            switchClass,
+                            settingsStore.enableWebFetch && 'on',
+                        ]}
+                        role="switch"
+                        aria-checked={settingsStore.enableWebFetch}
+                        aria-label="Enable Web Fetch"
+                        onclick={() => {
+                            settingsStore.enableWebFetch =
+                                !settingsStore.enableWebFetch;
+                        }}
                     >
-                    {@render toolInfo('About web fetch', WEB_FETCH_INFO)}
+                        <span class="toggle-switch-thumb"></span>
+                    </button>
                 </div>
-                <button
-                    id="enable-web-fetch"
-                    type="button"
-                    class={[switchClass, settingsStore.enableWebFetch && 'on']}
-                    role="switch"
-                    aria-checked={settingsStore.enableWebFetch}
-                    aria-label="Enable Web Fetch"
-                    onclick={() => {
-                        settingsStore.enableWebFetch =
-                            !settingsStore.enableWebFetch;
-                    }}
-                >
-                    <span class="toggle-switch-thumb"></span>
-                </button>
-            </div>
-            <div class={[rowBase, themeRow]}>
-                <div class="flex items-center gap-1.25">
-                    <label for="enable-code-execution" class={labelClass}
-                        >Code Execution</label
+                <div class={[rowBase, themeRow]}>
+                    <div class="flex items-center gap-1.25">
+                        <label for="enable-code-execution" class={labelClass}
+                            >Code Execution</label
+                        >
+                        {@render toolInfo(
+                            'About code execution',
+                            CODE_EXECUTION_INFO
+                        )}
+                    </div>
+                    <button
+                        id="enable-code-execution"
+                        type="button"
+                        class={[
+                            switchClass,
+                            settingsStore.enableCodeExecution && 'on',
+                        ]}
+                        role="switch"
+                        aria-checked={settingsStore.enableCodeExecution}
+                        aria-label="Enable Code Execution"
+                        onclick={() => {
+                            settingsStore.enableCodeExecution =
+                                !settingsStore.enableCodeExecution;
+                        }}
                     >
-                    {@render toolInfo(
-                        'About code execution',
-                        CODE_EXECUTION_INFO
-                    )}
+                        <span class="toggle-switch-thumb"></span>
+                    </button>
                 </div>
-                <button
-                    id="enable-code-execution"
-                    type="button"
+                <div class={[rowBase, themeRow]}>
+                    <label for="enable-file-uploads" class={labelClass}
+                        >File Uploads</label
+                    >
+                    <button
+                        id="enable-file-uploads"
+                        type="button"
+                        class={[
+                            switchClass,
+                            settingsStore.enableFileUploads && 'on',
+                        ]}
+                        role="switch"
+                        aria-checked={settingsStore.enableFileUploads}
+                        aria-label="Enable File Uploads"
+                        onclick={() => {
+                            settingsStore.setFileUploadsEnabled(
+                                !settingsStore.enableFileUploads
+                            );
+                        }}
+                    >
+                        <span class="toggle-switch-thumb"></span>
+                    </button>
+                </div>
+                <div
                     class={[
-                        switchClass,
-                        settingsStore.enableCodeExecution && 'on',
+                        rowBase,
+                        themeRow,
+                        'pl-5',
+                        !settingsStore.enableFileUploads && 'opacity-50',
                     ]}
-                    role="switch"
-                    aria-checked={settingsStore.enableCodeExecution}
-                    aria-label="Enable Code Execution"
-                    onclick={() => {
-                        settingsStore.enableCodeExecution =
-                            !settingsStore.enableCodeExecution;
-                    }}
                 >
-                    <span class="toggle-switch-thumb"></span>
-                </button>
-            </div>
-            <div class={[rowBase, themeRow]}>
-                <label for="enable-file-uploads" class={labelClass}
-                    >File Uploads</label
-                >
-                <button
-                    id="enable-file-uploads"
-                    type="button"
-                    class={[
-                        switchClass,
-                        settingsStore.enableFileUploads && 'on',
-                    ]}
-                    role="switch"
-                    aria-checked={settingsStore.enableFileUploads}
-                    aria-label="Enable File Uploads"
-                    onclick={() => {
-                        settingsStore.setFileUploadsEnabled(
-                            !settingsStore.enableFileUploads
-                        );
-                    }}
-                >
-                    <span class="toggle-switch-thumb"></span>
-                </button>
-            </div>
-            <div
-                class={[
-                    rowBase,
-                    themeRow,
-                    'pl-5',
-                    !settingsStore.enableFileUploads && 'opacity-50',
-                ]}
-            >
-                <div class="flex items-center gap-1.25">
-                    <label for="enable-provider-file-storage" class={labelClass}
-                        >Provider File Storage</label
+                    <div class="flex items-center gap-1.25">
+                        <label
+                            for="enable-provider-file-storage"
+                            class={labelClass}>Provider File Storage</label
+                        >
+                        {@render toolInfo(
+                            'About provider file storage',
+                            PROVIDER_FILE_STORAGE_INFO
+                        )}
+                    </div>
+                    <button
+                        id="enable-provider-file-storage"
+                        type="button"
+                        class={[
+                            switchClass,
+                            settingsStore.enableProviderFileStorage && 'on',
+                            !settingsStore.enableFileUploads &&
+                                'cursor-not-allowed',
+                        ]}
+                        role="switch"
+                        aria-checked={settingsStore.enableProviderFileStorage}
+                        aria-label="Enable Provider File Storage"
+                        disabled={!settingsStore.enableFileUploads}
+                        onclick={() => {
+                            settingsStore.enableProviderFileStorage =
+                                !settingsStore.enableProviderFileStorage;
+                        }}
                     >
-                    {@render toolInfo(
-                        'About provider file storage',
-                        PROVIDER_FILE_STORAGE_INFO
-                    )}
+                        <span class="toggle-switch-thumb"></span>
+                    </button>
                 </div>
-                <button
-                    id="enable-provider-file-storage"
-                    type="button"
-                    class={[
-                        switchClass,
-                        settingsStore.enableProviderFileStorage && 'on',
-                        !settingsStore.enableFileUploads &&
-                            'cursor-not-allowed',
-                    ]}
-                    role="switch"
-                    aria-checked={settingsStore.enableProviderFileStorage}
-                    aria-label="Enable Provider File Storage"
-                    disabled={!settingsStore.enableFileUploads}
-                    onclick={() => {
-                        settingsStore.enableProviderFileStorage =
-                            !settingsStore.enableProviderFileStorage;
-                    }}
-                >
-                    <span class="toggle-switch-thumb"></span>
-                </button>
+                <p class="m-0 text-xs leading-normal text-fg-muted">
+                    {FILE_UPLOADS_WARNING}
+                </p>
             </div>
-            <p class="m-0 text-xs leading-normal text-fg-muted">
-                {FILE_UPLOADS_WARNING}
-            </p>
         </div>
 
         <div
@@ -899,90 +927,97 @@
             ]}
             aria-hidden={activeTab !== 'storage'}
         >
-            <div class="flex flex-col gap-2.5">
-                {#each storageRows as row (row.label)}
-                    <div
-                        class="flex items-center justify-between py-1.5 border-b border-border"
-                    >
-                        <span class="text-sm text-fg">{row.label}</span>
+            {#if demo}
+                {@render demoNotice()}
+            {/if}
+            <div class={lockedPanel} inert={demo}>
+                <div class="flex flex-col gap-2.5">
+                    {#each storageRows as row (row.label)}
+                        <div
+                            class="flex items-center justify-between py-1.5 border-b border-border"
+                        >
+                            <span class="text-sm text-fg">{row.label}</span>
+                            <span
+                                class="text-sm tabular-nums text-fg-muted font-mono"
+                            >
+                                {storageUsage
+                                    ? `${row.approximate ? '~' : ''}${formatFileSize(row.bytes)}`
+                                    : '-'}
+                            </span>
+                        </div>
+                    {/each}
+                    <div class="flex items-center justify-between py-1.5">
+                        <span class="text-sm text-fg font-medium">Total</span>
                         <span
-                            class="text-sm tabular-nums text-fg-muted font-mono"
+                            class="text-sm tabular-nums text-fg font-mono font-medium"
                         >
                             {storageUsage
-                                ? `${row.approximate ? '~' : ''}${formatBytes(row.bytes)}`
+                                ? `~${formatFileSize(storageTotal)}`
                                 : '-'}
                         </span>
                     </div>
-                {/each}
-                <div class="flex items-center justify-between py-1.5">
-                    <span class="text-sm text-fg font-medium">Total</span>
-                    <span
-                        class="text-sm tabular-nums text-fg font-mono font-medium"
-                    >
-                        {storageUsage ? `~${formatBytes(storageTotal)}` : '-'}
-                    </span>
+                    <p class="m-0 text-xs text-fg-muted">
+                        Sizes reflect storage on your device. Files uploaded
+                        with Provider File Storage also have copies on provider
+                        servers, which can be managed in the Files tab.
+                    </p>
                 </div>
-                <p class="m-0 text-xs text-fg-muted">
-                    Sizes reflect storage on your device. Files uploaded with
-                    Provider File Storage also have copies on provider servers,
-                    which can be managed in the Files tab.
-                </p>
-            </div>
-            <div class="flex flex-col gap-2">
+                <div class="flex flex-col gap-2">
+                    <div class="flex gap-2">
+                        <button
+                            type="button"
+                            class="flex-1 flex items-center justify-center gap-2 px-3 py-2 border border-accent-fg rounded-md text-sm font-medium cursor-pointer whitespace-nowrap transition-[background-color,color,opacity] duration-150 bg-transparent text-accent-fg enabled:hover:bg-accent-bg enabled:hover:text-on-accent-bg disabled:opacity-[0.35] disabled:cursor-not-allowed"
+                            disabled={transferBusy}
+                            onclick={handleExportAll}
+                        >
+                            <Icon name="download" />
+                            Export all chats
+                        </button>
+                        <button
+                            type="button"
+                            class="flex-1 flex items-center justify-center gap-2 px-3 py-2 border border-accent-fg rounded-md text-sm font-medium cursor-pointer whitespace-nowrap transition-[background-color,color,opacity] duration-150 bg-transparent text-accent-fg enabled:hover:bg-accent-bg enabled:hover:text-on-accent-bg disabled:opacity-[0.35] disabled:cursor-not-allowed"
+                            disabled={transferBusy}
+                            onclick={() => importInput?.click()}
+                        >
+                            <Icon name="upload" />
+                            Import chats
+                        </button>
+                        <input
+                            class="hidden"
+                            type="file"
+                            accept=".md,.json,.jsonl,.yaml,.yml"
+                            multiple
+                            bind:this={importInput}
+                            onchange={handleImportChats}
+                        />
+                    </div>
+                    <p class="m-0 text-xs text-fg-muted">
+                        Export downloads a readable YAML backup of all chats
+                        (uploaded files are not included). Import accepts
+                        AirmailAI backups, plus single-chat Markdown, LM Studio
+                        JSON, and SillyTavern JSONL files.
+                    </p>
+                </div>
                 <div class="flex gap-2">
                     <button
                         type="button"
                         class="flex-1 flex items-center justify-center gap-2 px-3 py-2 border border-accent-fg rounded-md text-sm font-medium cursor-pointer whitespace-nowrap transition-[background-color,color,opacity] duration-150 bg-transparent text-accent-fg enabled:hover:bg-accent-bg enabled:hover:text-on-accent-bg disabled:opacity-[0.35] disabled:cursor-not-allowed"
-                        disabled={transferBusy}
-                        onclick={handleExportAll}
+                        disabled={storageBusy || storageLoading}
+                        onclick={handleClearChats}
                     >
-                        <Icon name="download" />
-                        Export all chats
+                        <Icon name="trash" />
+                        Delete chat history
                     </button>
                     <button
                         type="button"
                         class="flex-1 flex items-center justify-center gap-2 px-3 py-2 border border-accent-fg rounded-md text-sm font-medium cursor-pointer whitespace-nowrap transition-[background-color,color,opacity] duration-150 bg-transparent text-accent-fg enabled:hover:bg-accent-bg enabled:hover:text-on-accent-bg disabled:opacity-[0.35] disabled:cursor-not-allowed"
-                        disabled={transferBusy}
-                        onclick={() => importInput?.click()}
+                        disabled={storageBusy || storageLoading}
+                        onclick={handleClearAll}
                     >
-                        <Icon name="upload" />
-                        Import chats
+                        <Icon name="trash" />
+                        Delete all local storage
                     </button>
-                    <input
-                        class="hidden"
-                        type="file"
-                        accept=".md,.json,.jsonl,.yaml,.yml"
-                        multiple
-                        bind:this={importInput}
-                        onchange={handleImportChats}
-                    />
                 </div>
-                <p class="m-0 text-xs text-fg-muted">
-                    Export downloads a readable YAML backup of all chats
-                    (uploaded files are not included). Import accepts AirmailAI
-                    backups, plus single-chat Markdown, LM Studio JSON, and
-                    SillyTavern JSONL files.
-                </p>
-            </div>
-            <div class="flex gap-2">
-                <button
-                    type="button"
-                    class="flex-1 flex items-center justify-center gap-2 px-3 py-2 border border-accent-fg rounded-md text-sm font-medium cursor-pointer whitespace-nowrap transition-[background-color,color,opacity] duration-150 bg-transparent text-accent-fg enabled:hover:bg-accent-bg enabled:hover:text-on-accent-bg disabled:opacity-[0.35] disabled:cursor-not-allowed"
-                    disabled={storageBusy || storageLoading}
-                    onclick={handleClearChats}
-                >
-                    <Icon name="trash" />
-                    Delete chat history
-                </button>
-                <button
-                    type="button"
-                    class="flex-1 flex items-center justify-center gap-2 px-3 py-2 border border-accent-fg rounded-md text-sm font-medium cursor-pointer whitespace-nowrap transition-[background-color,color,opacity] duration-150 bg-transparent text-accent-fg enabled:hover:bg-accent-bg enabled:hover:text-on-accent-bg disabled:opacity-[0.35] disabled:cursor-not-allowed"
-                    disabled={storageBusy || storageLoading}
-                    onclick={handleClearAll}
-                >
-                    <Icon name="trash" />
-                    Delete all local storage
-                </button>
             </div>
         </div>
 
@@ -1022,7 +1057,6 @@
                     id="chat-sort-order"
                     class={selectClass}
                     bind:value={settingsStore.chatSortOrder}
-                    onchange={() => void chatStore.applySortOrderChange()}
                 >
                     <option value="modified">Last updated</option>
                     <option value="created">Date created</option>
@@ -1089,37 +1123,42 @@
                     <span class="toggle-switch-thumb"></span>
                 </button>
             </div>
-            <div class={[rowBase, themeRow]}>
-                <label for="refresh-openrouter-models" class={labelClass}
-                    >Refresh OpenRouter Model List</label
+            <div title={demo ? DEMO_LOCKED_TITLE : undefined}>
+                <div
+                    class={[rowBase, themeRow, demo && 'opacity-40']}
+                    inert={demo}
                 >
-                <div class="flex items-center gap-2">
-                    {#if openRouterRefreshState === 'loading'}
-                        <Icon name="spinner" class="text-fg-muted" />
-                    {/if}
-                    <button
-                        id="refresh-openrouter-models"
-                        type="button"
-                        class={[
-                            'w-20 shrink-0 px-2.5 py-1.25 border rounded-md bg-surface-raised text-xs font-medium cursor-pointer whitespace-nowrap transition-[background-color,opacity,color,border-color] duration-150 enabled:hover:bg-surface-sunken disabled:cursor-not-allowed',
-                            openRouterRefreshState === 'error'
-                                ? 'text-accent-fg! border-accent-fg! disabled:opacity-100!'
-                                : 'text-fg border-border disabled:opacity-[0.35]',
-                        ]}
-                        title={openRouterRefreshCoolingDown
-                            ? OPENROUTER_REFRESH_COOLDOWN_TITLE
-                            : undefined}
-                        disabled={openRouterRefreshDisabled}
-                        onclick={handleOpenRouterRefresh}
+                    <label for="refresh-openrouter-models" class={labelClass}
+                        >Refresh OpenRouter Model List</label
                     >
-                        {#if openRouterRefreshState === 'success'}
-                            Refreshed
-                        {:else if openRouterRefreshState === 'error'}
-                            Error
-                        {:else}
-                            Refresh
+                    <div class="flex items-center gap-2">
+                        {#if openRouterRefreshState === 'loading'}
+                            <Icon name="spinner" class="text-fg-muted" />
                         {/if}
-                    </button>
+                        <button
+                            id="refresh-openrouter-models"
+                            type="button"
+                            class={[
+                                'w-20 shrink-0 px-2.5 py-1.25 border rounded-md bg-surface-raised text-xs font-medium cursor-pointer whitespace-nowrap transition-[background-color,opacity,color,border-color] duration-150 enabled:hover:bg-surface-sunken disabled:cursor-not-allowed',
+                                openRouterRefreshState === 'error'
+                                    ? 'text-accent-fg! border-accent-fg! disabled:opacity-100!'
+                                    : 'text-fg border-border disabled:opacity-[0.35]',
+                            ]}
+                            title={openRouterRefreshCoolingDown
+                                ? OPENROUTER_REFRESH_COOLDOWN_TITLE
+                                : undefined}
+                            disabled={openRouterRefreshDisabled}
+                            onclick={handleOpenRouterRefresh}
+                        >
+                            {#if openRouterRefreshState === 'success'}
+                                Refreshed
+                            {:else if openRouterRefreshState === 'error'}
+                                Error
+                            {:else}
+                                Refresh
+                            {/if}
+                        </button>
+                    </div>
                 </div>
             </div>
             <div class={[rowBase, themeRow]}>
@@ -1192,6 +1231,17 @@
     </div>
 </div>
 
+{#snippet demoNotice()}
+    <p class="m-0 text-sm text-fg">
+        Faded settings require the <button
+            type="button"
+            class="inline-flex items-center gap-0.5 p-0 bg-transparent border-0 font-sans text-sm text-accent-fg cursor-pointer hover:underline"
+            onclick={openInstallPrompt}
+            >AirmailAI extension<Icon name="external-link" /></button
+        >
+    </p>
+{/snippet}
+
 {#snippet toolInfo(label: string, text: string, above: boolean = false)}
     <span
         class="info-icon relative flex items-center text-fg-muted opacity-60 cursor-default hover:opacity-100"
@@ -1208,63 +1258,6 @@
 {/snippet}
 
 <style>
-    .range-styled::-webkit-slider-thumb {
-        -webkit-appearance: none;
-        appearance: none;
-        width: 16px;
-        height: 16px;
-        border-radius: 50%;
-        background-color: var(--color-accent-bg);
-        cursor: pointer;
-        transition:
-            background-color 0.15s,
-            transform 0.1s;
-    }
-
-    .range-styled::-webkit-slider-thumb:hover {
-        background-color: var(--color-accent-bg-hover);
-        transform: scale(1.15);
-    }
-
-    .range-styled::-moz-range-thumb {
-        width: 16px;
-        height: 16px;
-        border: none;
-        border-radius: 50%;
-        background-color: var(--color-accent-bg);
-        cursor: pointer;
-    }
-
-    .toggle-switch {
-        background-color: var(--color-surface-raised);
-        border: 1px solid var(--color-border);
-    }
-
-    .toggle-switch.on {
-        background-color: var(--color-accent-bg);
-        border-color: var(--color-accent-bg);
-    }
-
-    .toggle-switch-thumb {
-        position: absolute;
-        top: 1px;
-        left: 1px;
-        width: 16px;
-        height: 16px;
-        background-color: var(--color-canvas);
-        border-radius: 50%;
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-        transition: transform 0.18s ease;
-    }
-
-    .toggle-switch.on .toggle-switch-thumb {
-        transform: translateX(14px);
-    }
-
-    .info-icon:hover .info-tooltip {
-        display: block;
-    }
-
     :global(.icon-check) {
         color: #4caf6e;
     }

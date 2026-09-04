@@ -4,8 +4,9 @@ import type { ModelTier, ModelTierAssignment, VisibleModelTier } from './types';
 // never auto-surface in 'latest' or 'previous' without explicit promotion.
 // 'test' tier is used for playwright testing and not exposed in the UI.
 export const MODEL_TIERS: Record<string, ModelTierAssignment> = {
-    // anthropic
-    'claude-fable-5': 'latest',
+    // *** anthropic
+    'claude-fable-5': 'previous',
+    'claude-fable-5-1': 'latest',
     'claude-haiku-4-5': 'latest',
     'claude-opus-4-5-20251101': 'legacy',
     'claude-opus-4-6': 'legacy',
@@ -15,7 +16,7 @@ export const MODEL_TIERS: Record<string, ModelTierAssignment> = {
     'claude-sonnet-4-5-20250929': 'legacy',
     'claude-sonnet-4-6': 'previous',
     'claude-sonnet-5': ['latest', 'test'],
-    // openai
+    // *** openai
     'gpt-3.5-turbo': 'legacy',
     'gpt-3.5-turbo-16k': 'legacy',
     'gpt-4': 'legacy',
@@ -48,24 +49,28 @@ export const MODEL_TIERS: Record<string, ModelTierAssignment> = {
     'o3-mini': 'legacy',
     'o3-pro': 'legacy',
     'o4-mini': 'legacy',
-    // google
+    // *** google
     'antigravity-preview-05-2026': 'previous',
     'deep-research-max-preview-04-2026': 'legacy',
     'deep-research-preview-04-2026': 'legacy',
     'deep-research-pro-preview-12-2025': 'legacy',
     'gemini-2.5-computer-use-preview-10-2025': 'legacy',
     'gemini-2.5-flash': 'legacy',
+    'gemini-2.5-flash-image': 'legacy',
     'gemini-2.5-flash-lite': 'legacy',
     'gemini-2.5-pro': 'legacy',
     'gemini-3-flash-preview': 'legacy',
+    'gemini-3-pro-image': 'legacy',
+    'gemini-3.1-flash-image': 'legacy',
     'gemini-3.1-flash-lite': 'previous',
+    'gemini-3.1-flash-lite-image': 'legacy',
     'gemini-3.1-flash-lite-preview': 'previous',
     'gemini-3.1-pro-preview': 'latest',
     'gemini-3.5-flash': 'legacy',
     'gemini-3.5-flash-lite': 'latest',
-    'gemini-3.6-flash': 'previous',
-    'gemini-3.7-flash': ['latest', 'test'],
-    'gemini-robotics-er-1.6-preview': 'legacy',
+    'gemini-3.6-flash': 'legacy',
+    'gemini-3.7-flash': 'previous',
+    'gemini-3.8-flash': ['latest', 'test'],
     'gemini-robotics-er-2-preview': 'legacy',
 };
 

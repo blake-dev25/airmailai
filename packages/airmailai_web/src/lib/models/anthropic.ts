@@ -1,37 +1,19 @@
 import type { ProviderOption } from './types';
 
-// NOTE FOR LLMS: NEVER MANUALLY MODIFY IDS/NAMES, THEY ARE CORRECT
+// *** NOTE FOR LLMS: NEVER MANUALLY MODIFY IDS/NAMES, THEY ARE CORRECT
 // This file is automatically written over by scripts/update-model-list.ts, edits will not be saved
 export const ANTHROPIC: ProviderOption = {
     id: 'anthropic',
     name: 'Anthropic',
     models: [
         {
-            id: 'claude-opus-5',
-            name: 'Claude Opus 5',
+            id: 'claude-fable-5-1',
+            name: 'Claude Fable 5.1',
             params: {
                 contextWindow: 1000000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
-                thinking: {
-                    levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
-                    defaultLevel: 'high',
-                    adaptive: 'required',
-                },
-            },
-            tools: {
-                webSearch: 'web_search_20260318',
-                webFetch: 'web_fetch_20260318',
-                codeExecution: 'code_execution_20260521',
-            },
-        },
-        {
-            id: 'claude-sonnet-5',
-            name: 'Claude Sonnet 5',
-            params: {
-                contextWindow: 1000000,
-                maxOutputTokens: 128000,
-                defaultMaxTokens: 8192,
+                knowledgeCutoff: 'Jun 2026',
                 thinking: {
                     levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
                     defaultLevel: 'high',
@@ -51,8 +33,49 @@ export const ANTHROPIC: ProviderOption = {
                 contextWindow: 1000000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
+                knowledgeCutoff: 'Jan 2026',
                 thinking: {
                     levels: ['low', 'medium', 'high', 'xhigh', 'max'],
+                    defaultLevel: 'high',
+                    adaptive: 'required',
+                },
+            },
+            tools: {
+                webSearch: 'web_search_20260318',
+                webFetch: 'web_fetch_20260318',
+                codeExecution: 'code_execution_20260521',
+            },
+        },
+        {
+            id: 'claude-opus-5',
+            name: 'Claude Opus 5',
+            params: {
+                contextWindow: 1000000,
+                maxOutputTokens: 128000,
+                defaultMaxTokens: 8192,
+                knowledgeCutoff: 'May 2026',
+                thinking: {
+                    levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
+                    defaultLevel: 'high',
+                    adaptive: 'required',
+                },
+            },
+            tools: {
+                webSearch: 'web_search_20260318',
+                webFetch: 'web_fetch_20260318',
+                codeExecution: 'code_execution_20260521',
+            },
+        },
+        {
+            id: 'claude-sonnet-5',
+            name: 'Claude Sonnet 5',
+            params: {
+                contextWindow: 1000000,
+                maxOutputTokens: 128000,
+                defaultMaxTokens: 8192,
+                knowledgeCutoff: 'Jan 2026',
+                thinking: {
+                    levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
                     defaultLevel: 'high',
                     adaptive: 'required',
                 },
@@ -70,6 +93,7 @@ export const ANTHROPIC: ProviderOption = {
                 contextWindow: 1000000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
+                knowledgeCutoff: 'Jan 2026',
                 thinking: {
                     levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
                     defaultLevel: 'high',
@@ -89,31 +113,11 @@ export const ANTHROPIC: ProviderOption = {
                 contextWindow: 1000000,
                 maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
+                knowledgeCutoff: 'Jan 2026',
                 thinking: {
                     levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
                     defaultLevel: 'high',
                     adaptive: 'required',
-                },
-            },
-            tools: {
-                webSearch: 'web_search_20260318',
-                webFetch: 'web_fetch_20260318',
-                codeExecution: 'code_execution_20260521',
-            },
-        },
-        {
-            id: 'claude-sonnet-4-6',
-            name: 'Claude Sonnet 4.6',
-            params: {
-                contextWindow: 1000000,
-                maxOutputTokens: 128000,
-                defaultMaxTokens: 8192,
-                temperatureMax: 1,
-                defaultTemperature: 1,
-                thinking: {
-                    levels: ['none', 'low', 'medium', 'high', 'max'],
-                    defaultLevel: 'high',
-                    adaptive: 'optional',
                 },
             },
             tools: {
@@ -131,6 +135,7 @@ export const ANTHROPIC: ProviderOption = {
                 defaultMaxTokens: 8192,
                 temperatureMax: 1,
                 defaultTemperature: 1,
+                knowledgeCutoff: 'May 2025',
                 thinking: {
                     levels: ['none', 'low', 'medium', 'high', 'max'],
                     defaultLevel: 'high',
@@ -144,22 +149,24 @@ export const ANTHROPIC: ProviderOption = {
             },
         },
         {
-            id: 'claude-opus-4-5-20251101',
-            name: 'Claude Opus 4.5',
+            id: 'claude-sonnet-4-6',
+            name: 'Claude Sonnet 4.6',
             params: {
-                contextWindow: 200000,
-                maxOutputTokens: 64000,
+                contextWindow: 1000000,
+                maxOutputTokens: 128000,
                 defaultMaxTokens: 8192,
                 temperatureMax: 1,
                 defaultTemperature: 1,
+                knowledgeCutoff: 'Aug 2025',
                 thinking: {
-                    levels: ['none', 'low', 'medium', 'high'],
+                    levels: ['none', 'low', 'medium', 'high', 'max'],
                     defaultLevel: 'high',
+                    adaptive: 'optional',
                 },
             },
             tools: {
-                webSearch: 'web_search_20250305',
-                webFetch: 'web_fetch_20250910',
+                webSearch: 'web_search_20260318',
+                webFetch: 'web_fetch_20260318',
                 codeExecution: 'code_execution_20260521',
             },
         },
@@ -172,6 +179,7 @@ export const ANTHROPIC: ProviderOption = {
                 defaultMaxTokens: 8192,
                 temperatureMax: 1,
                 defaultTemperature: 1,
+                knowledgeCutoff: 'Feb 2025',
                 thinking: {
                     levels: ['none', 'low', 'medium', 'high'],
                     defaultLevel: 'none',
@@ -184,6 +192,27 @@ export const ANTHROPIC: ProviderOption = {
             },
         },
         {
+            id: 'claude-opus-4-5-20251101',
+            name: 'Claude Opus 4.5',
+            params: {
+                contextWindow: 200000,
+                maxOutputTokens: 64000,
+                defaultMaxTokens: 8192,
+                temperatureMax: 1,
+                defaultTemperature: 1,
+                knowledgeCutoff: 'May 2025',
+                thinking: {
+                    levels: ['none', 'low', 'medium', 'high'],
+                    defaultLevel: 'high',
+                },
+            },
+            tools: {
+                webSearch: 'web_search_20250305',
+                webFetch: 'web_fetch_20250910',
+                codeExecution: 'code_execution_20260521',
+            },
+        },
+        {
             id: 'claude-sonnet-4-5-20250929',
             name: 'Claude Sonnet 4.5',
             params: {
@@ -192,6 +221,7 @@ export const ANTHROPIC: ProviderOption = {
                 defaultMaxTokens: 8192,
                 temperatureMax: 1,
                 defaultTemperature: 1,
+                knowledgeCutoff: 'Jan 2025',
                 thinking: {
                     levels: ['none', 'low', 'medium', 'high'],
                     defaultLevel: 'none',

@@ -13,7 +13,7 @@ test('Stop halts mid-stream, keeps partial, and persists the chopped answer', as
     await expect(airmailai.modelTrigger()).toContainText(
         PROVIDER_MODELS.anthropic.chatName
     );
-    await airmailai.setThinkingNone();
+    await airmailai.setThinkingLowest();
 
     let partial = '';
 

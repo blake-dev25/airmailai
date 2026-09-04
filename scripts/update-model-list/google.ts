@@ -15,11 +15,13 @@ import {
     printModelRow,
     probeErrorCode,
     scrapeDocsRaw,
+    sleep,
     sortLevels,
     stripProviderName,
     supportsOpenRouterParam,
 } from './shared';
 import { GOOGLE_OVERRIDES, staleOverrideIds } from './overrides';
+import { type DocsCache, splitCached } from './docs-cache';
 
 async function probeGoogleModel(
     client: GoogleGenAI,
@@ -60,9 +62,12 @@ export async function scrapeGoogleDocsRaw(id: string) {
 
 interface ScrapedGoogle {
     id: string;
+    hasTextInput: boolean;
     hasTextOutput: boolean;
+    hasMediaOutput: boolean;
     thinkingSupported: boolean;
     knowledgeCutoff: string | null;
+    modelCardUrl: string | null;
 }
 
 const MONTH_ABBR: Record<string, string> = {
@@ -80,15 +85,46 @@ const MONTH_ABBR: Record<string, string> = {
     December: 'Dec',
 };
 
+function abbreviateMonth(monthYear: string): string {
+    return monthYear.replace(/^[A-Z][a-z]+/, (m) => MONTH_ABBR[m] ?? m);
+}
+
+function modalityRow(md: string, headerPattern: string): string {
+    return (
+        md.match(
+            new RegExp(`\\*\\*${headerPattern}\\*\\*\\s+([^\\n]*)`)
+        )?.[1] ?? ''
+    );
+}
+
 export function parseGoogleDoc(id: string, md: string): ScrapedGoogle {
-    const hasTextOutput = /\*\*Output\*\*\s+Text\b/.test(md);
+    const inputRow = modalityRow(md, 'Inputs?');
+    const outputRow = modalityRow(md, 'Output');
+    const hasTextInput = /\btext\b/i.test(inputRow);
+    const hasTextOutput = /\btext\b/i.test(outputRow);
+    const hasMediaOutput = /\b(?:audio|video)\b/i.test(outputRow);
     const thinkingSupported =
         /\*\*(?:Thinking|\[Thinking\]\([^)]*\))\*\*\s+Supported\b/.test(md);
     const koMatch = md.match(/Knowledge cutoff\s+([A-Z][a-z]+ \d{4})/);
-    const knowledgeCutoff = koMatch
-        ? koMatch[1].replace(/^[A-Z][a-z]+/, (m) => MONTH_ABBR[m] ?? m)
-        : null;
-    return { id, hasTextOutput, thinkingSupported, knowledgeCutoff };
+    const knowledgeCutoff = koMatch ? abbreviateMonth(koMatch[1]) : null;
+    const modelCardUrl =
+        md.match(
+            /\[Model card\]\((https:\/\/deepmind\.google\/models\/model-cards\/[^)]+)\)/
+        )?.[1] ?? null;
+    return {
+        id,
+        hasTextInput,
+        hasTextOutput,
+        hasMediaOutput,
+        thinkingSupported,
+        knowledgeCutoff,
+        modelCardUrl,
+    };
+}
+
+export function parseGoogleModelCard(md: string): string | null {
+    const m = md.match(/knowledge cutoff date for .*? is ([A-Z][a-z]+ \d{4})/i);
+    return m ? abbreviateMonth(m[1]) : null;
 }
 
 const GOOGLE_THINKING_DOCS_URL =
@@ -259,7 +295,8 @@ export interface GooglePipelineResult {
 }
 
 export async function pipelineGoogle(
-    openrouter: OpenRouterIndex
+    openrouter: OpenRouterIndex,
+    cache: DocsCache
 ): Promise<GooglePipelineResult> {
     console.log('starting Google polling');
     const key = process.env.GOOGLE_API_KEY;
@@ -284,31 +321,66 @@ export async function pipelineGoogle(
         return true;
     });
 
+    const pages = cache.section<ScrapedGoogle>('google');
+    const { hits, misses } = splitCached(candidates, pages, googleModelId);
     console.log(
-        `starting Google docs polling (${candidates.length} pages, ${WEBPAGE_SCRAPE_DELAY_MS / 1000}s spacing)`
+        `starting Google docs polling (${hits.length} cached, ${misses.length} pages, ${WEBPAGE_SCRAPE_DELAY_MS / 1000}s spacing)`
     );
-    const docOutcomes = await pollWithDelay(
-        candidates,
-        WEBPAGE_SCRAPE_DELAY_MS,
-        async (m) => {
+    const docOutcomes = [
+        ...hits.map(({ item, parsed }) => ({
+            m: item,
+            id: googleModelId(item),
+            status: 200,
+            scraped: parsed,
+        })),
+        ...(await pollWithDelay(misses, WEBPAGE_SCRAPE_DELAY_MS, async (m) => {
             const id = googleModelId(m);
             const { status, markdown } = await scrapeGoogleDocsRaw(id);
             console.log(`got ${id} docs, ${status}`);
-            return { m, id, status, markdown };
-        }
-    );
+            if (status !== 200 || !markdown) {
+                return { m, id, status, scraped: null };
+            }
+            const scraped = parseGoogleDoc(id, markdown);
+            if (!scraped.knowledgeCutoff && scraped.modelCardUrl) {
+                await sleep(WEBPAGE_SCRAPE_DELAY_MS);
+                const card = await scrapeDocsRaw(scraped.modelCardUrl);
+                console.log(`got ${id} model card, ${card.status}`);
+                if (card.markdown) {
+                    scraped.knowledgeCutoff = parseGoogleModelCard(
+                        card.markdown
+                    );
+                }
+            }
+            pages.set(id, scraped);
+            return { m, id, status, scraped };
+        })),
+    ];
+    await cache.save();
 
     const docSurvivors: DerivedModel[] = [];
-    for (const { m, id, status, markdown } of docOutcomes) {
-        if (status !== 200 || !markdown) {
+    for (const { m, id, status, scraped } of docOutcomes) {
+        if (!scraped) {
             skipped.push({ id, reason: `${status} (no docs page)` });
             continue;
         }
-        const scraped = parseGoogleDoc(id, markdown);
+        if (!scraped.hasTextInput) {
+            skipped.push({
+                id,
+                reason: 'inputs do not include Text (transcribe / etc.)',
+            });
+            continue;
+        }
         if (!scraped.hasTextOutput) {
             skipped.push({
                 id,
-                reason: 'output is not Text (TTS / image / etc.)',
+                reason: 'output does not include Text (TTS / image-only / etc.)',
+            });
+            continue;
+        }
+        if (scraped.hasMediaOutput) {
+            skipped.push({
+                id,
+                reason: 'output includes audio or video (not handled)',
             });
             continue;
         }

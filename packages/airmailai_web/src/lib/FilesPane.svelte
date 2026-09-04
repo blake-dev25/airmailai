@@ -7,6 +7,7 @@
     import { reportAppError } from './errorStore.svelte';
     import {
         deleteStoredFile,
+        forgetFileBlob,
         getFileBlob,
         listLocalFiles,
         listProviderFiles,
@@ -133,6 +134,7 @@
                 kind: 'local',
                 hash: file.hash,
             });
+            forgetFileBlob(file.hash);
             localFiles = (localFiles ?? []).filter((f) => f.hash !== file.hash);
             await chatStore.refreshLoadedChats(chatIds);
         } catch (err) {
@@ -450,9 +452,3 @@
         >
     </span>
 {/snippet}
-
-<style>
-    .info-icon:hover .info-tooltip {
-        display: block;
-    }
-</style>

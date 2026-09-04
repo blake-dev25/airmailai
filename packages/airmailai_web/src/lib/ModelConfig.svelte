@@ -13,6 +13,7 @@
     import ModelPicker, { type ModelGroup } from './ModelPicker.svelte';
     import { providersStore } from './providersStore.svelte';
     import { settingsStore } from './settingsStore.svelte';
+    import Stripes from './Stripes.svelte';
 
     const TIER_ORDER: VisibleModelTier[] = ['latest', 'previous', 'legacy'];
     const TIER_LABELS: Record<VisibleModelTier, string> = {
@@ -45,9 +46,9 @@
         if (!provider) return [] as ModelGroup[];
 
         if (provider.marketplace) {
-            // *** `~`-prefix is OpenRouter's premier-provider tag - a curated
-            // subset (e.g. latest models) that lives as its own group, distinct
-            // from the same vendor's non-premier catalog.
+            // *** Vendor order (premier `~` groups first) is already set by
+            // buildOpenRouterProvider; this only strips the `~` for the label and
+            // flags the group so the picker shows the premier star.
             const groups: ModelGroup[] = [];
             const pushBucket = (vendor: string, models: ModelOption[]) => {
                 const pinned = vendor.startsWith('~');
@@ -303,25 +304,6 @@
         settingsStore.webFetch = next;
     }
 
-    const mcStripeH = 20;
-    const mcStripeW = 40;
-    const mcGap = 40;
-    const mcPitch = mcStripeW + mcGap;
-    const mcW = 272;
-    const mcStartI = -Math.ceil(mcStripeH / mcPitch) - 1;
-    const mcEndI = Math.ceil(mcW / mcPitch) + 1;
-    const mcStripes = Array.from(
-        { length: mcEndI - mcStartI + 1 },
-        (_, idx) => {
-            const i = mcStartI + idx;
-            const x = i * mcPitch - 8;
-            return {
-                points: `${x + mcStripeH},0 ${x + mcStripeH + mcStripeW},0 ${x + mcStripeW},${mcStripeH} ${x},${mcStripeH}`,
-                red: i % 2 === 0,
-            };
-        }
-    );
-
     $effect(() => {
         if (!currentModel) return;
         const params = currentModel.params;
@@ -377,6 +359,7 @@
 
 <aside
     class="model-config thin-scrollbar shrink-0 flex w-68 flex-col bg-canvas border-l border-border overflow-x-hidden overflow-y-auto select-none [&_input]:select-text **:[[contenteditable=true]]:select-text"
+    style="--toggle-on: var(--color-accent-3-bg); --range-thumb: var(--color-accent-3-bg); --range-thumb-hover: var(--color-accent-3-bg-hover);"
 >
     <div class="flex shrink-0 items-center h-11.25 px-4 border-b border-border">
         <h2
@@ -794,107 +777,11 @@
     {/if}
 
     {#if settingsStore.brandingMode !== 'off'}
-        <svg
-            width={mcW}
-            height={mcStripeH}
-            viewBox="0 0 {mcW} {mcStripeH}"
-            class="block shrink-0"
-            aria-hidden="true"
-        >
-            <defs>
-                <clipPath id="mc-stripe-clip">
-                    <rect width={mcW} height={mcStripeH} />
-                </clipPath>
-            </defs>
-            <g clip-path="url(#mc-stripe-clip)">
-                <rect
-                    width={mcW}
-                    height={mcStripeH}
-                    fill="var(--color-canvas)"
-                />
-                <!-- eslint-disable-next-line svelte/require-each-key -->
-                {#each mcStripes as stripe}
-                    <polygon
-                        points={stripe.points}
-                        fill={stripe.red
-                            ? 'var(--color-accent-bg)'
-                            : 'var(--color-accent-2-bg)'}
-                    />
-                {/each}
-            </g>
-        </svg>
+        <Stripes width={272} shift={-8} />
     {/if}
 </aside>
 
 <style>
-    .thin-scrollbar::-webkit-scrollbar {
-        width: 3px;
-    }
-    .thin-scrollbar::-webkit-scrollbar-track {
-        background: transparent;
-    }
-    .thin-scrollbar::-webkit-scrollbar-thumb {
-        background-color: var(--color-border);
-        border-radius: 3px;
-    }
-
-    .range-styled::-webkit-slider-thumb {
-        -webkit-appearance: none;
-        appearance: none;
-        width: 16px;
-        height: 16px;
-        border-radius: 50%;
-        background-color: var(--color-accent-3-bg);
-        cursor: pointer;
-        transition:
-            background-color 0.15s,
-            transform 0.1s;
-    }
-
-    .range-styled::-webkit-slider-thumb:hover {
-        background-color: var(--color-accent-3-bg-hover);
-        transform: scale(1.15);
-    }
-
-    .range-styled::-moz-range-thumb {
-        width: 16px;
-        height: 16px;
-        border: none;
-        border-radius: 50%;
-        background-color: var(--color-accent-3-bg);
-        cursor: pointer;
-    }
-
-    .toggle-switch {
-        background-color: var(--color-surface-raised);
-        border: 1px solid var(--color-border);
-    }
-
-    .toggle-switch.on {
-        background-color: var(--color-accent-3-bg);
-        border-color: var(--color-accent-3-bg);
-    }
-
-    .toggle-switch-thumb {
-        position: absolute;
-        top: 1px;
-        left: 1px;
-        width: 16px;
-        height: 16px;
-        background-color: var(--color-canvas);
-        border-radius: 50%;
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-        transition: transform 0.18s ease;
-    }
-
-    .toggle-switch.on .toggle-switch-thumb {
-        transform: translateX(14px);
-    }
-
-    .info-icon:hover .info-tooltip {
-        display: block;
-    }
-
     :global(.select-arrow) {
         position: absolute;
         right: 10px;

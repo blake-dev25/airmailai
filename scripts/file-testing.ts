@@ -1783,12 +1783,13 @@ async function orPost(
     });
     const ms = Date.now() - started;
     const text = await res.text();
-    let json: unknown = null;
-    try {
-        json = JSON.parse(text);
-    } catch {
-        json = null;
-    }
+    const json: unknown = (() => {
+        try {
+            return JSON.parse(text);
+        } catch {
+            return null;
+        }
+    })();
     const bodyError = asObj(asObj(json)?.error);
     const ok = res.ok && !bodyError;
     return {

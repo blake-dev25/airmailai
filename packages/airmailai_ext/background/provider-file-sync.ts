@@ -66,8 +66,9 @@ export async function deleteProviderFile(
 
 export async function deleteProviderFiles(
     refs: ProviderFileRef[]
-): Promise<void> {
-    if (!refs.length) return;
+): Promise<string[]> {
+    const warnings: string[] = [];
+    if (!refs.length) return warnings;
     const byProvider = new Map<string, string[]>();
     const seen = new Set<string>();
     for (const ref of refs) {
@@ -86,21 +87,30 @@ export async function deleteProviderFiles(
                 providerId,
                 fileIds.length
             );
+            warnings.push(
+                `Couldn't delete ${fileIds.length} unused ${providerId} file${fileIds.length === 1 ? '' : 's'} (no API key saved). You can remove them from the Files tab after adding a key.`
+            );
             continue;
         }
-        for (const fileId of fileIds) {
-            try {
-                await deleteProviderFile(providerId, apiKey, fileId);
-            } catch (err) {
-                log.error(
-                    'failed to delete orphaned provider file',
-                    providerId,
-                    fileId,
-                    err
-                );
-            }
-        }
+        await Promise.all(
+            fileIds.map(async (fileId) => {
+                try {
+                    await deleteProviderFile(providerId, apiKey, fileId);
+                } catch (err) {
+                    log.error(
+                        'failed to delete orphaned provider file',
+                        providerId,
+                        fileId,
+                        err
+                    );
+                    warnings.push(
+                        `Couldn't delete an unused ${providerId} file (${fileId}): ${err instanceof Error ? err.message : String(err)}. You can remove it from the Files tab.`
+                    );
+                }
+            })
+        );
     }
+    return warnings;
 }
 
 export async function deleteTemporaryProviderFiles(
@@ -108,21 +118,27 @@ export async function deleteTemporaryProviderFiles(
     apiKey: string
 ): Promise<string[]> {
     const warnings: string[] = [];
-    for (const ref of refs) {
-        try {
-            await deleteRemoteProviderFile(ref.providerId, apiKey, ref.fileId);
-        } catch (error) {
-            log.error(
-                'temporary provider file cleanup failed',
-                ref.providerId,
-                ref.fileId,
-                error
-            );
-            warnings.push(
-                `Couldn't delete a temporary ${ref.providerId} file (${ref.fileId}). You can remove it from the provider dashboard.`
-            );
-        }
-    }
+    await Promise.all(
+        refs.map(async (ref) => {
+            try {
+                await deleteRemoteProviderFile(
+                    ref.providerId,
+                    apiKey,
+                    ref.fileId
+                );
+            } catch (error) {
+                log.error(
+                    'temporary provider file cleanup failed',
+                    ref.providerId,
+                    ref.fileId,
+                    error
+                );
+                warnings.push(
+                    `Couldn't delete a temporary ${ref.providerId} file (${ref.fileId}). You can remove it from the provider dashboard.`
+                );
+            }
+        })
+    );
     return warnings;
 }
 

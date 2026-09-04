@@ -26,7 +26,7 @@ export type {
     ProviderStream,
     ProviderStreamArgs,
     ExtensionStreamEvent,
-    HydratedStoredMessage,
+    ImportChatEntry,
     LocalFileInfo,
     OpenRouterModel,
     ProviderFileEntry,
@@ -47,8 +47,10 @@ export { FILE_TRANSFER_CHUNK_BYTES, SETTINGS_KEYS } from './messages';
 export {
     createMessageAssembler,
     applyAirmailAIChunk,
+    truncateMessageTextParts,
     type MessageAssemblerState,
 } from './assemble';
+export { getMimeTypeFromFilename } from './mime';
 export {
     createLogger,
     normalizeLogLevel,

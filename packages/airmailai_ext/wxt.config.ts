@@ -33,10 +33,6 @@ function readBuildFlag(name: string): string | undefined {
 
 const logLevel = readBuildFlag('AIRMAILAI_LOG_LEVEL') ?? 'errors';
 const allowLocalhost = readBuildFlag('WXT_ALLOW_LOCALHOST') === 'true';
-
-// Verbosity is driven by BUILD_VERBOSE so the default `bun run build` stays
-// quiet on warnings (only errors surface), and `bun run build:verbose` opts
-// back into the full Vite + Rolldown warning stream when debugging.
 const verbose = !!process.env.BUILD_VERBOSE;
 
 export default defineConfig({
@@ -53,6 +49,7 @@ export default defineConfig({
     }),
     zip: {
         artifactTemplate: 'zip/airmailai_ext.zip',
+        exclude: ['**/*.map'],
     },
     hooks: {
         'zip:extension:start': (wxt) => {

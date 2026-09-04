@@ -10,7 +10,7 @@ import type {
     FileDeleteTarget,
     FileTransferRequest,
     FileTransferResponse,
-    HydratedStoredMessage,
+    ImportChatEntry,
     LocalFileInfo,
     OpenRouterModel,
     ProviderFileInfo,
@@ -18,6 +18,7 @@ import type {
     StorageResponse,
     StorageUsage,
     StoredChat,
+    StoredMessage,
     StreamErrorSource,
     TurnStartRequest,
     UserSettings,
@@ -62,10 +63,15 @@ export function getExtensionVersion(): {
     return { version: extensionVersion, versionName: extensionVersionName };
 }
 
+const EXTENSION_ID_PATTERN = /^[a-p]{32}$/;
+
 window.addEventListener('message', (e: MessageEvent) => {
+    if (e.source !== window || e.origin !== window.location.origin) return;
+    if (extensionId) return;
     if (
         e.data?.type === 'AIRMAILAI_EXT_READY' &&
-        typeof e.data.id === 'string'
+        typeof e.data.id === 'string' &&
+        EXTENSION_ID_PATTERN.test(e.data.id)
     ) {
         extensionId = e.data.id;
         if (typeof e.data.version === 'string')
@@ -255,7 +261,7 @@ export async function saveMeta(meta: ChatMeta): Promise<void> {
 
 export async function prepareTurn(
     meta: ChatMeta,
-    message: HydratedStoredMessage
+    message: StoredMessage
 ): Promise<void> {
     await sendStorageMessage({
         type: 'prepare_turn',
@@ -277,10 +283,12 @@ export async function prepareRetry(
     });
 }
 
-export async function putMessage(
-    message: HydratedStoredMessage
-): Promise<void> {
+export async function putMessage(message: StoredMessage): Promise<void> {
     await sendStorageMessage({ type: 'put_message', message });
+}
+
+export async function importChats(chats: ImportChatEntry[]): Promise<void> {
+    await sendStorageMessage({ type: 'import_chats', chats });
 }
 
 export async function stageDraftAttachment(
@@ -429,7 +437,58 @@ export async function refreshOpenRouterModels(): Promise<OpenRouterModel[]> {
     throw new Error(`Unexpected response: ${response.type}`);
 }
 
-export async function getFileBlob(hash: string): Promise<Blob | null> {
+const FILE_BLOB_CACHE_MAX_BYTES = 128 * 1024 * 1024;
+const fileBlobCache = new Map<string, Promise<Blob | null>>();
+const fileBlobSizes = new Map<string, number>();
+let fileBlobCacheBytes = 0;
+
+export function forgetFileBlob(hash: string): void {
+    fileBlobCache.delete(hash);
+    const size = fileBlobSizes.get(hash);
+    if (size === undefined) return;
+    fileBlobSizes.delete(hash);
+    fileBlobCacheBytes -= size;
+}
+
+function rememberFileBlob(hash: string, blob: Blob): void {
+    if (blob.size > FILE_BLOB_CACHE_MAX_BYTES) {
+        forgetFileBlob(hash);
+        return;
+    }
+    fileBlobSizes.set(hash, blob.size);
+    fileBlobCacheBytes += blob.size;
+    for (const key of [...fileBlobSizes.keys()]) {
+        if (fileBlobCacheBytes <= FILE_BLOB_CACHE_MAX_BYTES) break;
+        if (key !== hash) forgetFileBlob(key);
+    }
+}
+
+export function clearFileBlobCache(): void {
+    fileBlobCache.clear();
+    fileBlobSizes.clear();
+    fileBlobCacheBytes = 0;
+}
+
+export function getFileBlob(hash: string): Promise<Blob | null> {
+    const cached = fileBlobCache.get(hash);
+    if (cached) return cached;
+    const pending = downloadFileBlob(hash).then(
+        (blob) => {
+            if (fileBlobCache.get(hash) !== pending) return blob;
+            if (blob) rememberFileBlob(hash, blob);
+            else fileBlobCache.delete(hash);
+            return blob;
+        },
+        (err) => {
+            if (fileBlobCache.get(hash) === pending) fileBlobCache.delete(hash);
+            throw err;
+        }
+    );
+    fileBlobCache.set(hash, pending);
+    return pending;
+}
+
+async function downloadFileBlob(hash: string): Promise<Blob | null> {
     const channel = openFileTransferChannel();
     try {
         const ready = await channel.request({

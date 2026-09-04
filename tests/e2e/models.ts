@@ -60,13 +60,6 @@ export const PROVIDER_MODELS = {
         label: 'OpenRouter',
         chat: '~anthropic/claude-haiku-latest',
         chatName: 'Anthropic: Claude Haiku',
-        // *** A non-Claude model for the web-search recall step: OpenRouter can't
-        // round-trip native tool results, so sources replay via our text-fold.
-        // Once search is toggled off on the recall turn, Claude models (any tier)
-        // disavow the re-injected URLs as "fabricated" - no tool-call evidence to
-        // stand behind - and refuse. GPT copies the cited URL from context.
-        // (Anthropic-native Claude is unaffected; it round-trips real web_search
-        // results.)
         tools: '~openai/gpt-latest',
         toolsName: 'OpenAI: GPT-Latest',
     },

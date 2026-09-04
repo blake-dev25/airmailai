@@ -1,7 +1,7 @@
 import type { BroadcastEvent } from '@airmailai/shared';
 import { chatStore } from './chatStore.svelte';
 import { reportAppError } from './errorStore.svelte';
-import { subscribeToBroadcast, tabId } from './extension';
+import { clearFileBlobCache, subscribeToBroadcast, tabId } from './extension';
 import { versionCheck } from './versionCheck.svelte';
 
 function handleBroadcastEvent(event: BroadcastEvent): void {
@@ -37,7 +37,15 @@ function handleBroadcastEvent(event: BroadcastEvent): void {
         case 'turn-truncate':
             chatStore.applyRemoteTurnTruncate(event.chatId, event.charLen);
             return;
+        case 'turn-warning':
+            reportAppError(
+                `turn cleanup warning (chatId=${event.chatId})`,
+                event.message,
+                new Error(event.message)
+            );
+            return;
         case 'files-changed':
+            clearFileBlobCache();
             void chatStore.refreshLoadedChats(event.chatIds);
             return;
         case 'replica-warning':

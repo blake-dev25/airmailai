@@ -24,13 +24,19 @@ logs/
 # env/local overrides
 .env
 .env.*
-!.env.example
 *.local
 
 # os/editor/etc
 .DS_Store
 Thumbs.db
 **/.*
+
+# tracked dotfiles
+!.env.example
+!.editorconfig
+!.prettierignore
+!.gitattributes
+!.gitignore
 
 # playwright generated artifacts
 test-results/

@@ -1,6 +1,7 @@
 import type {
     FileAvailability,
     ProviderFileInfo,
+    ProviderFileRef,
     StorageRequest,
     StorageResponse,
     UserSettings,
@@ -29,6 +30,7 @@ import {
     dbLookupProviderFileHashes,
     dbRemoveDraftAttachment,
     dbGetStorageUsage,
+    dbImportChats,
     dbLoadChat,
     dbLoadChatMetas,
     dbLoadChatsByIds,
@@ -38,7 +40,7 @@ import {
     dbSaveMeta,
     dbWipeAll,
 } from '../storage/db';
-import { broadcast } from './ports';
+import { broadcast, broadcastTo } from './ports';
 import {
     apiKeyName,
     assertKnownProvider,
@@ -48,6 +50,32 @@ import {
     readProviderFileStorageEnabled,
     replicaFresh,
 } from './provider-file-sync';
+
+function cleanupProviderFiles(
+    refs: ProviderFileRef[],
+    chatId: string,
+    sourceTabId: string | undefined
+): void {
+    deleteProviderFiles(refs)
+        .then((warnings) => {
+            if (!warnings.length) return;
+            broadcastTo(
+                { type: 'turn-warning', chatId, message: warnings.join('\n') },
+                sourceTabId
+            );
+        })
+        .catch((err) => {
+            log.error('provider file cleanup failed', err);
+            broadcastTo(
+                {
+                    type: 'turn-warning',
+                    chatId,
+                    message: `Couldn't clean up unused provider files: ${err instanceof Error ? err.message : String(err)}`,
+                },
+                sourceTabId
+            );
+        });
+}
 
 async function handleStorage(
     message: StorageRequest
@@ -135,7 +163,7 @@ async function handleStorage(
         }
         case 'prepare_turn': {
             const refs = await dbPrepareTurn(message.meta, message.message);
-            await deleteProviderFiles(refs);
+            cleanupProviderFiles(refs, message.meta.id, message.sourceTabId);
             broadcast(
                 { type: 'meta-changed', meta: message.meta },
                 message.sourceTabId
@@ -145,7 +173,7 @@ async function handleStorage(
         }
         case 'prepare_retry': {
             const refs = await dbPrepareRetry(message.meta, message.lastKeptId);
-            await deleteProviderFiles(refs);
+            cleanupProviderFiles(refs, message.meta.id, message.sourceTabId);
             broadcast(
                 { type: 'meta-changed', meta: message.meta },
                 message.sourceTabId
@@ -158,18 +186,26 @@ async function handleStorage(
                 message.chatId,
                 message.key
             );
-            await deleteProviderFiles(refs);
+            cleanupProviderFiles(refs, message.chatId, undefined);
             return { type: 'saved' };
         }
         case 'clear_draft_attachments': {
             const refs = await dbClearDraftAttachments(message.chatId);
-            await deleteProviderFiles(refs);
+            cleanupProviderFiles(refs, message.chatId, undefined);
             return { type: 'saved' };
         }
         case 'put_message': {
             const refs = await dbPutMessage(message.message);
-            await deleteProviderFiles(refs);
+            cleanupProviderFiles(refs, message.message.chatId, undefined);
             log.info('-> storage response: saved');
+            return { type: 'saved' };
+        }
+        case 'import_chats': {
+            await dbImportChats(message.chats);
+            log.info(
+                '-> storage response: chats imported',
+                message.chats.length
+            );
             return { type: 'saved' };
         }
         case 'delete_message': {
@@ -177,13 +213,13 @@ async function handleStorage(
                 message.chatId,
                 message.messageId
             );
-            await deleteProviderFiles(refs);
+            cleanupProviderFiles(refs, message.chatId, undefined);
             log.info('-> storage response: saved');
             return { type: 'saved' };
         }
         case 'delete_chat': {
             const refs = await dbDeleteChat(message.chatId);
-            await deleteProviderFiles(refs);
+            cleanupProviderFiles(refs, message.chatId, message.sourceTabId);
             broadcast(
                 { type: 'chat-deleted', chatId: message.chatId },
                 message.sourceTabId

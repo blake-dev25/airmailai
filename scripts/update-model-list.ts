@@ -14,6 +14,9 @@
 // work. Accepts one or more snapshot paths; only the matching provider
 // sections of tiers.ts are touched:
 //     bun scripts/update-model-list.ts --write-from-file scripts/.tmp/run_anthropic_<ts>.json [more...]
+// Parsed docs pages are cached in scripts/.tmp/docs-cache.json so only models
+// missing from the cache get scraped. Force a full re-scrape with:
+//     bun scripts/update-model-list.ts --refresh-docs
 //
 // Bun auto-loads .env at the repo root.
 
@@ -23,10 +26,10 @@ import { GoogleGenAI } from '@google/genai';
 import OpenAI from 'openai';
 import {
     fetchAnthropic,
-    parseAnthropicOverview,
+    parseAnthropicModelPage,
     printAnthropicSummary,
     printAnthropicWarnings,
-    scrapeAnthropicOverviewRaw,
+    scrapeAnthropicModelPageRaw,
 } from './update-model-list/anthropic';
 import {
     type OpenAIPipelineResult,
@@ -66,6 +69,7 @@ import {
     staleOverrideIds,
 } from './update-model-list/overrides';
 import { updateTiersFile } from './update-model-list/tiers';
+import { DocsCache } from './update-model-list/docs-cache';
 
 function overridesForProvider(provider: string): Record<string, ModelOverride> {
     if (provider === 'anthropic') return ANTHROPIC_OVERRIDES;
@@ -90,6 +94,7 @@ function reapplyOverrides(provider: string, models: DerivedModel[]): void {
 
 const WRITE = process.argv.includes('--write');
 const VERBOSE = process.argv.includes('--verbose');
+const REFRESH_DOCS = process.argv.includes('--refresh-docs');
 const MODEL_TEST_IDX = process.argv.indexOf('--model-test');
 const MODEL_TEST_PROVIDER =
     MODEL_TEST_IDX >= 0 ? process.argv[MODEL_TEST_IDX + 1] : undefined;
@@ -103,7 +108,13 @@ const GOOGLE_SCRAPE_TEST_ID =
     GOOGLE_SCRAPE_TEST_IDX >= 0
         ? process.argv[GOOGLE_SCRAPE_TEST_IDX + 1]
         : undefined;
-const ANTHROPIC_SCRAPE_TEST = process.argv.includes('--anthropic-scrape-test');
+const ANTHROPIC_SCRAPE_TEST_IDX = process.argv.indexOf(
+    '--anthropic-scrape-test'
+);
+const ANTHROPIC_SCRAPE_TEST_SLUG =
+    ANTHROPIC_SCRAPE_TEST_IDX >= 0
+        ? process.argv[ANTHROPIC_SCRAPE_TEST_IDX + 1]
+        : undefined;
 
 const PROVIDER_FLAGS = new Set(
     process.argv.filter((a) =>
@@ -168,7 +179,7 @@ async function writeFromFiles(paths: string[]): Promise<void> {
     for (const { provider, models } of loaded) {
         const r = updateTiersFile(
             tiersText,
-            `// ${provider}`,
+            `// *** ${provider}`,
             models.map((m) => m.id)
         );
         tiersText = r.text;
@@ -329,11 +340,11 @@ async function main(): Promise<void> {
         );
         return;
     }
-    if (ANTHROPIC_SCRAPE_TEST) {
+    if (ANTHROPIC_SCRAPE_TEST_SLUG) {
         await runScrapeTest(
-            'models-overview',
-            () => scrapeAnthropicOverviewRaw(),
-            (_id, md) => Object.fromEntries(parseAnthropicOverview(md))
+            ANTHROPIC_SCRAPE_TEST_SLUG,
+            scrapeAnthropicModelPageRaw,
+            (_slug, md) => parseAnthropicModelPage(md)
         );
         return;
     }
@@ -355,6 +366,7 @@ async function main(): Promise<void> {
         return;
     }
 
+    const cache = await DocsCache.load(REFRESH_DOCS);
     const openrouter = NEEDS_OPENROUTER
         ? await fetchOpenRouterIndex()
         : undefined;
@@ -364,7 +376,7 @@ async function main(): Promise<void> {
     let googleResult: GooglePipelineResult | undefined;
 
     if (RUN_ANTHROPIC) {
-        anthropic = await fetchAnthropic();
+        anthropic = await fetchAnthropic(cache);
         if (VERBOSE) {
             printAnthropicSummary('Anthropic', anthropic);
         } else {
@@ -381,7 +393,7 @@ async function main(): Promise<void> {
     }
 
     if (RUN_OPENAI) {
-        openaiResult = await pipelineOpenAI(openrouter!);
+        openaiResult = await pipelineOpenAI(openrouter!, cache);
         if (VERBOSE) {
             printOpenAIPipeline(openaiResult);
         } else {
@@ -400,7 +412,7 @@ async function main(): Promise<void> {
     }
 
     if (RUN_GOOGLE) {
-        googleResult = await pipelineGoogle(openrouter!);
+        googleResult = await pipelineGoogle(openrouter!, cache);
         printGooglePipeline(googleResult, VERBOSE);
         printGoogleWarnings(googleResult);
 
@@ -428,17 +440,17 @@ async function main(): Promise<void> {
     }> = [
         {
             provider: 'anthropic',
-            comment: '// anthropic',
+            comment: '// *** anthropic',
             ids: anthropic?.map((m) => m.id),
         },
         {
             provider: 'openai',
-            comment: '// openai',
+            comment: '// *** openai',
             ids: openaiResult?.models.map((m) => m.id),
         },
         {
             provider: 'google',
-            comment: '// google',
+            comment: '// *** google',
             ids: googleResult?.models.map((m) => m.id),
         },
     ];

@@ -63,6 +63,20 @@ bun run test --ui          # interactive (time-travel DOM snapshots)
   `openrouter_models_cache` (the two models the OR specs select) alongside the
   keys, so app boot serves the catalog from cache instead of doing a live
   `GET /models/user` on every test. The OpenRouter specs still make real OR chat calls.
+- **TTFT:** `bun run test ttft` logs time-to-first-token (first text or
+  reasoning delta) for each provider's test model three ways - through the
+  UI, through a direct import of the extension's provider code, and through
+  a hand-built minimal streaming request - then prints a comparison table.
+  It logs rather than asserts; the only failure is a call that yields no
+  content. The two Node-side modes each run in their own `bun` process
+  (`ttft-worker.ts`, also runnable by hand) so no call reuses another's TLS
+  connection. Provider order is shuffled per run so the suite's cold start
+  does not always land on the same provider. `TTFT_RUNS=5 bun run test ttft`
+  repeats every call five times (fresh browser profile and processes each
+  time) and each cell becomes `min/median/max`; a cell that lost a sample to
+  a failed call shows its count, e.g. `1180/1400/2050 (4/5)`. The final
+  `ui-raw` column is the median of each run's `ui - raw`, pairing samples
+  from the same run so shared provider jitter cancels out.
 - **Console log:** page warnings/errors + uncaught errors are written to
   `test-results/<test>/console-warnings.log` and echoed to the terminal when
   any occur - a focused view without digging through the full trace. The app's

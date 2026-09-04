@@ -124,17 +124,24 @@ function parseCodeCommand(json: string): string | undefined {
     return undefined;
 }
 
+type AnthropicImageMedia =
+    'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+
+function isImageMedia(mediaType: string): mediaType is AnthropicImageMedia {
+    return (
+        mediaType === 'image/jpeg' ||
+        mediaType === 'image/png' ||
+        mediaType === 'image/gif' ||
+        mediaType === 'image/webp'
+    );
+}
+
 function attachmentBlock(
     mediaType: string,
     base64: string,
     filename: string
 ): Anthropic.Messages.ContentBlockParam {
-    if (
-        mediaType === 'image/jpeg' ||
-        mediaType === 'image/png' ||
-        mediaType === 'image/gif' ||
-        mediaType === 'image/webp'
-    ) {
+    if (isImageMedia(mediaType)) {
         return {
             type: 'image',
             source: { type: 'base64', media_type: mediaType, data: base64 },
@@ -165,15 +172,6 @@ function attachmentBlock(
         };
     }
     throw new Error(`Anthropic does not support ${mediaType} attachments.`);
-}
-
-function isImageMedia(mediaType: string): boolean {
-    return (
-        mediaType === 'image/jpeg' ||
-        mediaType === 'image/png' ||
-        mediaType === 'image/gif' ||
-        mediaType === 'image/webp'
-    );
 }
 
 function providerFileBlock(

@@ -20,7 +20,7 @@ export interface ModelParams {
     };
 }
 
-// Per-tool support marker on a model.
+// *** Per-tool support marker on a model.
 //   - `true`  - model supports the tool; ext uses the provider's default factory
 //   - string  - pinned tool variant (anthropic versions tool definitions by
 //               date, e.g. 'web_search_20260209'). Ext passes the string straight

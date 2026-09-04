@@ -226,10 +226,9 @@ export function createChatScroll() {
                 }
             };
 
-            const contentRo = new ResizeObserver(onContentResize);
-            contentRo.observe(content);
-            const containerRo = new ResizeObserver(onContentResize);
-            containerRo.observe(container);
+            const resizeObserver = new ResizeObserver(onContentResize);
+            resizeObserver.observe(content);
+            resizeObserver.observe(container);
 
             container.addEventListener('scroll', handleScroll, {
                 passive: true,
@@ -248,8 +247,7 @@ export function createChatScroll() {
             untrack(() => onContentResize());
 
             return () => {
-                contentRo.disconnect();
-                containerRo.disconnect();
+                resizeObserver.disconnect();
                 container.removeEventListener('scroll', handleScroll);
                 container.removeEventListener('wheel', onWheel);
                 container.removeEventListener('touchstart', onTouchStart);

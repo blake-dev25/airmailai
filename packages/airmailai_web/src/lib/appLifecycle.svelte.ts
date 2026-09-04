@@ -26,6 +26,10 @@ class AppLifecycle {
 
     private lastSnappedTier: ModelTier | null = null;
     private stopBridge: (() => void) | null = null;
+    private markReady: () => void = () => {};
+    readonly ready = new Promise<void>((resolve) => {
+        this.markReady = resolve;
+    });
 
     constructor() {
         $effect.root(() => {
@@ -74,6 +78,14 @@ class AppLifecycle {
     }
 
     async start(): Promise<void> {
+        try {
+            await this.initialize();
+        } finally {
+            this.markReady();
+        }
+    }
+
+    private async initialize(): Promise<void> {
         log.info('page load', {
             screen: `${window.screen.width}x${window.screen.height}`,
             time: new Date().toISOString(),
@@ -115,7 +127,7 @@ class AppLifecycle {
             });
 
             await settingsStore.load();
-            await chatStore.loadInitialPage();
+            await chatStore.loadChats();
 
             settingsStore.applyToolDefaults(providersStore.selectedModel);
 

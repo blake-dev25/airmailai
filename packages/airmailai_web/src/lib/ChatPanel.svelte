@@ -71,7 +71,7 @@
     });
 
     $effect(() => {
-        chatStore.activeMessages;
+        chatStore.fileStatusVersion;
         const key = activeFileHashesKey;
         const provider = settingsStore.providerId;
         settingsStore.enableProviderFileStorage;
@@ -140,12 +140,32 @@
 
     const chatScroll = createChatScroll();
 
+    const IMMEDIATE_RENDER_TAIL = 12;
+
+    let lastUserMessageIndex = $derived.by(() => {
+        const msgs = chatStore.activeMessages;
+        for (let i = msgs.length - 1; i >= 0; i--) {
+            if (msgs[i].role === 'user') return i;
+        }
+        return -1;
+    });
+    let lastUserMessageEl: HTMLElement | null = null;
+
     function findLastUserMessageEl(): HTMLElement | null {
         if (!messagesEl) return null;
-        const all = messagesEl.querySelectorAll<HTMLElement>(
-            '[data-msg-role="user"]'
+        const index = lastUserMessageIndex;
+        if (index < 0) return null;
+        if (
+            lastUserMessageEl?.isConnected &&
+            lastUserMessageEl.dataset.msgIndex === String(index) &&
+            messagesEl.contains(lastUserMessageEl)
+        ) {
+            return lastUserMessageEl;
+        }
+        lastUserMessageEl = messagesEl.querySelector<HTMLElement>(
+            `[data-msg-index="${index}"]`
         );
-        return all.length ? all[all.length - 1] : null;
+        return lastUserMessageEl;
     }
 
     const smooth = createSmoothText({
@@ -269,6 +289,7 @@
     }
 
     async function submit() {
+        await appLifecycle.ready;
         const text = inputText.trim();
         if (
             (!text && !pendingAttachments.length) ||
@@ -461,8 +482,9 @@
         addFiles(files);
     }
 
-    function addFiles(files: File[]) {
+    async function addFiles(files: File[]) {
         if (!files.length) return;
+        await appLifecycle.ready;
 
         fileErrors = [];
         const uploadProviderId = settingsStore.providerId;
@@ -705,7 +727,7 @@
             aria-hidden="true"
         ></div>
         <div
-            class="messages-scroll h-full overflow-y-auto"
+            class="thin-scrollbar h-full overflow-y-auto"
             bind:this={messagesEl}
             onscroll={handleMessagesScroll}
         >
@@ -770,6 +792,10 @@
                             isStreaming={chatStore.isActiveStreaming}
                             isLastStreaming={isLastStreaming ||
                                 displayContent !== messageContent}
+                            deferRender={i <
+                                chatStore.activeMessages.length -
+                                    IMMEDIATE_RENDER_TAIL &&
+                                chatStore.highlightMessageIndex == null}
                             editing={editingMessage?.id === message.id}
                             bind:editingText
                             {editingDims}
@@ -1038,16 +1064,3 @@
         </div>
     </div>
 </div>
-
-<style>
-    .messages-scroll::-webkit-scrollbar {
-        width: 3px;
-    }
-    .messages-scroll::-webkit-scrollbar-track {
-        background: transparent;
-    }
-    .messages-scroll::-webkit-scrollbar-thumb {
-        background-color: var(--color-border);
-        border-radius: 3px;
-    }
-</style>

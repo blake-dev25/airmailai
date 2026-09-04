@@ -46,6 +46,33 @@ function mergeMetadata(
     state.message.metadata = { ...state.message.metadata, ...metadata };
 }
 
+export function truncateMessageTextParts(
+    msg: AirmailAIMessage,
+    maxChars: number
+): void {
+    let textConsumed = 0;
+    let i = 0;
+    while (i < msg.parts.length) {
+        const part = msg.parts[i];
+        if (!part) break;
+        if (part.type === 'text') {
+            const remaining = maxChars - textConsumed;
+            if (remaining <= 0) {
+                msg.parts.splice(i);
+                return;
+            }
+            if (part.text.length > remaining) {
+                part.text = part.text.slice(0, remaining);
+                part.state = 'done';
+                msg.parts.splice(i + 1);
+                return;
+            }
+            textConsumed += part.text.length;
+        }
+        i++;
+    }
+}
+
 export function applyAirmailAIChunk(
     state: MessageAssemblerState,
     chunk: AirmailAIChunk

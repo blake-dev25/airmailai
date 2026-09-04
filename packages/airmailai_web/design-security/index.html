@@ -184,10 +184,11 @@
             <p>
                 Release builds validate both sides of the website-extension
                 connection before sharing data. The extension accepts external
-                connections only from AirmailAI.net, while the website connects
-                only to the fixed extension ID published through the Chrome Web
-                Store. Local development access is opt-in and excluded from
-                production builds.
+                connections only from AirmailAI.net, and the website connects
+                only to the extension ID that the extension's own content script
+                announces from the AirmailAI.net page itself, ignoring
+                announcements from any other window or origin. Local development
+                access is opt-in and excluded from production builds.
             </p>
 
             <h3>API key handling</h3>
@@ -203,7 +204,7 @@
             <p>
                 Once a key is saved, your browser keeps it in storage scoped to
                 the AirmailAI extension. Websites cannot access that storage,
-                and theextension only accepts requests from AirmailAI.net. Even
+                and the extension only accepts requests from AirmailAI.net. Even
                 AirmailAI.net has no protocol operation for retrieving the raw
                 key. Under your browser's normal security model, visiting a
                 malicious website cannot expose your saved keys.

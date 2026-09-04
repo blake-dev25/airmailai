@@ -38,7 +38,7 @@ function readLegalVersion(): string {
     const hash = createHash('sha256');
     const legalDir = join(__dirname, 'static/legal');
 
-    // Normalize line endings before hashing so the version stays stable even
+    // *** Normalize line endings before hashing so the version stays stable even
     // if a non-git tool (editor, script, etc.) rewrites the file with CRLF.
     for (const name of ['terms.md', 'privacy.md']) {
         hash.update(name);
@@ -52,9 +52,6 @@ function readLegalVersion(): string {
     return hash.digest('hex');
 }
 
-// Verbosity is driven by BUILD_VERBOSE so the default `bun run build` stays
-// quiet on warnings (only errors surface), and `bun run build:verbose` opts
-// back into the full Vite + Rolldown warning stream when debugging.
 const verbose = !!process.env.BUILD_VERBOSE;
 
 export default defineConfig({

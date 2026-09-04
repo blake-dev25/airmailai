@@ -234,12 +234,6 @@ export interface StoredMessage {
     message: AirmailAIMessage;
 }
 
-export interface HydratedStoredMessage {
-    chatId: string;
-    message: AirmailAIMessage;
-    freshBlobs?: Record<string, { mediaType: string; base64: string }>;
-}
-
 export interface TurnStartRequest {
     type: 'start';
     chatId: string;
@@ -292,6 +286,7 @@ export type BroadcastEvent =
       }
     | { type: 'turn-aborted'; chatId: string }
     | { type: 'turn-truncate'; chatId: string; charLen: number }
+    | { type: 'turn-warning'; chatId: string; message: string }
     | { type: 'files-changed'; chatIds: string[] }
     | {
           type: 'replica-warning';
@@ -399,6 +394,11 @@ export interface StoredChat {
     messages: StoredMessage[];
 }
 
+export interface ImportChatEntry {
+    meta: ChatMeta;
+    messages: AirmailAIMessage[];
+}
+
 export interface OpenRouterModel {
     id: string;
     name: string;
@@ -450,7 +450,7 @@ export type StorageRequest =
     | {
           type: 'prepare_turn';
           meta: ChatMeta;
-          message: HydratedStoredMessage;
+          message: StoredMessage;
           sourceTabId?: string;
       }
     | {
@@ -461,7 +461,8 @@ export type StorageRequest =
       }
     | { type: 'remove_draft_attachment'; chatId: string; key: string }
     | { type: 'clear_draft_attachments'; chatId: string }
-    | { type: 'put_message'; message: HydratedStoredMessage }
+    | { type: 'put_message'; message: StoredMessage }
+    | { type: 'import_chats'; chats: ImportChatEntry[] }
     | { type: 'delete_message'; chatId: string; messageId: string }
     | { type: 'delete_chat'; chatId: string; sourceTabId?: string }
     | { type: 'load_chat_metas' }

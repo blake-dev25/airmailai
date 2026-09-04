@@ -21,6 +21,7 @@ import {
     supportsOpenRouterParam,
 } from './shared';
 import { OPENAI_OVERRIDES, staleOverrideIds } from './overrides';
+import { type DocsCache, splitCached } from './docs-cache';
 
 interface OpenAIRaw {
     id: string;
@@ -319,32 +320,30 @@ export function parseOpenAIDoc(id: string, md: string): ScrapedOpenAI {
     };
 }
 
-async function applyOpenAIDocFallback(models: DerivedModel[]): Promise<void> {
+async function applyOpenAIDocFallback(
+    models: DerivedModel[],
+    cache: DocsCache
+): Promise<void> {
+    const pages = cache.section<ScrapedOpenAI>('openai');
+    const { hits, misses } = splitCached(models, pages, (m) => m.id);
     console.log(
-        `starting OpenAI docs polling (${models.length} pages, ${WEBPAGE_SCRAPE_DELAY_MS / 1000}s spacing)`
+        `starting OpenAI docs polling (${hits.length} cached, ${misses.length} pages, ${WEBPAGE_SCRAPE_DELAY_MS / 1000}s spacing)`
     );
-    const outcomes = await pollWithDelay(
-        models,
-        WEBPAGE_SCRAPE_DELAY_MS,
-        async (model) => {
-            const { status, markdown } = await scrapeOpenAIDocsRaw(model.id);
-            console.log(`got ${model.id} docs, ${status}`);
-            return {
-                id: model.id,
-                status,
-                parsed:
-                    status === 200 && markdown
-                        ? parseOpenAIDoc(model.id, markdown)
-                        : null,
-            };
-        }
-    );
-    const parsedById = new Map(outcomes.map((o) => [o.id, o]));
+    const parsedById = new Map<string, ScrapedOpenAI>();
+    for (const { item, parsed } of hits) parsedById.set(item.id, parsed);
+    await pollWithDelay(misses, WEBPAGE_SCRAPE_DELAY_MS, async (model) => {
+        const { status, markdown } = await scrapeOpenAIDocsRaw(model.id);
+        console.log(`got ${model.id} docs, ${status}`);
+        if (status !== 200 || !markdown) return;
+        const parsed = parseOpenAIDoc(model.id, markdown);
+        pages.set(model.id, parsed);
+        parsedById.set(model.id, parsed);
+    });
+    await cache.save();
 
     for (const model of models) {
-        const outcome = parsedById.get(model.id);
-        if (!outcome?.parsed) continue;
-        const parsed = outcome.parsed;
+        const parsed = parsedById.get(model.id);
+        if (!parsed) continue;
         if (model.name === model.id && parsed.displayName) {
             model.name = parsed.displayName;
         }
@@ -497,7 +496,8 @@ function deriveOpenAI(
 }
 
 export async function pipelineOpenAI(
-    openrouter: OpenRouterIndex
+    openrouter: OpenRouterIndex,
+    cache: DocsCache
 ): Promise<OpenAIPipelineResult> {
     const raws = await fetchOpenAI();
     const aliases = dedupeOpenAIToAliases(raws).filter((r) =>
@@ -511,7 +511,7 @@ export async function pipelineOpenAI(
         models.push(deriveOpenAI(raw, openrouter));
     }
 
-    await applyOpenAIDocFallback(models);
+    await applyOpenAIDocFallback(models, cache);
     await applyOpenAIIndexLevels(models);
     const fallbackThinkingIds = new Set<string>();
     for (const model of models) {

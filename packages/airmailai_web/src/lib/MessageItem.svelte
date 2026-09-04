@@ -1,3 +1,12 @@
+<script module lang="ts">
+    const RASTER_TYPES = new Set([
+        'image/png',
+        'image/jpeg',
+        'image/gif',
+        'image/webp',
+    ]);
+</script>
+
 <script lang="ts">
     import type { FileAvailability } from '@airmailai/shared';
     import { buildCitationView, spliceCitationMarkers } from './citations';
@@ -27,6 +36,7 @@
         providerName,
         isStreaming,
         isLastStreaming,
+        deferRender,
         editing,
         editingText = $bindable(),
         editingDims,
@@ -58,6 +68,7 @@
         providerName: string;
         isStreaming: boolean;
         isLastStreaming: boolean;
+        deferRender: boolean;
         editing: boolean;
         editingText: string;
         editingDims: { h: number } | null;
@@ -114,12 +125,6 @@
         return fileStatuses[c.hash] ?? 'local';
     }
 
-    const RASTER_TYPES = new Set([
-        'image/png',
-        'image/jpeg',
-        'image/gif',
-        'image/webp',
-    ]);
     const imageChips = $derived(
         chips.filter(
             (c) => RASTER_TYPES.has(c.mediaType) && chipStatus(c) === 'local'
@@ -396,6 +401,8 @@
                     <MarkdownMessage
                         content={markedContent}
                         citations={citationView.anchors}
+                        streaming={isLastStreaming}
+                        deferred={deferRender}
                     />
                     {#if imageChips.length}
                         <div

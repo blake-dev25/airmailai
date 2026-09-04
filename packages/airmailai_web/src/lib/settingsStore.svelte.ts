@@ -46,6 +46,8 @@ function getInitialBrandingMode(): BrandingMode {
     return 'on';
 }
 
+const SAVE_DEBOUNCE_MS = 300;
+
 const defaultModel =
     defaultModelForProvider(PROVIDERS[0]) ?? PROVIDERS[0].models[0];
 
@@ -95,7 +97,7 @@ const SETTING_VALIDATORS: {
     legalAcceptedVersion: isString,
 };
 
-class SettingsStore {
+class SettingsStore implements UserSettings {
     theme = $state('airmail-warm');
     fontSizeIndex = $state(getDefaultFontSizeIndex());
     chatWidth = $state(0);
@@ -139,6 +141,8 @@ class SettingsStore {
     settingsLoaded = $state(false);
     paused = $state(false);
     private lastSaved: Partial<UserSettings> = {};
+    private pendingSave: Partial<UserSettings> | null = null;
+    private pendingSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
     private saveChanged(snapshot: Partial<UserSettings>): void {
         const changed: Partial<UserSettings> = {};
@@ -153,7 +157,27 @@ class SettingsStore {
         saveToExt(changed);
     }
 
+    private queueSave(snapshot: Partial<UserSettings>): void {
+        this.pendingSave = { ...(this.pendingSave ?? {}), ...snapshot };
+        if (this.pendingSaveTimer !== null) clearTimeout(this.pendingSaveTimer);
+        this.pendingSaveTimer = setTimeout(
+            () => this.flushPendingSave(),
+            SAVE_DEBOUNCE_MS
+        );
+    }
+
+    private flushPendingSave(): void {
+        if (this.pendingSaveTimer !== null) {
+            clearTimeout(this.pendingSaveTimer);
+            this.pendingSaveTimer = null;
+        }
+        const pending = this.pendingSave;
+        this.pendingSave = null;
+        if (pending) this.saveChanged(pending);
+    }
+
     constructor() {
+        window.addEventListener('pagehide', () => this.flushPendingSave());
         $effect.root(() => {
             $effect(() => {
                 document.documentElement.dataset.theme = this.theme;
@@ -177,43 +201,13 @@ class SettingsStore {
             });
 
             $effect(() => {
-                const snapshot: Partial<UserSettings> = {
-                    theme: this.theme,
-                    smoothTextMode: this.smoothTextMode,
-                    submitKeystroke: this.submitKeystroke,
-                    modelTier: this.modelTier,
-                    autoscrollMode: this.autoscrollMode,
-                    chatSortOrder: this.chatSortOrder,
-                    enableWebSearch: this.enableWebSearch,
-                    enableWebFetch: this.enableWebFetch,
-                    enableCodeExecution: this.enableCodeExecution,
-                    enableFileUploads: this.enableFileUploads,
-                    enableProviderFileStorage: this.enableProviderFileStorage,
-                    providerId: this.providerId,
-                    modelId: this.modelId,
-                    adaptiveThinking: this.adaptiveThinking,
-                    tagOpenRouterRequests: this.tagOpenRouterRequests,
-                    openRouterPdfEngine: this.openRouterPdfEngine,
-                    brandingMode: this.brandingMode,
-                    messageFont: this.messageFont,
-                };
+                const snapshot: Partial<UserSettings> = {};
+                for (const key of SETTINGS_KEYS) {
+                    if (key === 'legalAcceptedVersion') continue;
+                    setSettingValue(snapshot, key, this[key]);
+                }
                 if (!this.shouldSave()) return;
-                this.saveChanged(snapshot);
-            });
-
-            $effect(() => {
-                const snapshot: Partial<UserSettings> = {
-                    fontSizeIndex: this.fontSizeIndex,
-                    chatWidth: this.chatWidth,
-                    temperature: this.temperature,
-                    maxTokens: this.maxTokens,
-                    thinkingLevel: this.thinkingLevel,
-                };
-                if (!this.shouldSave()) return;
-                const timer = setTimeout(() => {
-                    this.saveChanged(snapshot);
-                }, 300);
-                return () => clearTimeout(timer);
+                this.queueSave(snapshot);
             });
         });
     }
@@ -246,82 +240,6 @@ class SettingsStore {
         if (settings === null) return;
         log.info('settings loaded', settings);
 
-        const setSetting: {
-            [K in keyof UserSettings]: (v: UserSettings[K]) => void;
-        } = {
-            theme: (v) => {
-                this.theme = v;
-            },
-            fontSizeIndex: (v) => {
-                this.fontSizeIndex = v;
-            },
-            chatWidth: (v) => {
-                this.chatWidth = v;
-            },
-            smoothTextMode: (v) => {
-                this.smoothTextMode = v;
-            },
-            submitKeystroke: (v) => {
-                this.submitKeystroke = v;
-            },
-            modelTier: (v) => {
-                this.modelTier = v;
-            },
-            autoscrollMode: (v) => {
-                this.autoscrollMode = v;
-            },
-            chatSortOrder: (v) => {
-                this.chatSortOrder = v;
-            },
-            enableWebSearch: (v) => {
-                this.enableWebSearch = v;
-            },
-            enableWebFetch: (v) => {
-                this.enableWebFetch = v;
-            },
-            enableCodeExecution: (v) => {
-                this.enableCodeExecution = v;
-            },
-            enableFileUploads: (v) => {
-                this.enableFileUploads = v;
-            },
-            enableProviderFileStorage: (v) => {
-                this.enableProviderFileStorage = v;
-            },
-            providerId: (v) => {
-                this.providerId = v;
-            },
-            modelId: (v) => {
-                this.modelId = v;
-            },
-            temperature: (v) => {
-                this.temperature = v;
-            },
-            maxTokens: (v) => {
-                this.maxTokens = v;
-            },
-            thinkingLevel: (v) => {
-                this.thinkingLevel = v;
-            },
-            adaptiveThinking: (v) => {
-                this.adaptiveThinking = v;
-            },
-            tagOpenRouterRequests: (v) => {
-                this.tagOpenRouterRequests = v;
-            },
-            openRouterPdfEngine: (v) => {
-                this.openRouterPdfEngine = v;
-            },
-            brandingMode: (v) => {
-                this.brandingMode = v;
-            },
-            messageFont: (v) => {
-                this.messageFont = v;
-            },
-            legalAcceptedVersion: (v) => {
-                this.legalAcceptedVersion = v;
-            },
-        };
         for (const key of SETTINGS_KEYS) {
             const v = settings[key];
             if (v === undefined) continue;
@@ -329,7 +247,7 @@ class SettingsStore {
                 log.warn('ignoring invalid stored setting', key, v);
                 continue;
             }
-            (setSetting[key] as (val: unknown) => void)(v);
+            setSettingValue(this, key, v);
             setSettingValue(this.lastSaved, key, v);
         }
         this.settingsLoaded = true;
@@ -394,6 +312,7 @@ class SettingsStore {
 
     persistLegalVersion(version: string): void {
         this.legalAcceptedVersion = version;
+        this.flushPendingSave();
         this.saveChanged({ legalAcceptedVersion: version });
     }
 
