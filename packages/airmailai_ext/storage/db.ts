@@ -1,5 +1,7 @@
 import type {
     ChatMeta,
+    ChatPage,
+    ChatPageCursor,
     AirmailAIMessage,
     DraftAttachment,
     ImportChatEntry,
@@ -10,6 +12,7 @@ import type {
     StoredMessage,
 } from '@airmailai/shared';
 import { log } from '../debug';
+import { HISTORY_PAGE_CHARS } from '@airmailai/shared';
 
 interface IdbUsage {
     chatHistoryBytes: number;
@@ -260,17 +263,20 @@ function messageCreatedAt(msg: StoredMessage): number {
 function mergeChatMeta(
     existing: ChatMeta | undefined,
     meta: ChatMeta,
-    draftAttachments = existing?.draftAttachments
-): ChatMeta {
+    draftAttachments = existing?.draftAttachments,
+    messagesChanged = false
+): ChatMeta & { revision: number } {
     const lastMessageAt = Math.max(
         existing?.lastMessageAt ?? 0,
         meta.lastMessageAt ?? 0
     );
     return {
         ...meta,
+        revision: (existing?.revision ?? 0) + Number(messagesChanged),
         ...(lastMessageAt ? { lastMessageAt } : {}),
         draftAttachments,
         containerId: existing?.containerId,
+        containerProvider: existing?.containerProvider,
         containerExpiresAt: existing?.containerExpiresAt,
         containerFileIds: existing?.containerFileIds,
     };
@@ -370,7 +376,7 @@ async function deleteMessagesAfterInStores(
 export async function dbPrepareTurn(
     meta: ChatMeta,
     msg: StoredMessage
-): Promise<ProviderFileRef[]> {
+): Promise<{ refs: ProviderFileRef[]; revision: number }> {
     log.info('db: prepare turn', meta.id, msg.message.id);
     if (msg.chatId !== meta.id) {
         throw new Error(`Message chat ${msg.chatId} does not match ${meta.id}`);
@@ -389,19 +395,19 @@ export async function dbPrepareTurn(
         for (const draft of existing?.draftAttachments ?? []) {
             removed.add(draft.hash);
         }
-        stores.chatMetaStore.put(
-            mergeChatMeta(
-                existing,
-                {
-                    ...meta,
-                    lastMessageAt: Math.max(meta.lastMessageAt ?? 0, createdAt),
-                },
-                []
-            )
+        const merged = mergeChatMeta(
+            existing,
+            {
+                ...meta,
+                lastMessageAt: Math.max(meta.lastMessageAt ?? 0, createdAt),
+            },
+            [],
+            true
         );
+        stores.chatMetaStore.put(merged);
         const refs = await reconcileChatFileRefs(stores, meta.id, removed);
         await txDone(tx);
-        return refs;
+        return { refs, revision: merged.revision };
     } catch (err) {
         abortActiveTransaction(tx);
         throw err;
@@ -411,7 +417,7 @@ export async function dbPrepareTurn(
 export async function dbPrepareRetry(
     meta: ChatMeta,
     lastKeptId: string
-): Promise<ProviderFileRef[]> {
+): Promise<{ refs: ProviderFileRef[]; revision: number }> {
     log.info('db: prepare retry', meta.id, lastKeptId);
     const db = await getDb();
     const { tx, stores } = fileTx(db);
@@ -422,7 +428,8 @@ export async function dbPrepareRetry(
         if (!existing) {
             throw new Error(`Chat ${meta.id} not found for retry`);
         }
-        stores.chatMetaStore.put(mergeChatMeta(existing, meta));
+        const merged = mergeChatMeta(existing, meta, undefined, true);
+        stores.chatMetaStore.put(merged);
         const removed = await deleteMessagesAfterInStores(
             stores,
             meta.id,
@@ -430,7 +437,7 @@ export async function dbPrepareRetry(
         );
         const refs = await reconcileChatFileRefs(stores, meta.id, removed);
         await txDone(tx);
-        return refs;
+        return { refs, revision: merged.revision };
     } catch (err) {
         abortActiveTransaction(tx);
         throw err;
@@ -440,7 +447,7 @@ export async function dbPrepareRetry(
 export async function dbPutMessage(
     msg: StoredMessage,
     freshBlobs?: Map<string, Blob>
-): Promise<ProviderFileRef[]> {
+): Promise<{ refs: ProviderFileRef[]; revision: number }> {
     log.info('db: put message', msg.chatId, msg.message.id);
     const createdAt = messageCreatedAt(msg);
     const db = await getDb();
@@ -452,13 +459,15 @@ export async function dbPutMessage(
         if (!meta) {
             throw new Error(`Chat ${msg.chatId} not found for message`);
         }
-        if (createdAt > (meta.lastMessageAt ?? 0)) {
-            stores.chatMetaStore.put({ ...meta, lastMessageAt: createdAt });
-        }
+        stores.chatMetaStore.put({
+            ...meta,
+            revision: (meta.revision ?? 0) + 1,
+            lastMessageAt: Math.max(createdAt, meta.lastMessageAt ?? 0),
+        });
         const removed = await putMessageInStores(stores, msg, freshBlobs);
         const refs = await reconcileChatFileRefs(stores, msg.chatId, removed);
         await txDone(tx);
-        return refs;
+        return { refs, revision: (meta.revision ?? 0) + 1 };
     } catch (err) {
         abortActiveTransaction(tx);
         throw err;
@@ -487,10 +496,15 @@ export async function dbImportChats(entries: ImportChatEntry[]): Promise<void> {
                 messagesStore.put(stored);
             }
             chatMetaStore.put(
-                mergeChatMeta(existing, {
-                    ...entry.meta,
-                    ...(lastMessageAt ? { lastMessageAt } : {}),
-                })
+                mergeChatMeta(
+                    existing,
+                    {
+                        ...entry.meta,
+                        ...(lastMessageAt ? { lastMessageAt } : {}),
+                    },
+                    undefined,
+                    true
+                )
             );
         }
         await txDone(tx);
@@ -503,7 +517,7 @@ export async function dbImportChats(entries: ImportChatEntry[]): Promise<void> {
 export async function dbDeleteMessage(
     chatId: string,
     messageId: string
-): Promise<ProviderFileRef[]> {
+): Promise<{ refs: ProviderFileRef[]; revision: number }> {
     log.info('db: delete message', chatId, messageId);
     const db = await getDb();
     const { tx, stores } = fileTx(db);
@@ -513,16 +527,23 @@ export async function dbDeleteMessage(
     )) as StoredMessage | undefined;
     if (!prior) {
         await txDone(tx);
-        return [];
+        return { refs: [], revision: 0 };
     }
     stores.messagesStore.delete([chatId, messageId]);
+    const meta = (await reqAsPromise(stores.chatMetaStore.get(chatId))) as
+        ChatMeta | undefined;
+    if (meta)
+        stores.chatMetaStore.put({
+            ...meta,
+            revision: (meta.revision ?? 0) + 1,
+        });
     const refs = await reconcileChatFileRefs(
         stores,
         chatId,
         new Set(messageAttachmentHashes(prior.message))
     );
     await txDone(tx);
-    return refs;
+    return { refs, revision: meta ? (meta.revision ?? 0) + 1 : 0 };
 }
 
 export async function dbSaveMeta(meta: ChatMeta): Promise<void> {
@@ -545,6 +566,7 @@ export async function dbGetMeta(chatId: string): Promise<ChatMeta | undefined> {
 
 export async function dbSetContainer(
     chatId: string,
+    containerProvider: string,
     containerId: string,
     containerExpiresAt: string | undefined,
     containerFileIds: string[] | undefined
@@ -559,7 +581,13 @@ export async function dbSetContainer(
         await txDone(tx);
         return;
     }
-    store.put({ ...meta, containerId, containerExpiresAt, containerFileIds });
+    store.put({
+        ...meta,
+        containerProvider,
+        containerId,
+        containerExpiresAt,
+        containerFileIds,
+    });
     await txDone(tx);
 }
 
@@ -652,7 +680,10 @@ export async function dbClearDraftAttachments(
     for (const d of meta.draftAttachments) {
         hashes.add(d.hash);
     }
-    stores.chatMetaStore.put({ ...meta, draftAttachments: [] });
+    stores.chatMetaStore.put({
+        ...meta,
+        draftAttachments: [],
+    });
     const refs = await reconcileChatFileRefs(stores, chatId, hashes);
     await txDone(tx);
     return refs;
@@ -760,19 +791,72 @@ function requestMessagesForChat(
     ) as Promise<StoredMessage[]>;
 }
 
-export async function dbLoadChatsByIds(ids: string[]): Promise<StoredChat[]> {
-    if (ids.length === 0) return [];
+export async function dbLoadChatPage(
+    chatId: string,
+    after?: ChatPageCursor,
+    messageId?: string
+): Promise<ChatPage> {
     const db = await getDb();
-    const tx = db.transaction(STORE_MESSAGES, 'readonly');
-    const messagesStore = tx.objectStore(STORE_MESSAGES);
-    const chats = await Promise.all(
-        ids.map(async (id) => ({
-            id,
-            messages: await requestMessagesForChat(messagesStore, id),
-        }))
-    );
-    log.info('db: load chats by ids', `${chats.length} chats`);
-    return chats;
+    const tx = db.transaction([STORE_META, STORE_MESSAGES], 'readonly');
+    const meta = (await reqAsPromise(
+        tx.objectStore(STORE_META).get(chatId)
+    )) as ChatMeta | undefined;
+    const page: ChatPage = {
+        data: '',
+        cursor: null,
+        revision: meta?.revision ?? 0,
+        exists: !!meta,
+    };
+    if (!meta) return page;
+    const store = tx.objectStore(STORE_MESSAGES);
+    const append = (row: StoredMessage): boolean => {
+        const json = JSON.stringify(row) + '\n';
+        const offset = after?.messageId === row.message.id ? after.offset : 0;
+        const remaining = HISTORY_PAGE_CHARS - page.data.length;
+        page.data += json.slice(offset, offset + remaining);
+        const nextOffset = offset + Math.min(remaining, json.length - offset);
+        page.cursor = {
+            createdAt: row.message.metadata.createdAt,
+            messageId: row.message.id,
+            offset: nextOffset < json.length ? nextOffset : 0,
+        };
+        return page.data.length < HISTORY_PAGE_CHARS;
+    };
+    if (messageId) {
+        const row = (await reqAsPromise(store.get([chatId, messageId]))) as
+            StoredMessage | undefined;
+        if (row) {
+            append(row);
+            if (page.cursor?.offset === 0) page.cursor = null;
+        }
+    } else {
+        const range = IDBKeyRange.bound(
+            after
+                ? [chatId, after.createdAt, after.messageId]
+                : [chatId, Number.NEGATIVE_INFINITY, ''],
+            [chatId, Number.POSITIVE_INFINITY, KEY_MAX],
+            after !== undefined && after.offset === 0
+        );
+        await new Promise<void>((resolve, reject) => {
+            const req = store.index(INDEX_CHAT_ORDER).openCursor(range);
+            req.onerror = () => reject(req.error);
+            req.onsuccess = () => {
+                try {
+                    const cursor = req.result;
+                    if (!cursor) {
+                        page.cursor = null;
+                        resolve();
+                    } else if (append(cursor.value as StoredMessage)) {
+                        cursor.continue();
+                    } else resolve();
+                } catch (error) {
+                    reject(error);
+                }
+            };
+        });
+    }
+    await txDone(tx);
+    return page;
 }
 
 export async function dbLoadChat(chatId: string): Promise<StoredChat | null> {
@@ -790,7 +874,7 @@ export async function dbLoadChat(chatId: string): Promise<StoredChat | null> {
         return null;
     }
     log.info('db: load chat', chatId, `(${messages.length} messages)`);
-    return { id: chatId, messages };
+    return { id: chatId, messages, revision: meta.revision ?? 0 };
 }
 
 export async function dbGetStorageUsage(): Promise<IdbUsage> {
@@ -874,7 +958,10 @@ export async function dbDeleteStoredFile(hash: string): Promise<string[]> {
         if (!drafts?.length) continue;
         const keptDrafts = drafts.filter((d) => d.hash !== hash);
         if (keptDrafts.length === drafts.length) continue;
-        stores.chatMetaStore.put({ ...m, draftAttachments: keptDrafts });
+        stores.chatMetaStore.put({
+            ...m,
+            draftAttachments: keptDrafts,
+        });
         affected.add(m.id);
     }
 

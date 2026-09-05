@@ -376,6 +376,18 @@ export async function pollWithDelay<T, R>(
     return out;
 }
 
+export function printPollingCacheSummary(
+    label: string,
+    cachedCodes: string[],
+    requests: number,
+    delayMs: number
+): void {
+    const cached200 = cachedCodes.filter((code) => code === '200').length;
+    console.log(
+        `starting ${label} (${cached200} cached 200, ${cachedCodes.length - cached200} cached non-200, ${requests} requests, ${delayMs / 1000}s spacing)`
+    );
+}
+
 export function probeErrorCode(e: unknown): string {
     const raw =
         e && typeof e === 'object'

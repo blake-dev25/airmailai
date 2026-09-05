@@ -18,6 +18,7 @@
         "openai": "^7.10.0",
         "opentype.js": "^2.0.0",
         "pdf-lib": "^1.17.1",
+        "playwright-core": "^1.62.1",
         "prettier": "^3.9.6",
         "prettier-plugin-svelte": "^4.1.1",
         "turndown": "^7.2.4",
@@ -35,9 +36,11 @@
         "format:check": "NO_COLOR=1 prettier . --check",
         "build": "bun scripts/gen-version.ts && bun run check && NO_COLOR=1 bun run --filter airmailai_web build && NO_COLOR=1 bun run --filter airmailai_ext typecheck && NO_COLOR=1 bun run --filter airmailai_ext zip && NO_COLOR=1 bun run --filter airmailai_ext build",
         "build:verbose": "BUILD_VERBOSE=1 bun run build",
+        "build:local": "NO_COLOR=1 bun run --filter airmailai_ext typecheck && WXT_ALLOW_LOCALHOST=true NO_COLOR=1 bun run --filter airmailai_ext build",
         "build:web": "bun scripts/gen-version.ts && bun run check && NO_COLOR=1 bun run --filter airmailai_web build",
         "deploy:web": "bun scripts/deploy-web.ts",
         "dev:web": "bun scripts/gen-version.ts && bun run check && NO_COLOR=1 bun run --filter airmailai_web typecheck && NO_COLOR=1 bun run --filter airmailai_web dev",
+        "start:web": "bun run build:web && NO_COLOR=1 bun run --filter airmailai_web preview",
         "dev:ext": "bun run check && NO_COLOR=1 bun run --filter airmailai_ext build",
         "gen:logo": "bun scripts/gen-logo.ts",
         "gen:og": "bun scripts/gen-og-card.ts",
@@ -48,8 +51,5 @@
     },
     "workspaces": [
         "packages/*"
-    ],
-    "dependencies": {
-        "playwright-core": "^1.62.1"
-    }
+    ]
 }

@@ -70,6 +70,7 @@ import {
 } from './update-model-list/overrides';
 import { updateTiersFile } from './update-model-list/tiers';
 import { DocsCache } from './update-model-list/docs-cache';
+import { ProbeCache } from './update-model-list/probe-cache';
 
 function overridesForProvider(provider: string): Record<string, ModelOverride> {
     if (provider === 'anthropic') return ANTHROPIC_OVERRIDES;
@@ -95,6 +96,8 @@ function reapplyOverrides(provider: string, models: DerivedModel[]): void {
 const WRITE = process.argv.includes('--write');
 const VERBOSE = process.argv.includes('--verbose');
 const REFRESH_DOCS = process.argv.includes('--refresh-docs');
+const REFRESH_PROBES = process.argv.includes('--refresh-probes');
+const RETRY_NON_200 = process.argv.includes('--retry-non-200');
 const MODEL_TEST_IDX = process.argv.indexOf('--model-test');
 const MODEL_TEST_PROVIDER =
     MODEL_TEST_IDX >= 0 ? process.argv[MODEL_TEST_IDX + 1] : undefined;
@@ -366,7 +369,15 @@ async function main(): Promise<void> {
         return;
     }
 
-    const cache = await DocsCache.load(REFRESH_DOCS);
+    const cacheOptions = { retryNon200: RETRY_NON_200 };
+    const docsCache = await DocsCache.load({
+        ...cacheOptions,
+        refresh: REFRESH_DOCS,
+    });
+    const probeCache = await ProbeCache.load({
+        ...cacheOptions,
+        refresh: REFRESH_PROBES,
+    });
     const openrouter = NEEDS_OPENROUTER
         ? await fetchOpenRouterIndex()
         : undefined;
@@ -376,7 +387,7 @@ async function main(): Promise<void> {
     let googleResult: GooglePipelineResult | undefined;
 
     if (RUN_ANTHROPIC) {
-        anthropic = await fetchAnthropic(cache);
+        anthropic = await fetchAnthropic(docsCache, probeCache);
         if (VERBOSE) {
             printAnthropicSummary('Anthropic', anthropic);
         } else {
@@ -393,7 +404,7 @@ async function main(): Promise<void> {
     }
 
     if (RUN_OPENAI) {
-        openaiResult = await pipelineOpenAI(openrouter!, cache);
+        openaiResult = await pipelineOpenAI(openrouter!, docsCache, probeCache);
         if (VERBOSE) {
             printOpenAIPipeline(openaiResult);
         } else {
@@ -412,7 +423,7 @@ async function main(): Promise<void> {
     }
 
     if (RUN_GOOGLE) {
-        googleResult = await pipelineGoogle(openrouter!, cache);
+        googleResult = await pipelineGoogle(openrouter!, docsCache, probeCache);
         printGooglePipeline(googleResult, VERBOSE);
         printGoogleWarnings(googleResult);
 

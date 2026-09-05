@@ -19,12 +19,20 @@ export interface UpdateNotice {
 }
 
 class VersionCheck {
+    private assetLoadFailed = $state(false);
     private webUpdateAvailable = $state(false);
     private extStatus = $state<'ok' | 'outdated' | 'updated'>('ok');
     private lastWebCheckAt = Date.now();
     private knownExtVersion: string | null = null;
 
     notice: UpdateNotice | null = $derived.by(() => {
+        if (this.assetLoadFailed) {
+            return {
+                message:
+                    "Couldn't load part of AirmailAI. Save any unsent text and finish active responses, then refresh to try again.",
+                refresh: true,
+            };
+        }
         if (this.extStatus === 'updated') {
             return {
                 message:
@@ -50,8 +58,13 @@ class VersionCheck {
     });
 
     dismiss(): void {
+        this.assetLoadFailed = false;
         this.webUpdateAvailable = false;
         this.extStatus = 'ok';
+    }
+
+    reportAssetLoadFailure(): void {
+        this.assetLoadFailed = true;
     }
 
     checkExtAtStartup(

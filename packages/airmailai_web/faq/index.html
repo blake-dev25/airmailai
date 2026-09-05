@@ -287,18 +287,16 @@
                 Why do I need to install a browser extension?
             </h3>
             <p>
-                The AirmailAI website is static files served from a CDN - there
-                are no AirmailAI servers that your keys, chats, or API requests
-                ever pass through. The browser extension acts as that backend:
-                it stores your API keys and sends your requests directly to the
-                provider.
+                The AirmailAI website is just the app interface, with no backend
+                servers. The extension acts as that backend, storing your API
+                keys and sending requests directly to providers.
             </p>
 
             <h3 id="why-not-direct">
                 Why can't the website just call the APIs directly?
             </h3>
             <p>
-                Not all providers support calling their API directly from a
+                Some providers don't allow calling their API directly from a
                 website. Additionally, calling APIs from a website can be
                 dangerous because the website has to store your API keys, where
                 any script running on the page can read them. The AirmailAI
@@ -333,18 +331,18 @@
             <p>
                 Provider web apps are built around that provider's own models,
                 plans, and usage limits. AirmailAI is a bring-your-own-keys
-                client: you can use multiple provider APIs in one UI, pay as you
-                go, and avoid subscription-plan usage limits.
+                client: you can use multiple provider APIs in one UI and pay as
+                you go.
             </p>
 
             <h3 id="vs-other-byok">
                 How is this different from using other BYOK apps?
             </h3>
             <p>
-                AirmailAI is built to be lightweight, fast, and low-friction.
-                There's no account and no bulky desktop app you have to install.
-                You install the browser extension, open the app, add your API
-                keys, and it just works.
+                AirmailAI is built to be lightweight, fast, secure, and private.
+                There's no account and no bulky desktop app. You install the
+                browser extension, open the website, add your API keys, and it
+                just works.
             </p>
 
             <h2 id="privacy">Privacy, Security, &amp; Data</h2>
@@ -379,7 +377,7 @@
                 your stored API keys from websites and other extensions. Once a
                 key is saved, AirmailAI.net can ask the extension to make a
                 provider request or delete the key, but it cannot read the key
-                back - we intentionally do not expose any code path for reading
+                back. We intentionally do not expose any code path for reading
                 saved keys. The extension keeps control of the key and only
                 sends it to the provider you choose when making an API request.
             </p>
@@ -388,7 +386,7 @@
                 Are my chats, files, API keys, or settings synced?
             </h3>
             <p>
-                Chats, files, and API keys are not synced. Settings will sync
+                Chats, files, and API keys are not synced. UI settings will sync
                 through your browser account if you're signed in. If sync is
                 off, or if your browser keeps extension data local, everything
                 is stored locally on your device and does not sync.
@@ -413,12 +411,10 @@
                 Yes. You can delete chats individually via the gear button next
                 to the chat in the sidebar, you can clear API keys individually
                 in settings, and you can delete all local data via settings or
-                by clicking on the extension icon in your browser toolbar. Use
-                that delete-all control before uninstalling the extension:
-                uninstalling alone removes the extension's stored data but can
-                leave the website's local preference caches behind. Files
-                uploaded to provider systems are not deleted automatically -
-                manage those through your provider's controls.
+                by clicking on the extension icon in your browser toolbar. Files
+                uploaded to provider systems are not deleted automatically - you
+                can manage those through the Files tab in the app or through
+                your provider's controls.
             </p>
 
             <h3 id="open-source">Is AirmailAI open source software?</h3>

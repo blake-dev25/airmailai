@@ -29,7 +29,6 @@ import {
     type ChatExportFormat,
     type ChatTransferParseResult,
     type ImportedChat,
-    type TransferChatEntry,
     type TransferChatInfo,
 } from './chatTransfer';
 import { buildDemoChats } from './demo';
@@ -256,6 +255,7 @@ class ChatStore {
         if (!chat || chat.messagesLoaded) return;
         if (this.allStreamingChatIds.has(chat.id)) return;
         chat.messages = storedToMessages(stored.messages);
+        chat.revision = stored.revision;
         chat.messagesLoaded = true;
     }
 
@@ -484,10 +484,69 @@ class ChatStore {
     applyRemoteMetaChanged(meta: ChatMeta): void {
         const chat = this.findChat(meta.id);
         if (chat) {
+            const revision = chat.revision;
             Object.assign(chat, meta);
+            if (chat.messagesLoaded) chat.revision = revision;
             return;
         }
         this.chats.unshift(chatFromMeta(meta));
+    }
+
+    async applyMessageChanged(
+        chatId: string,
+        messageId: string,
+        revision: number
+    ): Promise<void> {
+        this.searchCache?.delete(chatId);
+        this.allChatsSearched = false;
+        const chat = this.findChat(chatId);
+        if (!chat?.messagesLoaded || this.allStreamingChatIds.has(chatId))
+            return;
+        if (revision <= (chat.revision ?? 0)) return;
+        if (revision !== (chat.revision ?? 0) + 1) {
+            await this.refreshChatFromIDB(chatId, {
+                context: 'message revision gap',
+                userMessage: "Couldn't synchronize the conversation",
+            });
+            return;
+        }
+        try {
+            const stored = await loadChat(chatId, messageId);
+            if (
+                !stored ||
+                this.allStreamingChatIds.has(chatId) ||
+                this.findChat(chatId) !== chat
+            )
+                return;
+            if (stored.revision !== revision) {
+                await this.refreshChatFromIDB(chatId, {
+                    context: 'concurrent message changes',
+                    userMessage: "Couldn't synchronize the conversation",
+                });
+                return;
+            }
+            const index = chat.messages.findIndex((m) => m.id === messageId);
+            const message = stored.messages[0]?.message;
+            if (index >= 0) {
+                if (message) chat.messages[index] = message;
+                else chat.messages.splice(index, 1);
+            } else if (message) {
+                chat.messages.push(message);
+                chat.messages.sort(
+                    (a, b) =>
+                        a.metadata.createdAt - b.metadata.createdAt ||
+                        a.id.localeCompare(b.id)
+                );
+            }
+            chat.revision = revision;
+            if (this.searchQuery) this.search(this.searchQuery);
+        } catch (error) {
+            reportAppError(
+                'message synchronization failed',
+                "Couldn't synchronize the conversation",
+                error
+            );
+        }
     }
 
     rename(id: string, newTitle: string): void {
@@ -586,9 +645,25 @@ class ChatStore {
             return;
         }
         const sorted = metas.slice().sort((a, b) => a.createdAt - b.createdAt);
-        let stored: StoredChat[];
+        const parts: Blob[] = [];
+        let exported = 0;
         try {
-            stored = await loadChatsByIds(sorted.map((m) => m.id));
+            for (const meta of sorted) {
+                const stored = await loadChat(meta.id);
+                if (!stored) {
+                    throw new Error(
+                        `Conversation "${meta.title}" was deleted during backup. Please try again.`
+                    );
+                }
+                const content = buildBackupExport([
+                    {
+                        info: this.transferInfo(meta),
+                        messages: storedToMessages(stored.messages),
+                    },
+                ]);
+                parts.push(new Blob([exported ? '---\n' : '', content]));
+                exported++;
+            }
         } catch (err) {
             reportAppError(
                 'exportAllChats: chats failed',
@@ -597,18 +672,13 @@ class ChatStore {
             );
             return;
         }
-        const byId = new Map(stored.map((c) => [c.id, c]));
-        const entries: TransferChatEntry[] = sorted.map((meta) => ({
-            info: this.transferInfo(meta),
-            messages: storedToMessages(byId.get(meta.id)?.messages ?? []),
-        }));
         triggerBlobDownload(
             backupFilename(new Date()),
-            new Blob([buildBackupExport(entries)], {
+            new Blob(parts, {
                 type: 'application/yaml',
             })
         );
-        log.info('exported backup', `${entries.length} chats`);
+        log.info('exported backup', `${exported} chats`);
     }
 
     private resolveImportedModel(
@@ -834,18 +904,25 @@ class ChatStore {
         return chatId;
     }
 
+    async prepareAttachmentUpload(): Promise<string> {
+        const chatId = await this.ensureActiveChat();
+        const chat = this.findChat(chatId);
+        if (!chat) throw new Error('The destination chat was deleted.');
+        if (!this.demoMode) await saveMeta(chatToMeta(chat));
+        return chatId;
+    }
+
     async addDraftAttachment(
+        chatId: string,
+        replicateTo: string | undefined,
         attachment: DraftAttachmentMeta,
         file: File,
         onProgress?: (progress: number) => void
     ): Promise<{ chatId: string; attachment: DraftAttachment } | null> {
         if (this.demoMode) return null;
-        const chatId = await this.ensureActiveChat();
-        const activeChat = this.findChat(chatId);
-        if (activeChat) await saveMeta(chatToMeta(activeChat));
-        const replicateTo = settingsStore.enableProviderFileStorage
-            ? (activeChat?.providerId ?? settingsStore.providerId)
-            : undefined;
+        if (!this.findChat(chatId)) {
+            throw new Error('The destination chat was deleted.');
+        }
         const staged = await stageDraftAttachment(
             chatId,
             attachment,
@@ -854,7 +931,10 @@ class ChatStore {
             onProgress
         );
         const chat = this.findChat(chatId);
-        if (chat) {
+        if (
+            chat &&
+            !chat.draftAttachments?.some((a) => a.hash === staged.hash)
+        ) {
             chat.draftAttachments = [...(chat.draftAttachments ?? []), staged];
         }
         return { chatId, attachment: staged };
@@ -966,7 +1046,10 @@ class ChatStore {
 
         const id = chatId;
         try {
-            await prepareTurn(chatToMeta(chat), toStoredMessage(id, userMsg));
+            chat.revision = await prepareTurn(
+                chatToMeta(chat),
+                toStoredMessage(id, userMsg)
+            );
         } catch (err) {
             this.streamingChatIds.delete(id);
             if (createdNewChat) {
@@ -1025,7 +1108,10 @@ class ChatStore {
         }
 
         try {
-            await prepareRetry(chatToMeta(chat), lastKeptMsg.id);
+            chat.revision = await prepareRetry(
+                chatToMeta(chat),
+                lastKeptMsg.id
+            );
         } catch (err) {
             this.streamingChatIds.delete(chatId);
             const currentIndex = this.chats.findIndex(
@@ -1062,7 +1148,6 @@ class ChatStore {
             this.streamingChatIds.delete(chatId);
             return;
         }
-        const history: AirmailAIMessage[] = chat.messages.slice(0, -1);
 
         const selectedModel = providersStore.providers
             .find((p) => p.id === chat.providerId)
@@ -1113,7 +1198,6 @@ class ChatStore {
                 sourceTabId: tabId,
                 provider: chat.providerId,
                 model: chat.modelId,
-                messages: history,
                 ...(chat.systemPrompt.trim()
                     ? { system: chat.systemPrompt }
                     : {}),
@@ -1138,7 +1222,8 @@ class ChatStore {
             },
             {
                 onChunk: (chunk) => batcher.push(chunk),
-                onDone: () => {
+                onDone: (revision) => {
+                    chat.revision = revision;
                     finishStream();
                     if (mayHaveContainerOutputs) {
                         void this.refreshChatFromIDB(chatId, {
@@ -1147,7 +1232,8 @@ class ChatStore {
                         });
                     }
                 },
-                onError: (msg, source) => {
+                onError: (msg, source, revision) => {
+                    if (revision !== undefined) chat.revision = revision;
                     finishStream();
                     this.chatErrors = {
                         ...this.chatErrors,
@@ -1231,6 +1317,7 @@ class ChatStore {
             stored.messages.filter((s) => s.message.id !== assistantMessageId)
         );
         pipeline.chat.messages = [...history, assistantRef];
+        pipeline.chat.revision = stored.revision;
         pipeline.chat.messagesLoaded = true;
     }
 
@@ -1286,8 +1373,13 @@ class ChatStore {
         }
         if (stored) {
             const chat = this.findChat(chatId);
-            if (chat) {
+            if (
+                chat &&
+                !this.allStreamingChatIds.has(chatId) &&
+                stored.revision >= (chat.revision ?? 0)
+            ) {
                 chat.messages = storedToMessages(stored.messages);
+                chat.revision = stored.revision;
                 chat.messagesLoaded = true;
             }
         } else if (opts.onMissing === 'drop') {
@@ -1336,8 +1428,26 @@ class ChatStore {
         });
     }
 
-    async reconcileFromIDB(): Promise<void> {
+    syncActiveTurns(activeChatIds: string[]): string[] {
+        if (this.demoMode) return [];
+        const active = new Set(activeChatIds);
+        const interrupted: string[] = [];
+        for (const id of this.remoteStreamingChatIds) {
+            if (active.has(id)) continue;
+            this.remoteStreamingChatIds.delete(id);
+            this.closeRemotePipeline(id);
+            interrupted.push(id);
+        }
+        for (const id of active) {
+            if (!this.streamingChatIds.has(id))
+                this.remoteStreamingChatIds.add(id);
+        }
+        return interrupted;
+    }
+
+    async reconcileFromIDB(activeChatIds: string[]): Promise<void> {
         if (this.demoMode) return;
+        const interrupted = this.syncActiveTurns(activeChatIds);
         let metas: ChatMeta[];
         try {
             metas = await loadChatMetas();
@@ -1350,7 +1460,7 @@ class ChatStore {
             return;
         }
         const metaById = new Map(metas.map((m) => [m.id, m]));
-        const staleIds: string[] = [];
+        const staleIds: string[] = [...interrupted];
         for (const chat of [...this.chats]) {
             const streaming = this.allStreamingChatIds.has(chat.id);
             const fresh = metaById.get(chat.id);
@@ -1358,11 +1468,14 @@ class ChatStore {
                 if (
                     !streaming &&
                     chat.messagesLoaded &&
-                    (fresh.lastMessageAt ?? 0) !== (chat.lastMessageAt ?? 0)
+                    (fresh.revision ?? 0) !== (chat.revision ?? 0) &&
+                    !staleIds.includes(chat.id)
                 ) {
                     staleIds.push(chat.id);
                 }
+                const revision = chat.revision;
                 Object.assign(chat, fresh);
+                if (chat.messagesLoaded) chat.revision = revision;
             } else if (
                 !streaming &&
                 (!chat.messagesLoaded || chat.messages.length > 0)
@@ -1373,15 +1486,6 @@ class ChatStore {
         const knownIds = new Set(this.chats.map((c) => c.id));
         for (const meta of metas) {
             if (!knownIds.has(meta.id)) this.chats.push(chatFromMeta(meta));
-        }
-        const active = this.activeChat;
-        if (
-            active &&
-            active.messagesLoaded &&
-            !staleIds.includes(active.id) &&
-            !this.allStreamingChatIds.has(active.id)
-        ) {
-            staleIds.push(active.id);
         }
         if (staleIds.length > 0) {
             let fullChats: StoredChat[];
@@ -1397,8 +1501,13 @@ class ChatStore {
             }
             for (const stored of fullChats) {
                 const chat = this.findChat(stored.id);
-                if (chat) {
+                if (
+                    chat &&
+                    !this.allStreamingChatIds.has(chat.id) &&
+                    stored.revision >= (chat.revision ?? 0)
+                ) {
                     chat.messages = storedToMessages(stored.messages);
+                    chat.revision = stored.revision;
                     chat.messagesLoaded = true;
                 }
             }

@@ -14,6 +14,7 @@ import {
     pollWithDelay,
     printIdList,
     printModelRow,
+    printPollingCacheSummary,
     probeErrorCode,
     scrapeDocsRaw,
     sortLevels,
@@ -22,6 +23,7 @@ import {
 } from './shared';
 import { OPENAI_OVERRIDES, staleOverrideIds } from './overrides';
 import { type DocsCache, splitCached } from './docs-cache';
+import { type ProbeCache, splitCachedProbes } from './probe-cache';
 
 interface OpenAIRaw {
     id: string;
@@ -325,18 +327,24 @@ async function applyOpenAIDocFallback(
     cache: DocsCache
 ): Promise<void> {
     const pages = cache.section<ScrapedOpenAI>('openai');
-    const { hits, misses } = splitCached(models, pages, (m) => m.id);
-    console.log(
-        `starting OpenAI docs polling (${hits.length} cached, ${misses.length} pages, ${WEBPAGE_SCRAPE_DELAY_MS / 1000}s spacing)`
+    const { hits, failures, misses } = splitCached(models, pages, (m) => m.id);
+    printPollingCacheSummary(
+        'OpenAI docs polling',
+        [...hits.map(() => '200'), ...failures.map((f) => f.code)],
+        misses.length,
+        WEBPAGE_SCRAPE_DELAY_MS
     );
     const parsedById = new Map<string, ScrapedOpenAI>();
     for (const { item, parsed } of hits) parsedById.set(item.id, parsed);
     await pollWithDelay(misses, WEBPAGE_SCRAPE_DELAY_MS, async (model) => {
         const { status, markdown } = await scrapeOpenAIDocsRaw(model.id);
         console.log(`got ${model.id} docs, ${status}`);
-        if (status !== 200 || !markdown) return;
+        if (status !== 200 || !markdown) {
+            pages.set(model.id, { code: String(status), value: null });
+            return;
+        }
         const parsed = parseOpenAIDoc(model.id, markdown);
-        pages.set(model.id, parsed);
+        pages.set(model.id, { code: String(status), value: parsed });
         parsedById.set(model.id, parsed);
     });
     await cache.save();
@@ -399,27 +407,45 @@ async function probeOpenAIModel(
 
 async function probeOpenAIModels(
     models: DerivedModel[],
-    skipped: Array<{ id: string; reason: string }>
+    skipped: Array<{ id: string; reason: string }>,
+    cache: ProbeCache
 ): Promise<DerivedModel[]> {
-    console.log(
-        `starting OpenAI 404 polling (${models.length} models, ${MODEL_PROBE_DELAY_MS / 1000}s spacing)`
+    const section = cache.section('openai');
+    const { hits, misses } = splitCachedProbes(
+        models,
+        section,
+        (model) => model.id
+    );
+    printPollingCacheSummary(
+        'OpenAI 404 polling',
+        hits.map(({ probe }) => probe.code),
+        misses.length,
+        MODEL_PROBE_DELAY_MS
     );
     const key = process.env.OPENAI_API_KEY;
     if (!key) throw new Error('OPENAI_API_KEY missing from .env');
     const client = new OpenAI({ apiKey: key });
 
-    const probes = await pollWithDelay(
-        models,
+    const fresh = await pollWithDelay(
+        misses,
         MODEL_PROBE_DELAY_MS,
         async (m) => {
             const probe = await probeOpenAIModel(client, m.id);
+            section.set(m.id, probe);
             console.log(`tested ${m.id}, ${probe.code}`);
             return { model: m, probe };
         }
     );
+    await cache.save();
+
+    const byId = new Map<string, ModelProbeResult>();
+    for (const { item, probe } of hits) byId.set(item.id, probe);
+    for (const { model, probe } of fresh) byId.set(model.id, probe);
 
     const kept: DerivedModel[] = [];
-    for (const { model, probe } of probes) {
+    for (const model of models) {
+        const probe = byId.get(model.id);
+        if (!probe) throw new Error(`Missing OpenAI probe for ${model.id}`);
         if (probe.status === 'dead') {
             skipped.push({
                 id: model.id,
@@ -497,7 +523,8 @@ function deriveOpenAI(
 
 export async function pipelineOpenAI(
     openrouter: OpenRouterIndex,
-    cache: DocsCache
+    docsCache: DocsCache,
+    probeCache: ProbeCache
 ): Promise<OpenAIPipelineResult> {
     const raws = await fetchOpenAI();
     const aliases = dedupeOpenAIToAliases(raws).filter((r) =>
@@ -511,7 +538,7 @@ export async function pipelineOpenAI(
         models.push(deriveOpenAI(raw, openrouter));
     }
 
-    await applyOpenAIDocFallback(models, cache);
+    await applyOpenAIDocFallback(models, docsCache);
     await applyOpenAIIndexLevels(models);
     const fallbackThinkingIds = new Set<string>();
     for (const model of models) {
@@ -533,7 +560,11 @@ export async function pipelineOpenAI(
         return false;
     });
 
-    const probedModels = await probeOpenAIModels(completeModels, skipped);
+    const probedModels = await probeOpenAIModels(
+        completeModels,
+        skipped,
+        probeCache
+    );
 
     const needsLevels = probedModels
         .filter((m) => fallbackThinkingIds.has(m.id))

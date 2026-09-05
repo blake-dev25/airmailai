@@ -4,6 +4,7 @@ import markedFootnote from 'marked-footnote';
 import type { HighlighterCore } from 'shiki/core';
 import { type CitationAnchor, CITE_SENTINEL } from './citations';
 import { escapeHtml } from './escapeHtml';
+import { versionCheck } from './versionCheck.svelte';
 
 const THEME = 'github-dark';
 
@@ -19,11 +20,17 @@ export function isHighlighterReady(): boolean {
 export function initMarkdown(): Promise<void> {
     if (highlighter) return Promise.resolve();
     if (!initPromise) {
-        initPromise = import('./markdown-highlighter.js').then(async (m) => {
-            highlighter = await m.createMarkdownHighlighter();
-            loadedLangs = new Set(highlighter.getLoadedLanguages());
-            ready = true;
-        });
+        initPromise = import('./markdown-highlighter.js')
+            .then(async (m) => {
+                highlighter = await m.createMarkdownHighlighter();
+                loadedLangs = new Set(highlighter.getLoadedLanguages());
+                ready = true;
+            })
+            .catch((error) => {
+                initPromise = null;
+                versionCheck.reportAssetLoadFailure();
+                throw error;
+            });
     }
     return initPromise;
 }

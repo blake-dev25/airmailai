@@ -2,6 +2,7 @@ import type {
     BroadcastEvent,
     BroadcastRequest,
     ChatMeta,
+    ChatPageCursor,
     AirmailAIChunk,
     DraftAttachment,
     DraftAttachmentMeta,
@@ -27,8 +28,12 @@ import { FILE_TRANSFER_CHUNK_BYTES } from '@airmailai/shared';
 
 export interface StreamHandlers {
     onChunk: (chunk: AirmailAIChunk) => void;
-    onDone: () => void;
-    onError: (message: string, source: StreamErrorSource) => void;
+    onDone: (revision: number) => void;
+    onError: (
+        message: string,
+        source: StreamErrorSource,
+        revision?: number
+    ) => void;
 }
 
 export interface StreamHandle {
@@ -262,29 +267,37 @@ export async function saveMeta(meta: ChatMeta): Promise<void> {
 export async function prepareTurn(
     meta: ChatMeta,
     message: StoredMessage
-): Promise<void> {
-    await sendStorageMessage({
+): Promise<number> {
+    const response = await sendStorageMessage({
         type: 'prepare_turn',
         meta,
         message,
         sourceTabId: tabId,
     });
+    if (response.type === 'turn_prepared') return response.revision;
+    throw new Error(`Unexpected response: ${response.type}`);
 }
 
 export async function prepareRetry(
     meta: ChatMeta,
     lastKeptId: string
-): Promise<void> {
-    await sendStorageMessage({
+): Promise<number> {
+    const response = await sendStorageMessage({
         type: 'prepare_retry',
         meta,
         lastKeptId,
         sourceTabId: tabId,
     });
+    if (response.type === 'turn_prepared') return response.revision;
+    throw new Error(`Unexpected response: ${response.type}`);
 }
 
 export async function putMessage(message: StoredMessage): Promise<void> {
-    await sendStorageMessage({ type: 'put_message', message });
+    await sendStorageMessage({
+        type: 'put_message',
+        message,
+        sourceTabId: tabId,
+    });
 }
 
 export async function importChats(chats: ImportChatEntry[]): Promise<void> {
@@ -375,7 +388,12 @@ export async function deleteMessage(
     chatId: string,
     messageId: string
 ): Promise<void> {
-    await sendStorageMessage({ type: 'delete_message', chatId, messageId });
+    await sendStorageMessage({
+        type: 'delete_message',
+        chatId,
+        messageId,
+        sourceTabId: tabId,
+    });
 }
 
 export async function deleteChat(chatId: string): Promise<void> {
@@ -393,18 +411,58 @@ export async function loadChatMetas(): Promise<ChatMeta[]> {
 }
 
 export async function loadChatsByIds(ids: string[]): Promise<StoredChat[]> {
-    const response = await sendStorageMessage({
-        type: 'load_chats_by_ids',
-        ids,
-    });
-    if (response.type === 'chats') return response.chats;
-    throw new Error(`Unexpected response: ${response.type}`);
+    const chats: StoredChat[] = [];
+    for (const id of ids) {
+        const chat = await loadChat(id);
+        if (chat) chats.push(chat);
+    }
+    return chats;
 }
 
-export async function loadChat(chatId: string): Promise<StoredChat | null> {
-    const response = await sendStorageMessage({ type: 'load_chat', chatId });
-    if (response.type === 'chat') return response.chat;
-    throw new Error(`Unexpected response: ${response.type}`);
+export async function loadChat(
+    chatId: string,
+    messageId?: string
+): Promise<StoredChat | null> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+        let cursor: ChatPageCursor | undefined;
+        let revision: number | undefined;
+        let pending = '';
+        const messages: StoredMessage[] = [];
+        let changed = false;
+        do {
+            const response = await sendStorageMessage({
+                type: 'load_chat_page',
+                chatId,
+                cursor,
+                messageId,
+            });
+            if (response.type !== 'chat_page')
+                throw new Error(`Unexpected response: ${response.type}`);
+            if (!response.exists) return null;
+            if (revision !== undefined && revision !== response.revision) {
+                changed = true;
+                break;
+            }
+            revision = response.revision;
+            pending += response.data;
+            let newline = pending.indexOf('\n');
+            while (newline !== -1) {
+                messages.push(
+                    JSON.parse(pending.slice(0, newline)) as StoredMessage
+                );
+                pending = pending.slice(newline + 1);
+                newline = pending.indexOf('\n');
+            }
+            cursor = response.cursor ?? undefined;
+        } while (cursor);
+        if (!changed) {
+            if (pending) throw new Error('Incomplete chat history received.');
+            return { id: chatId, messages, revision: revision ?? 0 };
+        }
+    }
+    throw new Error(
+        'The conversation changed while loading. Please try again.'
+    );
 }
 
 export async function loadOpenRouterModels(): Promise<
@@ -615,7 +673,6 @@ export function sendToExtension(
         chatId: request.chatId,
         provider: request.provider,
         model: request.model,
-        messages: request.messages.length,
         params: request.params,
     });
 
@@ -632,14 +689,14 @@ export function sendToExtension(
                 break;
             case 'done': {
                 done = true;
-                handlers.onDone();
+                handlers.onDone(event.revision);
                 port.disconnect();
                 break;
             }
             case 'error':
                 done = true;
                 log.error('<- stream error', event.source, event.message);
-                handlers.onError(event.message, event.source);
+                handlers.onError(event.message, event.source, event.revision);
                 port.disconnect();
                 break;
         }
@@ -679,13 +736,11 @@ export interface BroadcastSubscription {
 
 export function subscribeToBroadcast(handlers: {
     onEvent: (event: BroadcastEvent) => void;
-    onReconnect?: () => void;
 }): BroadcastSubscription {
     let port: chrome.runtime.Port | null = null;
     let unsubscribed = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
-    let everConnected = false;
 
     const clearKeepalive = () => {
         if (keepaliveTimer === null) return;
@@ -724,9 +779,6 @@ export function subscribeToBroadcast(handlers: {
         } catch (err) {
             log.warn('broadcast register failed', err);
         }
-
-        if (everConnected) handlers.onReconnect?.();
-        everConnected = true;
 
         port.onMessage.addListener((event: BroadcastEvent) => {
             handlers.onEvent(event);

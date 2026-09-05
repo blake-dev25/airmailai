@@ -240,7 +240,6 @@ export interface TurnStartRequest {
     sourceTabId: string;
     provider: string;
     model: string;
-    messages: AirmailAIMessage[];
     system?: string;
     params?: Record<string, unknown>;
     meta: ChatMeta;
@@ -259,11 +258,22 @@ export type StreamErrorSource = 'api' | 'extension';
 
 export type ExtensionStreamEvent =
     | { type: 'chunk'; chunk: AirmailAIChunk }
-    | { type: 'done' }
-    | { type: 'error'; source: StreamErrorSource; message: string };
+    | { type: 'done'; revision: number }
+    | {
+          type: 'error';
+          source: StreamErrorSource;
+          message: string;
+          revision?: number;
+      };
 
 export type BroadcastEvent =
-    | { type: 'ext-hello'; version: string }
+    | { type: 'ext-hello'; version: string; activeChatIds: string[] }
+    | {
+          type: 'message-changed';
+          chatId: string;
+          messageId: string;
+          revision: number;
+      }
     | {
           type: 'turn-start';
           chatId: string;
@@ -373,6 +383,7 @@ export interface ChatMeta {
     title: string;
     createdAt: number;
     lastMessageAt?: number;
+    revision?: number;
     providerId: string;
     modelId: string;
     temperature: number;
@@ -385,6 +396,7 @@ export interface ChatMeta {
     systemPrompt: string;
     draftAttachments?: DraftAttachment[];
     containerId?: string;
+    containerProvider?: string;
     containerExpiresAt?: string;
     containerFileIds?: string[];
 }
@@ -392,7 +404,23 @@ export interface ChatMeta {
 export interface StoredChat {
     id: string;
     messages: StoredMessage[];
+    revision: number;
 }
+
+export interface ChatPageCursor {
+    createdAt: number;
+    messageId: string;
+    offset: number;
+}
+
+export interface ChatPage {
+    data: string;
+    cursor: ChatPageCursor | null;
+    revision: number;
+    exists: boolean;
+}
+
+export const HISTORY_PAGE_CHARS = 16 * 1024 * 1024;
 
 export interface ImportChatEntry {
     meta: ChatMeta;
@@ -461,13 +489,22 @@ export type StorageRequest =
       }
     | { type: 'remove_draft_attachment'; chatId: string; key: string }
     | { type: 'clear_draft_attachments'; chatId: string }
-    | { type: 'put_message'; message: StoredMessage }
+    | { type: 'put_message'; message: StoredMessage; sourceTabId?: string }
     | { type: 'import_chats'; chats: ImportChatEntry[] }
-    | { type: 'delete_message'; chatId: string; messageId: string }
+    | {
+          type: 'delete_message';
+          chatId: string;
+          messageId: string;
+          sourceTabId?: string;
+      }
     | { type: 'delete_chat'; chatId: string; sourceTabId?: string }
     | { type: 'load_chat_metas' }
-    | { type: 'load_chats_by_ids'; ids: string[] }
-    | { type: 'load_chat'; chatId: string }
+    | {
+          type: 'load_chat_page';
+          chatId: string;
+          cursor?: ChatPageCursor;
+          messageId?: string;
+      }
     | { type: 'load_openrouter_models' }
     | { type: 'get_openrouter_refresh_status' }
     | { type: 'refresh_openrouter_models' }
@@ -493,12 +530,12 @@ export interface StorageUsage {
 
 export type StorageResponse =
     | { type: 'saved'; warning?: string }
+    | { type: 'turn_prepared'; revision: number }
     | { type: 'has_keys'; saved: Record<string, boolean> }
     | { type: 'key_test'; ok: boolean; message?: string }
     | { type: 'settings'; settings: Partial<UserSettings> }
     | { type: 'chat_metas'; metas: ChatMeta[] }
-    | { type: 'chats'; chats: StoredChat[] }
-    | { type: 'chat'; chat: StoredChat | null }
+    | ({ type: 'chat_page' } & ChatPage)
     | { type: 'openrouter_models'; models: OpenRouterModel[] | null }
     | { type: 'openrouter_refresh_status'; lastAttemptAt: number | null }
     | { type: 'file_status'; statuses: Record<string, FileAvailability> }

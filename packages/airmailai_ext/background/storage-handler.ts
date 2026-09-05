@@ -31,9 +31,8 @@ import {
     dbRemoveDraftAttachment,
     dbGetStorageUsage,
     dbImportChats,
-    dbLoadChat,
+    dbLoadChatPage,
     dbLoadChatMetas,
-    dbLoadChatsByIds,
     dbPrepareRetry,
     dbPrepareTurn,
     dbPutMessage,
@@ -162,24 +161,55 @@ async function handleStorage(
             return { type: 'saved' };
         }
         case 'prepare_turn': {
-            const refs = await dbPrepareTurn(message.meta, message.message);
+            const attachments = message.message.message.parts.filter(
+                (p) => p.type === 'file'
+            );
+            if (attachments.length) {
+                const facts = await dbGetFileFacts(
+                    attachments.map((p) => p.hash),
+                    message.meta.providerId
+                );
+                const storageOn = await readProviderFileStorageEnabled();
+                for (const part of attachments) {
+                    const fact = facts[part.hash];
+                    if (
+                        !fact?.local &&
+                        !(
+                            storageOn &&
+                            fact?.providerEntry &&
+                            replicaFresh(fact.providerEntry)
+                        )
+                    ) {
+                        throw new Error(
+                            `${part.filename} is unavailable. Reattach it before sending.`
+                        );
+                    }
+                }
+            }
+            const { refs, revision } = await dbPrepareTurn(
+                message.meta,
+                message.message
+            );
             cleanupProviderFiles(refs, message.meta.id, message.sourceTabId);
             broadcast(
                 { type: 'meta-changed', meta: message.meta },
                 message.sourceTabId
             );
-            log.info('-> storage response: turn prepared');
-            return { type: 'saved' };
+            log.info('-> storage response: turn prepared', revision);
+            return { type: 'turn_prepared', revision };
         }
         case 'prepare_retry': {
-            const refs = await dbPrepareRetry(message.meta, message.lastKeptId);
+            const { refs, revision } = await dbPrepareRetry(
+                message.meta,
+                message.lastKeptId
+            );
             cleanupProviderFiles(refs, message.meta.id, message.sourceTabId);
             broadcast(
                 { type: 'meta-changed', meta: message.meta },
                 message.sourceTabId
             );
-            log.info('-> storage response: retry prepared');
-            return { type: 'saved' };
+            log.info('-> storage response: retry prepared', revision);
+            return { type: 'turn_prepared', revision };
         }
         case 'remove_draft_attachment': {
             const refs = await dbRemoveDraftAttachment(
@@ -195,8 +225,18 @@ async function handleStorage(
             return { type: 'saved' };
         }
         case 'put_message': {
-            const refs = await dbPutMessage(message.message);
-            cleanupProviderFiles(refs, message.message.chatId, undefined);
+            const { refs, revision } = await dbPutMessage(message.message);
+            broadcast({
+                type: 'message-changed',
+                chatId: message.message.chatId,
+                messageId: message.message.message.id,
+                revision,
+            });
+            cleanupProviderFiles(
+                refs,
+                message.message.chatId,
+                message.sourceTabId
+            );
             log.info('-> storage response: saved');
             return { type: 'saved' };
         }
@@ -209,11 +249,18 @@ async function handleStorage(
             return { type: 'saved' };
         }
         case 'delete_message': {
-            const refs = await dbDeleteMessage(
+            const { refs, revision } = await dbDeleteMessage(
                 message.chatId,
                 message.messageId
             );
-            cleanupProviderFiles(refs, message.chatId, undefined);
+            if (revision)
+                broadcast({
+                    type: 'message-changed',
+                    chatId: message.chatId,
+                    messageId: message.messageId,
+                    revision,
+                });
+            cleanupProviderFiles(refs, message.chatId, message.sourceTabId);
             log.info('-> storage response: saved');
             return { type: 'saved' };
         }
@@ -235,20 +282,15 @@ async function handleStorage(
             );
             return { type: 'chat_metas', metas };
         }
-        case 'load_chats_by_ids': {
-            const chats = await dbLoadChatsByIds(message.ids);
-            log.info('-> storage response: chats', `${chats.length} chats`);
-            return { type: 'chats', chats };
-        }
-        case 'load_chat': {
-            const chat = await dbLoadChat(message.chatId);
-            log.info(
-                '-> storage response: chat',
-                message.chatId,
-                chat ? 'found' : 'not found'
-            );
-            return { type: 'chat', chat };
-        }
+        case 'load_chat_page':
+            return {
+                type: 'chat_page',
+                ...(await dbLoadChatPage(
+                    message.chatId,
+                    message.cursor,
+                    message.messageId
+                )),
+            };
         case 'load_openrouter_models': {
             const apiKey = await readApiKey('openrouter');
             const models = await getOpenRouterModels(apiKey);

@@ -22,6 +22,7 @@ import { streamProvider } from '../providers/stream';
 import {
     dbGetFileBlob,
     dbGetMeta,
+    dbLoadChat,
     dbPutMessage,
     dbRecordProviderFile,
     dbSetContainer,
@@ -29,12 +30,12 @@ import {
 import { base64ToBytes, bytesToBase64, hashBytes } from '../storage/encoding';
 import {
     broadcast,
+    activeTurns,
     broadcastTo,
     releaseStreamPort,
     trackStreamPort,
 } from './ports';
 import {
-    FILE_PROVIDERS,
     deleteProviderFile,
     deleteProviderFiles,
     deleteTemporaryProviderFiles,
@@ -42,10 +43,9 @@ import {
     prepareProviderFiles,
     readApiKey,
     readProviderFileStorageEnabled,
+    recoverRejectedProviderFiles,
     uploadWithDedup,
 } from './provider-file-sync';
-
-const inflightTurns = new Set<string>();
 
 interface OpenAICaptureResult {
     freshBlobs: Map<string, Blob>;
@@ -199,6 +199,7 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
     let errorSource: StreamErrorSource = 'extension';
     let portOpen = true;
     let truncateTo: number | null = null;
+    let chatRevision: number | null = null;
 
     const send = (event: ExtensionStreamEvent) => {
         if (portOpen) port.postMessage(event);
@@ -209,7 +210,6 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
         log.info('port disconnected, disposition:', disposition);
         if (disposition === 'pending' || disposition === 'streaming') {
             disposition = 'aborted';
-            if (lockedChatId) inflightTurns.delete(lockedChatId);
         }
         controller.abort();
         releaseStreamPort(port);
@@ -240,7 +240,7 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
 
         if (disposition !== 'pending') return;
 
-        if (inflightTurns.has(msg.chatId)) {
+        if (activeTurns.has(msg.chatId)) {
             log.info('lock taken, rejecting', msg.chatId);
             send({
                 type: 'error',
@@ -251,7 +251,7 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
             releaseStreamPort(port);
             return;
         }
-        inflightTurns.add(msg.chatId);
+        activeTurns.set(msg.chatId, msg.assistantMessageId);
         lockedChatId = msg.chatId;
         lockedSourceTabId = msg.sourceTabId;
         assistantMessageId = msg.assistantMessageId;
@@ -280,11 +280,15 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
         let capturedContainerExpiresAt: string | undefined;
         let storageOn = false;
         let apiKey: string | undefined;
-        let ephemeralInputFiles: ProviderFileRef[] = [];
+        const ephemeralInputFiles: ProviderFileRef[] = [];
         const outputWarnings: string[] = [];
         const streamOutputBlobs = new Map<string, Blob>();
 
         try {
+            const storedChat = await dbLoadChat(msg.chatId);
+            if (!storedChat) throw new Error('The conversation was deleted.');
+            chatRevision = storedChat.revision;
+            const messages = storedChat.messages.map((row) => row.message);
             apiKey = await readApiKey(msg.provider);
             if (!apiKey) {
                 log.error('no API key for provider', msg.provider);
@@ -297,7 +301,7 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
             log.info('streaming', msg.chatId, {
                 provider: msg.provider,
                 model: msg.model,
-                messages: msg.messages.length,
+                messages: messages.length,
             });
 
             log.debug('site -> ext request', {
@@ -305,27 +309,10 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
                 model: msg.model,
                 params: msg.params,
                 system: msg.system,
-                messages: msg.messages,
+                messages,
             });
 
             storageOn = await readProviderFileStorageEnabled();
-            let providerFiles: Record<string, ProviderFileEntry> | undefined;
-            if (FILE_PROVIDERS.has(msg.provider)) {
-                const prepared = await prepareProviderFiles(
-                    msg.messages,
-                    msg.provider,
-                    apiKey,
-                    storageOn,
-                    controller.signal
-                );
-                providerFiles = prepared.files;
-                ephemeralInputFiles = prepared.ephemeral;
-            }
-            const blobs = await hydrateBlobs(
-                msg.messages,
-                msg.provider,
-                providerFiles
-            );
 
             let turnParams = msg.params ?? {};
             if (msg.provider === 'anthropic' || msg.provider === 'openai') {
@@ -337,6 +324,7 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
                     const meta = await dbGetMeta(msg.chatId);
                     if (
                         meta?.containerId &&
+                        meta.containerProvider === msg.provider &&
                         meta.containerExpiresAt &&
                         new Date(meta.containerExpiresAt).getTime() - 60_000 >
                             Date.now()
@@ -350,28 +338,85 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
                 }
             }
 
-            let chunkStream: AsyncIterable<AirmailAIChunk>;
-            try {
-                chunkStream = streamProvider(msg.provider, {
-                    apiKey,
-                    model: msg.model,
-                    messages: msg.messages,
-                    system: msg.system,
-                    params: turnParams,
-                    signal: controller.signal,
-                    blobs,
-                    providerFiles,
-                });
-            } catch (e) {
-                log.error('streamProvider threw', e);
-                inStreamErrorText = e instanceof Error ? e.message : String(e);
-                errorSource = 'extension';
-                disposition = 'errored';
-                return;
-            }
+            const key = apiKey;
+            const lastUserMessage = messages.findLast((m) => m.role === 'user');
+            const requiredHashes = new Set(
+                lastUserMessage?.parts.flatMap((p) =>
+                    p.type === 'file' ? [p.hash] : []
+                ) ?? []
+            );
+            const generateChunks =
+                async function* (): AsyncGenerator<AirmailAIChunk> {
+                    let delivered = false;
+                    let recovered = false;
+                    for (;;) {
+                        controller.signal.throwIfAborted();
+                        errorSource = 'extension';
+                        const prepared = await prepareProviderFiles(
+                            messages,
+                            msg.provider,
+                            key,
+                            storageOn,
+                            controller.signal,
+                            requiredHashes
+                        );
+                        ephemeralInputFiles.push(...prepared.ephemeral);
+                        const missing = new Set(prepared.missing);
+                        const availableMessages = messages
+                            .map((m) => ({
+                                ...m,
+                                parts: m.parts.filter(
+                                    (p) =>
+                                        p.type !== 'file' ||
+                                        !missing.has(p.hash)
+                                ),
+                            }))
+                            .filter((m) => m.parts.length > 0);
+                        const blobs = await hydrateBlobs(
+                            availableMessages,
+                            msg.provider,
+                            prepared.files
+                        );
+                        const stream = streamProvider(msg.provider, {
+                            apiKey: key,
+                            model: msg.model,
+                            messages: availableMessages,
+                            system: msg.system,
+                            params: turnParams,
+                            signal: controller.signal,
+                            blobs,
+                            providerFiles: prepared.files,
+                        });
+                        errorSource = 'api';
+                        try {
+                            for await (const chunk of stream) {
+                                delivered = true;
+                                yield chunk;
+                            }
+                            return;
+                        } catch (error) {
+                            if (
+                                delivered ||
+                                recovered ||
+                                !storageOn ||
+                                controller.signal.aborted ||
+                                !(await recoverRejectedProviderFiles(
+                                    error,
+                                    msg.provider,
+                                    prepared.files
+                                ))
+                            )
+                                throw error;
+                            recovered = true;
+                            broadcast({
+                                type: 'files-changed',
+                                chatIds: [msg.chatId],
+                            });
+                        }
+                    }
+                };
 
-            errorSource = 'api';
-            for await (const chunk of chunkStream) {
+            for await (const chunk of generateChunks()) {
                 let outbound = chunk;
                 if (chunk.type === 'file' && chunk.base64) {
                     streamOutputBlobs.set(
@@ -513,7 +558,9 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
                     message: finalMessage,
                 };
                 try {
-                    orphanedReplicas = await dbPutMessage(stored, freshBlobs);
+                    const saved = await dbPutMessage(stored, freshBlobs);
+                    orphanedReplicas = saved.refs;
+                    chatRevision = saved.revision;
                 } catch (err) {
                     log.error('save failed', err);
                     const m = err instanceof Error ? err.message : String(err);
@@ -525,6 +572,7 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
                     try {
                         await dbSetContainer(
                             lockedChatId,
+                            msg.provider,
                             capturedContainerId,
                             capturedContainerExpiresAt,
                             containerFileIds
@@ -540,14 +588,23 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
                 disp = 'errored';
             }
 
+            if (
+                lockedChatId &&
+                activeTurns.get(lockedChatId) === assistantMessageId
+            ) {
+                activeTurns.delete(lockedChatId);
+            }
             if (disp === 'errored' && inStreamErrorText) {
                 send({
                     type: 'error',
                     source: errorSource,
                     message: inStreamErrorText,
+                    ...(chatRevision !== null
+                        ? { revision: chatRevision }
+                        : {}),
                 });
-            } else if (disp !== 'aborted') {
-                send({ type: 'done' });
+            } else if (disp !== 'aborted' && chatRevision !== null) {
+                send({ type: 'done', revision: chatRevision });
             }
 
             if (lockedChatId) {
@@ -574,7 +631,6 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
                 }
             }
 
-            if (lockedChatId) inflightTurns.delete(lockedChatId);
             if (portOpen) port.disconnect();
             await cleanupProviderFiles(
                 lockedChatId,

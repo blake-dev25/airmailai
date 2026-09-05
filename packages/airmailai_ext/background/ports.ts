@@ -4,6 +4,7 @@ import { log } from '../debug';
 const broadcastPorts = new Map<chrome.runtime.Port, string | undefined>();
 
 const streamPorts = new Set<chrome.runtime.Port>();
+export const activeTurns = new Map<string, string>();
 let pendingUpdateVersion: string | null = null;
 
 export function trackStreamPort(port: chrome.runtime.Port): void {
@@ -65,6 +66,7 @@ export function handleBroadcastPort(port: chrome.runtime.Port): void {
             const hello: BroadcastEvent = {
                 type: 'ext-hello',
                 version: chrome.runtime.getManifest().version,
+                activeChatIds: [...activeTurns.keys()],
             };
             try {
                 port.postMessage(hello);

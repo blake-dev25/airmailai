@@ -253,6 +253,7 @@ async function uploadProviderBlob(
 interface PreparedProviderFiles {
     files: Record<string, ProviderFileEntry> | undefined;
     ephemeral: ProviderFileRef[];
+    missing: string[];
 }
 
 const PROVIDER_UPLOAD_CONCURRENCY = 3;
@@ -287,7 +288,8 @@ export async function prepareProviderFiles(
     provider: string,
     apiKey: string,
     persistent: boolean,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    requiredHashes: ReadonlySet<string> = new Set()
 ): Promise<PreparedProviderFiles> {
     const infos = new Map<
         string,
@@ -304,9 +306,10 @@ export async function prepareProviderFiles(
             }
         }
     }
-    if (!infos.size) return { files: undefined, ephemeral: [] };
+    if (!infos.size) return { files: undefined, ephemeral: [], missing: [] };
     const map: Record<string, ProviderFileEntry> = {};
     const ephemeral: ProviderFileRef[] = [];
+    const missing: string[] = [];
     try {
         await runWithConcurrency(
             [...infos],
@@ -314,6 +317,11 @@ export async function prepareProviderFiles(
             async ([hash, info]) => {
                 signal?.throwIfAborted();
                 if (fileTooLargeForProvider(provider, info.sizeBytes)) {
+                    if (requiredHashes.has(hash))
+                        throw new Error(
+                            `${info.filename} is too large for ${provider}. Remove it before sending.`
+                        );
+                    missing.push(hash);
                     log.info(
                         'skipping provider upload, file exceeds provider limit',
                         provider,
@@ -331,10 +339,15 @@ export async function prepareProviderFiles(
                 }
                 const blob = await dbGetFileBlob(hash);
                 if (!blob) {
-                    throw new Error(
-                        `${info.filename} is missing from local storage.`
-                    );
+                    if (requiredHashes.has(hash)) {
+                        throw new Error(
+                            `${info.filename} is unavailable. Reattach it before sending.`
+                        );
+                    }
+                    missing.push(hash);
+                    return;
                 }
+                if (!FILE_PROVIDERS.has(provider)) return;
                 log.info('uploading file to provider', provider, hash);
                 if (persistent) {
                     entry = await uploadWithDedup(
@@ -374,5 +387,35 @@ export async function prepareProviderFiles(
     return {
         files: Object.keys(map).length ? map : undefined,
         ephemeral,
+        missing,
     };
+}
+
+export async function recoverRejectedProviderFiles(
+    error: unknown,
+    provider: string,
+    files: Record<string, ProviderFileEntry> | undefined
+): Promise<boolean> {
+    if (!(error instanceof Error) || !files || !('status' in error))
+        return false;
+    if (error.status !== 400 && error.status !== 403 && error.status !== 404)
+        return false;
+    const message = error.message.toLowerCase();
+    if (
+        !/not[ _-]?found|does not exist|cannot (?:find|access)|could not (?:find|access)|inaccessible|permission|access denied|not authorized|expired/.test(
+            message
+        )
+    )
+        return false;
+    const rejected = Object.values(files).filter(
+        (file) =>
+            message.includes(file.fileId.toLowerCase()) ||
+            (file.fileId.startsWith('files/') &&
+                message.includes(file.fileId.slice(6).toLowerCase())) ||
+            (file.uri !== undefined && message.includes(file.uri.toLowerCase()))
+    );
+    if (!rejected.length) return false;
+    for (const file of rejected)
+        await dbForgetProviderFile(provider, file.fileId);
+    return true;
 }

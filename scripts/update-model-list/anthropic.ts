@@ -9,6 +9,7 @@ import {
     pollWithDelay,
     printIdList,
     printModelRow,
+    printPollingCacheSummary,
     probeErrorCode,
     sortLevels,
 } from './shared';
@@ -18,7 +19,8 @@ import {
     applyOverride,
     staleOverrideIds,
 } from './overrides';
-import type { DocsCache } from './docs-cache';
+import { type DocsCache, splitCached } from './docs-cache';
+import { type ProbeCache, splitCachedProbes } from './probe-cache';
 
 const ANTHROPIC_MODELS_OVERVIEW_URL =
     'https://platform.claude.com/docs/en/models/overview.md';
@@ -141,41 +143,71 @@ export function parseAnthropicModelPage(md: string): AnthropicModelPage {
     return page;
 }
 
-async function scrapeAnthropicCutoffs(): Promise<Map<string, string>> {
+async function scrapeAnthropicCutoffs(
+    cache: DocsCache
+): Promise<Map<string, string>> {
     console.log('scraping Anthropic model pages for knowledge cutoffs');
     const cutoffs = new Map<string, string>();
     const slugs = await fetchAnthropicModelSlugs();
-    console.log(
-        `found ${slugs.length} model page(s), scraping with ${WEBPAGE_SCRAPE_DELAY_MS / 1000}s spacing`
+    const pages = cache.section<AnthropicModelPage>('anthropic', 'pages');
+    const { hits, failures, misses } = splitCached(
+        slugs,
+        pages,
+        (slug) => slug
     );
-    await pollWithDelay(slugs, WEBPAGE_SCRAPE_DELAY_MS, async (slug) => {
-        let markdown: string | null;
-        try {
-            const res = await scrapeAnthropicModelPageRaw(slug);
-            markdown = res.markdown;
-            if (!markdown) {
+    console.log(`found ${slugs.length} model page(s)`);
+    printPollingCacheSummary(
+        'Anthropic docs polling',
+        [...hits.map(() => '200'), ...failures.map((f) => f.code)],
+        misses.length,
+        WEBPAGE_SCRAPE_DELAY_MS
+    );
+    const fresh = await pollWithDelay(
+        misses,
+        WEBPAGE_SCRAPE_DELAY_MS,
+        async (slug) => {
+            try {
+                const res = await scrapeAnthropicModelPageRaw(slug);
+                console.log(`got ${slug} docs, ${res.status}`);
+                if (!res.markdown) {
+                    pages.set(slug, {
+                        code: String(res.status),
+                        value: null,
+                    });
+                    console.log(
+                        `⚠ model page ${slug} scrape failed (HTTP ${res.status})`
+                    );
+                    return { slug, page: null };
+                }
+                const page = parseAnthropicModelPage(res.markdown);
+                pages.set(slug, { code: String(res.status), value: page });
+                return { slug, page };
+            } catch (e) {
                 console.log(
-                    `⚠ model page ${slug} scrape failed (HTTP ${res.status})`
+                    `⚠ model page ${slug} scrape failed: ${(e as Error).message}`
                 );
-                return;
+                return { slug, page: null };
             }
-        } catch (e) {
-            console.log(
-                `⚠ model page ${slug} scrape failed: ${(e as Error).message}`
-            );
-            return;
         }
-        const page = parseAnthropicModelPage(markdown);
+    );
+    await cache.save();
+
+    const pagesBySlug = new Map<string, AnthropicModelPage>();
+    for (const { item, parsed } of hits) pagesBySlug.set(item, parsed);
+    for (const { slug, page } of fresh) {
+        if (page) pagesBySlug.set(slug, page);
+    }
+    for (const [slug, page] of pagesBySlug) {
         if (!page.id || !page.knowledgeCutoff) {
             console.log(
                 `⚠ model page ${slug} parsed to id=${page.id} cutoff=${page.knowledgeCutoff} - page layout may have changed`
             );
-            return;
+            continue;
         }
         cutoffs.set(page.id, page.knowledgeCutoff);
         if (page.alias) cutoffs.set(page.alias, page.knowledgeCutoff);
         console.log(`scraped ${slug}: ${page.id} -> ${page.knowledgeCutoff}`);
-    });
+    }
     return cutoffs;
 }
 
@@ -193,22 +225,25 @@ async function applyAnthropicCutoffs(
     );
     const fresh =
         uncached.length > 0
-            ? await scrapeAnthropicCutoffs()
+            ? await scrapeAnthropicCutoffs(cache)
             : new Map<string, string>();
     if (uncached.length === 0) {
         console.log('all Anthropic knowledge cutoffs cached - skipping docs');
     }
-    for (const [id, cutoff] of fresh) cutoffs.set(id, cutoff);
+    for (const [id, cutoff] of fresh) {
+        cutoffs.set(id, { code: '200', value: cutoff });
+    }
     if (fresh.size > 0) await cache.save();
     for (const m of models) {
         if (m.knowledgeCutoff) continue;
-        const cutoff = fresh.get(m.id) ?? cutoffs.get(m.id);
+        const cutoff = fresh.get(m.id) ?? cutoffs.get(m.id)?.value;
         if (cutoff) m.knowledgeCutoff = cutoff;
     }
 }
 
 export async function fetchAnthropic(
-    cache: DocsCache
+    docsCache: DocsCache,
+    probeCache: ProbeCache
 ): Promise<DerivedModel[]> {
     console.log('starting Anthropic polling');
     const key = process.env.ANTHROPIC_API_KEY;
@@ -223,19 +258,40 @@ export async function fetchAnthropic(
         if (o) applyOverride(d, o);
         out.push(d);
     }
-    await applyAnthropicCutoffs(out, cache);
-    console.log(
-        `starting Anthropic 404 polling (${out.length} models, ${MODEL_PROBE_DELAY_MS / 1000}s spacing)`
+    await applyAnthropicCutoffs(out, docsCache);
+    const probeSection = probeCache.section('anthropic');
+    const { hits, misses } = splitCachedProbes(
+        out,
+        probeSection,
+        (model) => model.id
     );
-    const probes = await pollWithDelay(out, MODEL_PROBE_DELAY_MS, async (m) => {
-        const probe = await probeAnthropicModel(client, m.id);
-        console.log(`tested ${m.id}, ${probe.code}`);
-        return { model: m, probe };
-    });
+    printPollingCacheSummary(
+        'Anthropic 404 polling',
+        hits.map(({ probe }) => probe.code),
+        misses.length,
+        MODEL_PROBE_DELAY_MS
+    );
+    const fresh = await pollWithDelay(
+        misses,
+        MODEL_PROBE_DELAY_MS,
+        async (m) => {
+            const probe = await probeAnthropicModel(client, m.id);
+            probeSection.set(m.id, probe);
+            console.log(`tested ${m.id}, ${probe.code}`);
+            return { model: m, probe };
+        }
+    );
+    await probeCache.save();
+
+    const probesById = new Map<string, ModelProbeResult>();
+    for (const { item, probe } of hits) probesById.set(item.id, probe);
+    for (const { model, probe } of fresh) probesById.set(model.id, probe);
 
     const kept: DerivedModel[] = [];
     const dead: string[] = [];
-    for (const { model, probe } of probes) {
+    for (const model of out) {
+        const probe = probesById.get(model.id);
+        if (!probe) throw new Error(`Missing Anthropic probe for ${model.id}`);
         if (probe.status === 'dead') dead.push(model.id);
         else kept.push(model);
     }

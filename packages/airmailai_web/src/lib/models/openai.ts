@@ -7,6 +7,20 @@ export const OPENAI: ProviderOption = {
     name: 'OpenAI',
     models: [
         {
+            id: 'gpt-6-astra',
+            name: 'GPT-6 Astra',
+            params: {
+                contextWindow: 1050000,
+                maxOutputTokens: 128000,
+                defaultMaxTokens: 8192,
+                knowledgeCutoff: 'Apr 2026',
+                thinking: {
+                    levels: ['low', 'medium', 'high', 'xhigh', 'max'],
+                    defaultLevel: 'low',
+                },
+            },
+        },
+        {
             id: 'gpt-5.6-luna',
             name: 'GPT-5.6 Luna',
             params: {

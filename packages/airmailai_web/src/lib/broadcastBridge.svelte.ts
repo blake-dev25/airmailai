@@ -4,11 +4,45 @@ import { reportAppError } from './errorStore.svelte';
 import { clearFileBlobCache, subscribeToBroadcast, tabId } from './extension';
 import { versionCheck } from './versionCheck.svelte';
 
+const messageUpdates = new Map<string, Promise<void>>();
+let helloReceived = false;
+
 function handleBroadcastEvent(event: BroadcastEvent): void {
     switch (event.type) {
         case 'ext-hello':
             versionCheck.reportExtVersion(event.version);
+            if (helloReceived) {
+                void chatStore.reconcileFromIDB(event.activeChatIds);
+            } else {
+                helloReceived = true;
+                chatStore.syncActiveTurns(event.activeChatIds);
+            }
             return;
+        case 'message-changed': {
+            const previous =
+                messageUpdates.get(event.chatId) ?? Promise.resolve();
+            const update = previous
+                .then(() =>
+                    chatStore.applyMessageChanged(
+                        event.chatId,
+                        event.messageId,
+                        event.revision
+                    )
+                )
+                .catch((error) =>
+                    reportAppError(
+                        'message synchronization failed',
+                        "Couldn't synchronize the conversation",
+                        error
+                    )
+                );
+            messageUpdates.set(event.chatId, update);
+            void update.finally(() => {
+                if (messageUpdates.get(event.chatId) === update)
+                    messageUpdates.delete(event.chatId);
+            });
+            return;
+        }
         case 'turn-start':
             if (event.sourceTabId === tabId) return;
             chatStore.applyRemoteTurnStart(
@@ -67,14 +101,9 @@ function handleBroadcastEvent(event: BroadcastEvent): void {
     }
 }
 
-async function handleBroadcastReconnect(): Promise<void> {
-    await chatStore.reconcileFromIDB();
-}
-
 export function startBroadcastBridge(): () => void {
     const sub = subscribeToBroadcast({
         onEvent: handleBroadcastEvent,
-        onReconnect: handleBroadcastReconnect,
     });
     return () => sub.unsubscribe();
 }

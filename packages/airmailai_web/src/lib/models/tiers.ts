@@ -43,6 +43,7 @@ export const MODEL_TIERS: Record<string, ModelTierAssignment> = {
     'gpt-5.6-luna': 'latest',
     'gpt-5.6-sol': 'latest',
     'gpt-5.6-terra': ['latest', 'test'],
+    'gpt-6-astra': 'latest',
     'o1': 'legacy',
     'o1-pro': 'legacy',
     'o3': 'legacy',

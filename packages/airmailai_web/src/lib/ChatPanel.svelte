@@ -42,10 +42,12 @@
     let isAtTop = $state(true);
     let pendingAttachments = $derived(chatStore.activeDraftAttachments);
     let processingAttachments = $state<
-        Array<{ id: string; name: string; progress: number }>
+        Array<{ id: string; chatId: string; name: string; progress: number }>
     >([]);
+    const activeProcessingAttachments = $derived(
+        processingAttachments.filter((a) => a.chatId === chatStore.activeChatId)
+    );
     let fileErrors = $state<string[]>([]);
-    let lastFilePolicyKey: string | null = null;
     let hoveredMessageId = $state<string | null>(null);
     let hoverHideTimer: ReturnType<typeof setTimeout> | null = null;
     let editingMessageId = $state<string | null>(null);
@@ -96,7 +98,6 @@
         };
     });
 
-    let uploadGeneration = 0;
     let fileProcessingQueue = Promise.resolve();
     let filePolicyOpts = $derived({
         openRouterPdfEngine: settingsStore.openRouterPdfEngine,
@@ -111,17 +112,6 @@
     let providerName = $derived(
         providersStore.providers.find((p) => p.id === settingsStore.providerId)
             ?.name ?? settingsStore.providerId
-    );
-    let filePolicyKey = $derived(
-        [
-            filePolicy.providerId,
-            filePolicy.maxAttachments,
-            filePolicy.maxFileBytes,
-            filePolicy.maxRequestBytes,
-            filePolicy.maxAudioAttachments ?? '',
-            filePolicy.maxVideoAttachments ?? '',
-            ...Array.from(filePolicy.mimeTypes).sort(),
-        ].join(':')
     );
     let fileAccept = $derived(
         getAcceptForProvider(
@@ -243,35 +233,6 @@
         };
     });
 
-    $effect(() => {
-        const policyKey = filePolicyKey;
-        if (lastFilePolicyKey === null) {
-            lastFilePolicyKey = policyKey;
-            return;
-        }
-        if (lastFilePolicyKey === policyKey) return;
-        lastFilePolicyKey = policyKey;
-        uploadGeneration++;
-        processingAttachments = [];
-
-        const attachments = untrack(() => pendingAttachments);
-        if (!attachments.length) return;
-
-        const validation = validateReadyAttachments(
-            attachments,
-            settingsStore.providerId,
-            providersStore.selectedModel,
-            filePolicyOpts
-        );
-        if (validation.ok) return;
-
-        void chatStore.clearActiveDraftAttachments();
-        fileErrors = [
-            `File Error: Attached files were removed. ${validation.message}`,
-            ...untrack(() => fileErrors),
-        ].slice(0, 3);
-    });
-
     function handleMessagesScroll() {
         if (!messagesEl) return;
         isAtTop = messagesEl.scrollTop < 20;
@@ -295,7 +256,7 @@
             (!text && !pendingAttachments.length) ||
             chatStore.isActiveStreaming ||
             chatStore.chatLoading ||
-            processingAttachments.length
+            activeProcessingAttachments.length
         ) {
             return;
         }
@@ -382,9 +343,9 @@
         uploadProviderId: string,
         uploadModel: ModelOption | null,
         uploadOpts: FilePolicyOptions,
-        generation: number
+        chatId: string,
+        replicateTo: string | undefined
     ) {
-        const isCurrent = () => generation === uploadGeneration;
         const policy = getFilePolicy(uploadProviderId, uploadModel, uploadOpts);
 
         try {
@@ -434,7 +395,8 @@
                 encodedSizeBytes: Math.ceil(file.size / 3) * 4,
             };
             const nextAttachments = [
-                ...untrack(() => pendingAttachments),
+                ...(chatStore.chats.find((c) => c.id === chatId)
+                    ?.draftAttachments ?? []),
                 draftAtt,
             ];
             const validation = validateReadyAttachments(
@@ -449,23 +411,15 @@
                 return;
             }
 
-            const staged = await chatStore.addDraftAttachment(
+            await chatStore.addDraftAttachment(
+                chatId,
+                replicateTo,
                 draftAtt,
                 file,
                 (progress) => setProcessingProgress(id, 50 + progress * 50)
             );
-            if (!isCurrent()) {
-                if (staged) {
-                    await chatStore.removeDraftAttachment(
-                        staged.attachment.hash,
-                        staged.chatId
-                    );
-                }
-                return;
-            }
             removeProcessingAttachment(id);
         } catch (error) {
-            if (!isCurrent()) return;
             addFileError(
                 error instanceof Error
                     ? `${file.name}: ${error.message}`
@@ -490,17 +444,31 @@
         const uploadProviderId = settingsStore.providerId;
         const uploadModel = providersStore.selectedModel;
         const uploadOpts = filePolicyOpts;
+        const replicateTo = settingsStore.enableProviderFileStorage
+            ? uploadProviderId
+            : undefined;
+        let chatId: string;
+        try {
+            chatId = await chatStore.prepareAttachmentUpload();
+        } catch (error) {
+            reportAppError(
+                'prepare attachment upload failed',
+                "Couldn't attach files",
+                error
+            );
+            return;
+        }
         const uploadPolicy = getFilePolicy(
             uploadProviderId,
             uploadModel,
             uploadOpts
         );
-        const generation = uploadGeneration;
         const slots = Math.max(
             0,
             uploadPolicy.maxAttachments -
-                pendingAttachments.length -
-                processingAttachments.length
+                (chatStore.chats.find((c) => c.id === chatId)?.draftAttachments
+                    ?.length ?? 0) -
+                processingAttachments.filter((a) => a.chatId === chatId).length
         );
         const toAdd = files.slice(0, slots);
 
@@ -518,6 +486,7 @@
             ...processingAttachments,
             ...queued.map(({ file, id }) => ({
                 id,
+                chatId,
                 name: file.name,
                 progress: 0,
             })),
@@ -530,7 +499,8 @@
                     uploadProviderId,
                     uploadModel,
                     uploadOpts,
-                    generation
+                    chatId,
+                    replicateTo
                 );
             }
         });
@@ -950,10 +920,10 @@
                 {/each}
             </div>
         {/if}
-        {#if pendingAttachments.length || processingAttachments.length}
+        {#if pendingAttachments.length || activeProcessingAttachments.length}
             <div class="flex items-start justify-between gap-3 px-4 pt-2">
                 <div class="flex flex-wrap gap-1 min-w-0">
-                    {#each processingAttachments.toReversed() as att (att.id)}
+                    {#each activeProcessingAttachments.toReversed() as att (att.id)}
                         <div
                             class="relative overflow-hidden inline-flex items-center gap-1.5 pl-2.5 pr-2 py-1.25 bg-surface-sunken border border-border rounded-lg text-xs text-fg max-w-60"
                         >
@@ -1019,7 +989,8 @@
                 onclick={openFilePicker}
                 disabled={chatStore.isActiveStreaming ||
                     !canAttachFiles ||
-                    pendingAttachments.length + processingAttachments.length >=
+                    pendingAttachments.length +
+                        activeProcessingAttachments.length >=
                         filePolicy.maxAttachments}
                 aria-disabled={!settingsStore.enableFileUploads}
                 title={settingsStore.enableFileUploads
@@ -1054,7 +1025,7 @@
                     onclick={submit}
                     disabled={chatStore.isActiveStreaming ||
                         chatStore.chatLoading ||
-                        processingAttachments.length > 0 ||
+                        activeProcessingAttachments.length > 0 ||
                         (!inputText.trim() && !pendingAttachments.length)}
                     aria-label="Send message"
                 >

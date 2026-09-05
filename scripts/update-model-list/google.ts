@@ -13,6 +13,7 @@ import {
     pollWithDelay,
     printIdList,
     printModelRow,
+    printPollingCacheSummary,
     probeErrorCode,
     scrapeDocsRaw,
     sleep,
@@ -22,6 +23,7 @@ import {
 } from './shared';
 import { GOOGLE_OVERRIDES, staleOverrideIds } from './overrides';
 import { type DocsCache, splitCached } from './docs-cache';
+import { type ProbeCache, splitCachedProbes } from './probe-cache';
 
 async function probeGoogleModel(
     client: GoogleGenAI,
@@ -296,7 +298,8 @@ export interface GooglePipelineResult {
 
 export async function pipelineGoogle(
     openrouter: OpenRouterIndex,
-    cache: DocsCache
+    docsCache: DocsCache,
+    probeCache: ProbeCache
 ): Promise<GooglePipelineResult> {
     console.log('starting Google polling');
     const key = process.env.GOOGLE_API_KEY;
@@ -321,24 +324,39 @@ export async function pipelineGoogle(
         return true;
     });
 
-    const pages = cache.section<ScrapedGoogle>('google');
-    const { hits, misses } = splitCached(candidates, pages, googleModelId);
-    console.log(
-        `starting Google docs polling (${hits.length} cached, ${misses.length} pages, ${WEBPAGE_SCRAPE_DELAY_MS / 1000}s spacing)`
+    const pages = docsCache.section<ScrapedGoogle>('google');
+    const { hits, failures, misses } = splitCached(
+        candidates,
+        pages,
+        googleModelId
+    );
+    printPollingCacheSummary(
+        'Google docs polling',
+        [...hits.map(() => '200'), ...failures.map((f) => f.code)],
+        misses.length,
+        WEBPAGE_SCRAPE_DELAY_MS
     );
     const docOutcomes = [
         ...hits.map(({ item, parsed }) => ({
             m: item,
             id: googleModelId(item),
-            status: 200,
+            status: '200',
             scraped: parsed,
+        })),
+        ...failures.map(({ item, code }) => ({
+            m: item,
+            id: googleModelId(item),
+            status: code,
+            scraped: null,
         })),
         ...(await pollWithDelay(misses, WEBPAGE_SCRAPE_DELAY_MS, async (m) => {
             const id = googleModelId(m);
             const { status, markdown } = await scrapeGoogleDocsRaw(id);
             console.log(`got ${id} docs, ${status}`);
             if (status !== 200 || !markdown) {
-                return { m, id, status, scraped: null };
+                const code = String(status);
+                pages.set(id, { code, value: null });
+                return { m, id, status: code, scraped: null };
             }
             const scraped = parseGoogleDoc(id, markdown);
             if (!scraped.knowledgeCutoff && scraped.modelCardUrl) {
@@ -351,11 +369,12 @@ export async function pipelineGoogle(
                     );
                 }
             }
-            pages.set(id, scraped);
-            return { m, id, status, scraped };
+            const code = String(status);
+            pages.set(id, { code, value: scraped });
+            return { m, id, status: code, scraped };
         })),
     ];
-    await cache.save();
+    await docsCache.save();
 
     const docSurvivors: DerivedModel[] = [];
     for (const { m, id, status, scraped } of docOutcomes) {
@@ -387,14 +406,24 @@ export async function pipelineGoogle(
         docSurvivors.push(deriveGoogle(m, openrouter, scraped, thinkingTable));
     }
 
-    console.log(
-        `starting Google 404 polling (${docSurvivors.length} models, ${MODEL_PROBE_DELAY_MS / 1000}s spacing)`
-    );
-    const probes = await pollWithDelay(
+    const probeSection = probeCache.section('google');
+    const { hits: probeHits, misses: probeMisses } = splitCachedProbes(
         docSurvivors,
+        probeSection,
+        (model) => model.id
+    );
+    printPollingCacheSummary(
+        'Google 404 polling',
+        probeHits.map(({ probe }) => probe.code),
+        probeMisses.length,
+        MODEL_PROBE_DELAY_MS
+    );
+    const freshProbes = await pollWithDelay(
+        probeMisses,
         MODEL_PROBE_DELAY_MS,
         async (m) => {
             const probe = await probeGoogleModel(client, m.id);
+            probeSection.set(m.id, probe);
             const result = {
                 model: m,
                 id: m.id,
@@ -405,10 +434,23 @@ export async function pipelineGoogle(
             return result;
         }
     );
+    await probeCache.save();
+
+    const probesById = new Map<string, ModelProbeResult>();
+    for (const { item, probe } of probeHits) {
+        probesById.set(item.id, probe);
+    }
+    for (const { model, status, code } of freshProbes) {
+        probesById.set(model.id, { status, code });
+    }
 
     const grandfathered: string[] = [];
     const models: DerivedModel[] = [];
-    for (const { model, id, status } of probes) {
+    for (const model of docSurvivors) {
+        const id = model.id;
+        const probe = probesById.get(id);
+        if (!probe) throw new Error(`Missing Google probe for ${id}`);
+        const { status } = probe;
         if (status === 'dead') {
             skipped.push({ id, reason: 'probe 404 (no longer available)' });
             continue;

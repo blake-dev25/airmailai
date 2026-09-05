@@ -4,7 +4,6 @@ import { parse } from 'opentype.js';
 import { Resvg } from '@resvg/resvg-js';
 
 const W = 1200;
-const H = 630;
 const RED = '#c14227';
 const NAVY = '#26214d';
 const BEIGE = '#f0e1c3';
@@ -56,39 +55,62 @@ const probe = font.getPath('AirmailAI', 0, 0, fontSize, { letterSpacing });
 const bb = probe.getBoundingBox();
 const inkW = bb.x2 - bb.x1;
 
-const contentW = logoSize + logoTextGap + inkW;
-const contentX = (W - contentW) / 2;
-const centerY = stripeH + (H - stripeH) / 2;
-
-const logoX = contentX;
-const logoY = centerY - logoSize / 2;
-const textDx = contentX + logoSize + logoTextGap - bb.x1;
-const textDy = centerY - (bb.y1 + bb.y2) / 2;
-const textPathData = font
-    .getPath('AirmailAI', textDx, textDy, fontSize, { letterSpacing })
-    .toPathData(2);
-
-const logoSvg = readFileSync(
+const lockupW = logoSize + logoTextGap + inkW;
+const lockupH = logoSize;
+const logoSvgSource = readFileSync(
     join(STATIC_DIR, 'airmailai-stamp-logo.svg'),
     'utf-8'
-).replace(
-    '<svg ',
-    `<svg x="${logoX}" y="${logoY}" width="${logoSize}" height="${logoSize}" `
 );
 
-const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}">
+function renderLockup(logoX: number, logoY: number, wordmarkColor: string) {
+    const centerY = logoY + logoSize / 2;
+    const textDx = logoX + logoSize + logoTextGap - bb.x1;
+    const textDy = centerY - (bb.y1 + bb.y2) / 2;
+    const textPathData = font
+        .getPath('AirmailAI', textDx, textDy, fontSize, { letterSpacing })
+        .toPathData(2);
+
+    const logoSvg = logoSvgSource.replace(
+        '<svg ',
+        `<svg x="${logoX}" y="${logoY}" width="${logoSize}" height="${logoSize}" `
+    );
+
+    return `${logoSvg}
+    <path d="${textPathData}" fill="${wordmarkColor}" />`;
+}
+
+function writeCard(H: number, name: string) {
+    const logoX = (W - lockupW) / 2;
+    const logoY = stripeH + (H - stripeH) / 2 - logoSize / 2;
+
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}">
     <rect width="${W}" height="${H}" fill="${BEIGE}" />
     <g>
 ${stripePolygons}
     </g>
-    ${logoSvg}
-    <path d="${textPathData}" fill="${NAVY}" />
+    ${renderLockup(logoX, logoY, NAVY)}
 </svg>
 `;
 
-const png = new Resvg(svg, { fitTo: { mode: 'width', value: W } })
-    .render()
-    .asPng();
-const name = 'airmailai-og-1200x630.png';
-writeFileSync(join(STATIC_DIR, name), png);
-console.log(`wrote ${name} (${png.length} bytes)`);
+    const png = new Resvg(svg, { fitTo: { mode: 'width', value: W } })
+        .render()
+        .asPng();
+    writeFileSync(join(STATIC_DIR, name), png);
+    console.log(`wrote ${name} (${png.length} bytes)`);
+}
+
+function writeLockupSvg(name: string, wordmarkColor: string) {
+    const pad = 1;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${lockupW + pad * 2} ${lockupH + pad * 2}">
+    <title>AirmailAI</title>
+    ${renderLockup(pad, pad, wordmarkColor)}
+</svg>
+`;
+    writeFileSync(join(STATIC_DIR, name), svg);
+    console.log(`wrote ${name} (${svg.length} bytes)`);
+}
+
+writeCard(630, 'airmailai-og-1200x630.png');
+writeCard(400, 'airmailai-banner-1200x400.png');
+writeLockupSvg('airmailai-logo-wordmark.svg', '#000000');
+writeLockupSvg('airmailai-logo-wordmark-dark.svg', '#ffffff');

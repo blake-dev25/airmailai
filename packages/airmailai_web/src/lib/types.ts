@@ -9,6 +9,7 @@ export interface Chat {
     messagesLoaded: boolean;
     createdAt: number;
     lastMessageAt?: number;
+    revision?: number;
     systemPrompt: string;
     providerId: string;
     modelId: string;

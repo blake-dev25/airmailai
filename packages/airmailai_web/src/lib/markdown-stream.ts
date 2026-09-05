@@ -82,6 +82,11 @@ export function streamingMarkdown(
     let tailSlow = false;
     let tailTimer: ReturnType<typeof setTimeout> | null = null;
     let rendered = false;
+    let wholeRender: {
+        content: string;
+        highlighterReady: boolean;
+        citations: CitationAnchor[] | undefined;
+    } | null = null;
 
     const headEl = document.createElement('div');
     const tailEl = document.createElement('div');
@@ -148,7 +153,7 @@ export function streamingMarkdown(
 
     function renderWhole() {
         const content = params.content;
-        let html = cachedRender(content);
+        let html = isCacheable() ? cachedRender(content) : undefined;
         if (html === undefined) {
             html = renderMarkdown(content, params.citations);
             if (isCacheable()) rememberRender(content, html);
@@ -161,21 +166,34 @@ export function streamingMarkdown(
         latestSplit = content.length;
         tailSlow = false;
         lastHighlighterReady = params.highlighterReady;
+        wholeRender = {
+            content,
+            highlighterReady: params.highlighterReady,
+            citations: params.citations,
+        };
     }
 
     function sync() {
         rendered = true;
+        if (!params.streaming) {
+            cancelTailTimer();
+            if (
+                !wholeRender ||
+                wholeRender.content !== params.content ||
+                wholeRender.highlighterReady !== params.highlighterReady ||
+                wholeRender.citations !== params.citations
+            ) {
+                renderWhole();
+            }
+            return;
+        }
+        wholeRender = null;
         if (!params.content.startsWith(stableSource)) {
             stableSource = '';
             headEl.innerHTML = '';
             resetScan();
         } else if (scanLineStart > params.content.length) {
             resetScan();
-        }
-
-        if (!params.streaming && stableSource === '') {
-            renderWhole();
-            return;
         }
 
         if (

@@ -5,10 +5,12 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 
+const rootDir = join(import.meta.dirname, '../..');
+
 function readVersion(): string {
     for (const name of ['VERSION_NAME', 'VERSION']) {
         try {
-            return readFileSync(join(__dirname, '../..', name), 'utf-8').trim();
+            return readFileSync(join(rootDir, name), 'utf-8').trim();
         } catch {}
     }
     return '0.0.0.1';
@@ -20,7 +22,7 @@ function readLogLevel(): string {
     }
     let env: string;
     try {
-        env = readFileSync(join(__dirname, '../..', '.env'), 'utf-8');
+        env = readFileSync(join(rootDir, '.env'), 'utf-8');
     } catch {
         return 'errors';
     }
@@ -36,7 +38,7 @@ function readLogLevel(): string {
 
 function readLegalVersion(): string {
     const hash = createHash('sha256');
-    const legalDir = join(__dirname, 'static/legal');
+    const legalDir = join(import.meta.dirname, 'static/legal');
 
     // *** Normalize line endings before hashing so the version stays stable even
     // if a non-git tool (editor, script, etc.) rewrites the file with CRLF.
@@ -54,8 +56,8 @@ function readLegalVersion(): string {
 
 const verbose = !!process.env.BUILD_VERBOSE;
 
-export default defineConfig({
-    logLevel: verbose ? 'info' : 'error',
+export default defineConfig(({ isPreview }) => ({
+    logLevel: verbose || isPreview ? 'info' : 'error',
     publicDir: 'static',
     define: {
         __APP_VERSION__: JSON.stringify(readVersion()),
@@ -63,19 +65,22 @@ export default defineConfig({
         __LOG_LEVEL__: JSON.stringify(readLogLevel()),
     },
     plugins: [tailwindcss(), svelte()],
+    preview: {
+        open: '/app/',
+    },
     build: {
         sourcemap: true,
         rollupOptions: {
             ...(verbose ? {} : { onwarn: () => {} }),
             input: {
-                main: resolve(__dirname, 'index.html'),
-                app: resolve(__dirname, 'app/index.html'),
-                faq: resolve(__dirname, 'faq/index.html'),
+                main: resolve(import.meta.dirname, 'index.html'),
+                app: resolve(import.meta.dirname, 'app/index.html'),
+                faq: resolve(import.meta.dirname, 'faq/index.html'),
                 designSecurity: resolve(
-                    __dirname,
+                    import.meta.dirname,
                     'design-security/index.html'
                 ),
             },
         },
     },
-});
+}));

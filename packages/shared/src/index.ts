@@ -4,6 +4,8 @@ export type {
     BroadcastRequest,
     BrandingMode,
     ChatMeta,
+    ChatPage,
+    ChatPageCursor,
     DraftAttachment,
     DraftAttachmentMeta,
     AirmailAIMessageMetadata,
@@ -43,7 +45,11 @@ export type {
     TurnStopRequest,
     UserSettings,
 } from './messages';
-export { FILE_TRANSFER_CHUNK_BYTES, SETTINGS_KEYS } from './messages';
+export {
+    FILE_TRANSFER_CHUNK_BYTES,
+    HISTORY_PAGE_CHARS,
+    SETTINGS_KEYS,
+} from './messages';
 export {
     createMessageAssembler,
     applyAirmailAIChunk,

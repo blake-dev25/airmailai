@@ -7,9 +7,14 @@
     import LegalGate from './lib/LegalGate.svelte';
     import ModelConfig from './lib/ModelConfig.svelte';
     import Sidebar from './lib/Sidebar.svelte';
+    import { versionCheck } from './lib/versionCheck.svelte';
 
     onMount(() => {
         appLifecycle.start();
+        const onAssetError = () => versionCheck.reportAssetLoadFailure();
+        window.addEventListener('vite:preloadError', onAssetError);
+        return () =>
+            window.removeEventListener('vite:preloadError', onAssetError);
     });
 </script>
 
