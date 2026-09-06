@@ -58,6 +58,11 @@ export {
 } from './assemble';
 export { getMimeTypeFromFilename } from './mime';
 export {
+    EXTENSION_ID,
+    type ExtensionProbeRequest,
+    type ExtensionProbeResponse,
+} from './extension';
+export {
     createLogger,
     normalizeLogLevel,
     type Logger,

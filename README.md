@@ -7,7 +7,11 @@
   </a>
 </p>
 
-**[airmailai.net](https://airmailai.net)** / [FAQ](https://airmailai.net/faq/) / [Design & Security](https://airmailai.net/design-security/) / [@airmailai](https://x.com/airmailai)
+<p align="center">
+  <strong><a href="https://airmailai.net">airmailai.net</a></strong> / <a href="https://airmailai.net/faq/">FAQ</a> / <a href="https://airmailai.net/design-security/">Design &amp; Security</a> / <a href="https://x.com/airmailai">@airmailai</a>
+</p>
+
+## AirmailAI
 
 AirmailAI is a fast, secure, and private bring-your-own-keys LLM chat app.
 
@@ -47,6 +51,8 @@ bun run start:web
 1. `bun run build:local` builds the extension into `packages/airmailai_ext/.output/chrome-mv3` with localhost access enabled. The Chrome Web Store version only talks to airmailai.net, so a local website needs this local build.
 2. Load the extension: open `chrome://extensions`, enable Developer mode, click "Load unpacked", and select `packages/airmailai_ext/.output/chrome-mv3`.
 3. `bun run start:web` builds the website and serves it at `http://localhost:4173`, opening the app in your browser. Leave it running while you use AirmailAI. Re-run it after pulling updates.
+
+Local builds use the same ID as the store listing: `mpffonlfgjkbmgdnbpghihbgkmgnfhlo`. The website probes this ID directly to detect the extension and read its version. If needed, use a separate browser profile for local development to keep test chats and settings separate from your regular profile.
 
 ## Building
 

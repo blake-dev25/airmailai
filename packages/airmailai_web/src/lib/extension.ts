@@ -6,6 +6,7 @@ import type {
     AirmailAIChunk,
     DraftAttachment,
     DraftAttachmentMeta,
+    ExtensionProbeRequest,
     ExtensionStreamEvent,
     FileAvailability,
     FileDeleteTarget,
@@ -24,7 +25,7 @@ import type {
     TurnStartRequest,
     UserSettings,
 } from '@airmailai/shared';
-import { FILE_TRANSFER_CHUNK_BYTES } from '@airmailai/shared';
+import { EXTENSION_ID, FILE_TRANSFER_CHUNK_BYTES } from '@airmailai/shared';
 
 export interface StreamHandlers {
     onChunk: (chunk: AirmailAIChunk) => void;
@@ -50,17 +51,6 @@ let extensionId: string | null = null;
 let extensionVersion: string | null = null;
 let extensionVersionName: string | null = null;
 
-function readDomMarkers(): void {
-    const dataset = document.documentElement.dataset;
-    if (!dataset.airmailaiExtId) return;
-    extensionId = dataset.airmailaiExtId;
-    extensionVersion = dataset.airmailaiExtVersion ?? null;
-    extensionVersionName = dataset.airmailaiExtVersionName ?? null;
-}
-
-readDomMarkers();
-if (extensionId) log.info('extension ID from DOM marker', extensionId);
-
 export function getExtensionVersion(): {
     version: string | null;
     versionName: string | null;
@@ -68,51 +58,67 @@ export function getExtensionVersion(): {
     return { version: extensionVersion, versionName: extensionVersionName };
 }
 
-const EXTENSION_ID_PATTERN = /^[a-p]{32}$/;
+const DETECT_TIMEOUT_MS = 5000;
 
-window.addEventListener('message', (e: MessageEvent) => {
-    if (e.source !== window || e.origin !== window.location.origin) return;
-    if (extensionId) return;
-    if (
-        e.data?.type === 'AIRMAILAI_EXT_READY' &&
-        typeof e.data.id === 'string' &&
-        EXTENSION_ID_PATTERN.test(e.data.id)
-    ) {
-        extensionId = e.data.id;
-        if (typeof e.data.version === 'string')
-            extensionVersion = e.data.version;
-        if (typeof e.data.versionName === 'string')
-            extensionVersionName = e.data.versionName;
-        log.info('extension ID received', extensionId, extensionVersion);
-    }
-});
-
-const DETECT_TIMEOUT_MS = 1500;
-const DETECT_PING_INTERVAL_MS = 150;
-
-// *** TODO(static-id): once the extension is published to the Chrome Web Store its
-// ID is static. Replace this READY/PING handshake with a hardcoded extension
-// ID + direct chrome.runtime.sendMessage probe (which also wakes the service
-// worker), and delete the extension's content script. The probe response must
-// keep reporting the extension version and versionName.
 export function waitForExtension(): Promise<boolean> {
     if (extensionId) return Promise.resolve(true);
+    if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage)
+        return Promise.resolve(false);
     return new Promise((resolve) => {
-        const deadline = Date.now() + DETECT_TIMEOUT_MS;
-        const tick = () => {
-            readDomMarkers();
-            if (extensionId) {
-                resolve(true);
-                return;
-            }
-            if (Date.now() >= deadline) {
-                resolve(false);
-                return;
-            }
-            window.postMessage({ type: 'AIRMAILAI_EXT_PING' }, '*');
-            setTimeout(tick, DETECT_PING_INTERVAL_MS);
+        let settled = false;
+        const finish = (detected: boolean) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            resolve(detected);
         };
-        tick();
+        const timeout = setTimeout(() => {
+            log.error('extension probe timed out');
+            finish(false);
+        }, DETECT_TIMEOUT_MS);
+        try {
+            chrome.runtime.sendMessage(
+                EXTENSION_ID,
+                { type: 'get_extension_info' } satisfies ExtensionProbeRequest,
+                (response: unknown) => {
+                    const error = chrome.runtime.lastError;
+                    if (settled) return;
+                    if (error) {
+                        log.info('extension unavailable', error.message);
+                        finish(false);
+                        return;
+                    }
+                    if (
+                        !response ||
+                        typeof response !== 'object' ||
+                        !('type' in response) ||
+                        response.type !== 'extension_info' ||
+                        !('version' in response) ||
+                        typeof response.version !== 'string' ||
+                        !response.version ||
+                        !('versionName' in response) ||
+                        (response.versionName !== null &&
+                            typeof response.versionName !== 'string')
+                    ) {
+                        log.error('invalid extension probe response', response);
+                        finish(false);
+                        return;
+                    }
+                    extensionId = EXTENSION_ID;
+                    extensionVersion = response.version;
+                    extensionVersionName = response.versionName;
+                    log.info(
+                        'extension detected',
+                        extensionId,
+                        extensionVersion
+                    );
+                    finish(true);
+                }
+            );
+        } catch (error) {
+            log.error('extension probe failed', error);
+            finish(false);
+        }
     });
 }
 

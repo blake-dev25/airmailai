@@ -11,6 +11,7 @@ import {
 import { createHash } from 'node:crypto';
 import { appendFileSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { EXTENSION_ID } from '../../packages/shared/src/extension';
 import {
     CACHE_KEY as OPENROUTER_CACHE_KEY,
     CACHE_VERSION as OPENROUTER_CACHE_VERSION,
@@ -443,21 +444,22 @@ export class AirmailAI {
         request: unknown
     ): Promise<{ type: string; message?: string }> {
         return this.page.evaluate(
-            (storageRequest) =>
+            ({ extensionId, storageRequest }) =>
                 new Promise((resolve, reject) => {
-                    const extensionId =
-                        document.documentElement.dataset.airmailaiExtId;
-                    if (!extensionId) {
-                        reject(new Error('Extension ID unavailable'));
-                        return;
-                    }
                     chrome.runtime.sendMessage(
                         extensionId,
                         storageRequest,
-                        resolve
+                        (response) => {
+                            const error = chrome.runtime.lastError;
+                            if (error) {
+                                reject(new Error(error.message));
+                                return;
+                            }
+                            resolve(response);
+                        }
                     );
                 }),
-            request
+            { extensionId: EXTENSION_ID, storageRequest: request }
         );
     }
 

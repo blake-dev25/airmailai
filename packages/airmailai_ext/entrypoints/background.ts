@@ -1,4 +1,8 @@
-import type { StorageRequest } from '@airmailai/shared';
+import type {
+    ExtensionProbeRequest,
+    ExtensionProbeResponse,
+    StorageRequest,
+} from '@airmailai/shared';
 import { handleFileTransferPort } from '../background/file-transfer';
 import { handleBroadcastPort, queuePendingUpdate } from '../background/ports';
 import { dispatchStorage } from '../background/storage-handler';
@@ -22,8 +26,22 @@ export default defineBackground(() => {
     );
 
     chrome.runtime.onMessageExternal.addListener(
-        (message: StorageRequest, _sender, sendResponse) =>
-            dispatchStorage(message, sendResponse)
+        (
+            message: StorageRequest | ExtensionProbeRequest,
+            _sender,
+            sendResponse
+        ) => {
+            if (message.type === 'get_extension_info') {
+                const manifest = chrome.runtime.getManifest();
+                sendResponse({
+                    type: 'extension_info',
+                    version: manifest.version,
+                    versionName: manifest.version_name ?? null,
+                } satisfies ExtensionProbeResponse);
+                return;
+            }
+            return dispatchStorage(message, sendResponse);
+        }
     );
 
     chrome.runtime.onConnectExternal.addListener((port) => {

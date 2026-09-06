@@ -40,7 +40,6 @@ export default defineConfig({
         logLevel: verbose ? 'info' : 'error',
         define: {
             __LOG_LEVEL__: JSON.stringify(logLevel),
-            __ALLOW_LOCALHOST__: JSON.stringify(allowLocalhost),
         },
         build: {
             sourcemap: true,
@@ -58,6 +57,7 @@ export default defineConfig({
     },
     manifest: {
         name: 'AirmailAI',
+        key: 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvGicCBe+d6w23YQUu4U+3A5p9nan5Dj9x8KdTmmBYnbHQMBQrwUXQ4o2UBpZtkwq+Rya/yW6vsr4ld4c4M69NqtTnHUhBfQCx2i14HX4QDMVkgrqVPpxOqaPu45g3YQghy52Zmhe0g0O+kJvNPkoq87idzZJr312IllhqzF3j+HsegX2gljNKzk5DVAra4zFc78xsti8SyWgIqQGFHNmfvDgLbHlRd/mDbkCvUx9cm0l2TPSf1pfD+9pO8QOeD0DvxWC9tbS4wTtQpQeD4l3vNJeDnI2BDtp9WZzMU+JQEJ2cf+pBSSHZEZiwfd4T3IOsaTNFD4Pl6EW2dcgfJ0giQIDAQAB',
         description: 'The fast, secure, and private BYOK LLM chat app.',
         minimum_chrome_version: '140',
         icons: {

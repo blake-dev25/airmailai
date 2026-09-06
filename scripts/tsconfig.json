@@ -13,5 +13,5 @@
         "skipLibCheck": true,
         "moduleDetection": "force"
     },
-    "include": ["**/*.ts", "../packages/airmailai_ext/globals.d.ts"]
+    "include": ["**/*.ts"]
 }
