@@ -3,13 +3,13 @@ import { join } from 'node:path';
 import { parse } from 'opentype.js';
 import { Resvg } from '@resvg/resvg-js';
 
-const W = 1200;
+const DESIGN_WIDTH = 1200;
 const RED = '#c14227';
 const NAVY = '#26214d';
 const BEIGE = '#f0e1c3';
 
 const SIDEBAR_W = 256;
-const SCALE = W / SIDEBAR_W;
+const SCALE = DESIGN_WIDTH / SIDEBAR_W;
 const stripeH = 20 * SCALE;
 const stripeW = 40 * SCALE;
 const gap = 40 * SCALE;
@@ -27,7 +27,7 @@ const STATIC_DIR = join(
 );
 
 const startI = -Math.ceil(stripeH / pitch) - 1;
-const endI = Math.ceil(W / pitch) + 1;
+const endI = Math.ceil(DESIGN_WIDTH / pitch) + 1;
 const stripes = Array.from({ length: endI - startI + 1 }, (_, idx) => {
     const i = startI + idx;
     const x = i * pitch + phase;
@@ -79,22 +79,41 @@ function renderLockup(logoX: number, logoY: number, wordmarkColor: string) {
     <path d="${textPathData}" fill="${wordmarkColor}" />`;
 }
 
-function writeCard(H: number, name: string) {
-    const logoX = (W - lockupW) / 2;
-    const logoY = stripeH + (H - stripeH) / 2 - logoSize / 2;
+function writeCard(
+    width: number,
+    height: number,
+    name: string,
+    tagline?: string
+) {
+    const viewBoxHeight = (height * DESIGN_WIDTH) / width;
+    const taglineFontSize = 36;
+    const taglineGap = 36;
+    const taglinePath = tagline
+        ? font.getPath(tagline, 0, 0, taglineFontSize)
+        : undefined;
+    const taglineBounds = taglinePath?.getBoundingBox();
+    const taglineHeight = taglineBounds
+        ? taglineBounds.y2 - taglineBounds.y1
+        : 0;
+    const contentHeight = logoSize + (tagline ? taglineGap + taglineHeight : 0);
+    const logoX = (DESIGN_WIDTH - lockupW) / 2;
+    const logoY = stripeH + (viewBoxHeight - stripeH) / 2 - contentHeight / 2;
+    const taglineSvg =
+        taglinePath && taglineBounds
+            ? `<path d="${taglinePath.toPathData(2)}" fill="${NAVY}" transform="translate(${(DESIGN_WIDTH - taglineBounds.x2 - taglineBounds.x1) / 2} ${logoY + logoSize + taglineGap - taglineBounds.y1})" />`
+            : '';
 
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}">
-    <rect width="${W}" height="${H}" fill="${BEIGE}" />
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${DESIGN_WIDTH} ${viewBoxHeight}">
+    <rect width="${DESIGN_WIDTH}" height="${viewBoxHeight}" fill="${BEIGE}" />
     <g>
 ${stripePolygons}
     </g>
     ${renderLockup(logoX, logoY, NAVY)}
+    ${taglineSvg}
 </svg>
 `;
 
-    const png = new Resvg(svg, { fitTo: { mode: 'width', value: W } })
-        .render()
-        .asPng();
+    const png = new Resvg(svg).render().asPng();
     writeFileSync(join(STATIC_DIR, name), png);
     console.log(`wrote ${name} (${png.length} bytes)`);
 }
@@ -110,7 +129,15 @@ function writeLockupSvg(name: string, wordmarkColor: string) {
     console.log(`wrote ${name} (${svg.length} bytes)`);
 }
 
-writeCard(630, 'airmailai-og-1200x630.png');
-writeCard(400, 'airmailai-banner-1200x400.png');
+writeCard(1200, 630, 'airmailai-og-1200x630.png');
+writeCard(1200, 400, 'airmailai-banner-1200x400.png');
+writeCard(440, 280, 'airmailai-promo-small-440x280.png');
+writeCard(1400, 560, 'airmailai-promo-marquee-1400x560.png');
+writeCard(
+    1280,
+    800,
+    'airmailai-promo-1280x800.png',
+    'The fast, secure, and private BYOK LLM chat app.'
+);
 writeLockupSvg('airmailai-logo-wordmark.svg', '#000000');
 writeLockupSvg('airmailai-logo-wordmark-dark.svg', '#ffffff');
