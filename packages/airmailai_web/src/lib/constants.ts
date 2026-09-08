@@ -20,6 +20,9 @@ export {
 
 export const MIN_EXT_VERSION = '26.8.24.1';
 
+export const EXTENSION_STORE_URL =
+    'https://chromewebstore.google.com/detail/airmailai/mpffonlfgjkbmgdnbpghihbgkmgnfhlo';
+
 export const FONT_SIZES = [14, 16, 18, 20, 22, 24] as const;
 
 export const THEMES: ReadonlyArray<{ id: string; name: string }> = [

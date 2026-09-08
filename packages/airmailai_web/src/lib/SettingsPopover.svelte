@@ -1,8 +1,7 @@
 <script lang="ts">
     import type { StorageUsage } from '@airmailai/shared';
-    import { appLifecycle } from './appLifecycle.svelte';
     import { chatStore } from './chatStore.svelte';
-    import { PROVIDERS, THEMES } from './constants';
+    import { EXTENSION_STORE_URL, PROVIDERS, THEMES } from './constants';
     import { formatErr, reportAppError } from './errorStore.svelte';
     import { formatFileSize } from './files';
     import {
@@ -416,11 +415,6 @@
     const tdBase = 'py-2 px-3 text-fg align-middle';
 
     const lockedPanel = ['flex flex-col gap-5', demo && 'opacity-40'];
-
-    function openInstallPrompt() {
-        onclose();
-        appLifecycle.requestExtension();
-    }
 
     function onWindowKeydown(e: KeyboardEvent) {
         if (e.key === 'Escape') onclose();
@@ -1234,11 +1228,12 @@
 
 {#snippet demoNotice()}
     <p class="m-0 text-sm text-fg">
-        Faded settings require the <button
-            type="button"
-            class="inline-flex items-center gap-0.5 p-0 bg-transparent border-0 font-sans text-sm text-accent-fg cursor-pointer hover:underline"
-            onclick={openInstallPrompt}
-            >AirmailAI extension<Icon name="external-link" /></button
+        Faded settings require the <a
+            href={EXTENSION_STORE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex items-center gap-0.5 p-0 bg-transparent border-0 font-sans text-sm text-accent-fg no-underline cursor-pointer hover:underline"
+            >AirmailAI extension<Icon name="external-link" /></a
         >
     </p>
 {/snippet}

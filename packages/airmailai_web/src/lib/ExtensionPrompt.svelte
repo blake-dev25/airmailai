@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { EXTENSION_STORE_URL } from './constants';
     import Icon from './Icon.svelte';
 
     type Variant = 'no-extension' | 'unsupported-browser' | 'mobile';
@@ -33,6 +34,13 @@
             AirmailAI needs the browser extension to store your API keys and
             send requests. Install it, then reload this page.
         </p>
+        <a
+            href={EXTENSION_STORE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="mt-2 inline-flex items-center gap-1 rounded-md bg-accent-bg px-6 py-2 text-sm font-medium text-on-accent-bg no-underline transition-colors hover:bg-accent-bg-hover hover:text-on-accent-bg-hover"
+            >Install the extension<Icon name="external-link" /></a
+        >
         <button
             type="button"
             class="mt-2 cursor-pointer rounded-md border-0 bg-accent-bg px-6 py-2 text-sm font-medium text-on-accent-bg transition-colors hover:bg-accent-bg-hover hover:text-on-accent-bg-hover"

@@ -7,6 +7,7 @@
     import { SvelteSet } from 'svelte/reactivity';
     import { appLifecycle } from './appLifecycle.svelte';
     import { chatStore } from './chatStore.svelte';
+    import { EXTENSION_STORE_URL } from './constants';
     import { errorStore, reportAppError } from './errorStore.svelte';
     import { getFileStatuses } from './extension';
     import {
@@ -671,13 +672,15 @@
             {/if}
         </button>
         {#if chatStore.demoMode}
-            <button
-                type="button"
-                class="absolute top-0 right-4 h-11 flex items-center gap-1.25 px-2 bg-transparent border-0 font-sans text-xs font-medium text-accent-fg cursor-pointer rounded transition-[color,background-color] duration-150 hover:text-accent-fg-hover hover:underline"
+            <a
+                href={EXTENSION_STORE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="absolute top-0 right-4 h-11 flex items-center gap-1.25 px-2 bg-transparent border-0 font-sans text-xs font-medium text-accent-fg no-underline cursor-pointer rounded transition-[color,background-color] duration-150 hover:text-accent-fg-hover hover:underline"
             >
                 <span>Install the extension</span>
                 <Icon name="external-link" />
-            </button>
+            </a>
         {/if}
         {#if systemExpanded}
             <div class="px-4 pb-3">
