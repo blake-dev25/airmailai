@@ -125,7 +125,7 @@ test('model config persists across reload', async ({ airmailai }) => {
     await airmailai.page.reload();
     await expect(airmailai.composer()).toBeVisible();
 
-    await expect(airmailai.providerSelect()).toHaveValue('openai');
+    await expect(airmailai.providerSelect()).toHaveText('OpenAI');
     await expect(airmailai.modelTrigger()).toContainText(openai.chatName);
     await expect(airmailai.maxTokensBadge()).toHaveText('5');
 });

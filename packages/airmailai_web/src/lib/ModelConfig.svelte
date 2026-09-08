@@ -10,6 +10,7 @@
         visibleModelTier,
     } from './constants';
     import Icon from './Icon.svelte';
+    import Dropdown from './Dropdown.svelte';
     import ModelPicker, { type ModelGroup } from './ModelPicker.svelte';
     import { providersStore } from './providersStore.svelte';
     import { settingsStore } from './settingsStore.svelte';
@@ -226,8 +227,8 @@
         return level.charAt(0).toUpperCase() + level.slice(1);
     }
 
-    function onProviderChange(e: Event) {
-        settingsStore.providerId = (e.currentTarget as HTMLSelectElement).value;
+    function onProviderChange(id: string) {
+        settingsStore.providerId = id;
         const filtered = filteredProviders.find(
             (p) => p.id === settingsStore.providerId
         );
@@ -345,8 +346,6 @@
     const labelRowClass = 'flex items-center justify-between';
     const valueBadgeClass =
         'text-xs font-semibold text-accent-3-fg [font-variant-numeric:tabular-nums] bg-[color-mix(in_srgb,var(--color-accent-3-bg)_12%,transparent)] px-[7px] py-0.5 rounded cursor-text outline-none min-w-[1ch]';
-    const selectClass =
-        'w-full pl-2.5 pr-8 py-[9px] appearance-none bg-canvas border border-border rounded-lg text-fg font-sans text-sm cursor-pointer box-border transition-[border-color] duration-150 focus:outline-none focus:border-accent-3-fg';
     const rangeClass =
         'range-styled appearance-none w-full h-1 bg-surface-raised border-0 rounded p-0 cursor-pointer outline-none';
     const rangeHintsClass =
@@ -372,21 +371,15 @@
     <div class="px-4 py-5 flex flex-col gap-5.5">
         <div class={fieldClass}>
             <label for="provider" class={labelClass}>Provider</label>
-            <div class="relative">
-                <select
-                    id="provider"
-                    class={selectClass}
-                    value={settingsStore.providerId}
-                    onchange={onProviderChange}
-                >
-                    {#if appLifecycle.initialized}
-                        {#each providerOptions as provider (provider.id)}
-                            <option value={provider.id}>{provider.name}</option>
-                        {/each}
-                    {/if}
-                </select>
-                <Icon name="chevron-down" size={12} class="select-arrow" />
-            </div>
+            <Dropdown
+                id="provider"
+                options={appLifecycle.initialized ? providerOptions : []}
+                value={settingsStore.providerId}
+                onchange={onProviderChange}
+                disabled={!appLifecycle.initialized}
+                emptyLabel="Loading providers..."
+                fullWidth
+            />
         </div>
 
         <div class={fieldClass}>
@@ -780,14 +773,3 @@
         <Stripes width={272} shift={-8} />
     {/if}
 </aside>
-
-<style>
-    :global(.select-arrow) {
-        position: absolute;
-        right: 10px;
-        top: 50%;
-        transform: translateY(-50%);
-        pointer-events: none;
-        color: var(--color-fg);
-    }
-</style>

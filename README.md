@@ -19,14 +19,14 @@ AirmailAI is a fast, secure, and private bring-your-own-keys LLM chat app.
 
 AirmailAI is two pieces:
 
-- **Website** ([packages/airmailai_web](packages/airmailai_web)) - the chat UI, which is hosted at [airmailai.net](https://airmailai.net).
+- **Website** ([packages/airmailai_web](packages/airmailai_web)) - the chat UI, which is also hosted at [airmailai.net/app/](https://airmailai.net/app/).
 - **Browser Extension** ([packages/airmailai_ext](packages/airmailai_ext)) - stores your API keys, settings, and chat history locally, and makes the provider API calls.
 
 For more details including how AirmailAI handles your data, see the [FAQ](https://airmailai.net/faq/) and [Design & Security](https://airmailai.net/design-security/) pages.
 
 ## Getting started
 
-1. Install the browser extension (TODO: CWS link). Works on any Chromium-based browser like Chrome, Edge, or Brave.
+1. Install the [browser extension](https://chromewebstore.google.com/detail/airmailai/mpffonlfgjkbmgdnbpghihbgkmgnfhlo). Works on any Chromium-based browser like Chrome, Edge, or Brave.
 2. Open [airmailai.net/app](https://airmailai.net/app/).
 3. Add API keys for the providers you want to use and start chatting.
 

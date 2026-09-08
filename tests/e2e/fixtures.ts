@@ -220,7 +220,7 @@ export class AirmailAI {
         return this.page.getByLabel('Provider');
     }
     modelTrigger() {
-        return this.page.locator('button[aria-haspopup="listbox"]');
+        return this.page.getByLabel('Model', { exact: true });
     }
     appError() {
         return this.page.getByRole('alert');
@@ -255,14 +255,15 @@ export class AirmailAI {
     }
 
     async setProvider(name: string): Promise<void> {
-        await this.providerSelect().selectOption({ label: name });
+        await this.providerSelect().click();
+        await this.page.getByRole('option', { name, exact: true }).click();
     }
 
     async setModelById(id: string): Promise<void> {
         await this.modelTrigger().click();
         const search = this.modelSearch();
         if (await search.isVisible().catch(() => false)) await search.fill(id);
-        await this.page.locator(`[data-model-id="${id}"]`).click();
+        await this.page.locator(`[data-option-id="${id}"]`).click();
     }
 
     async waitForOpenRouterCatalog(): Promise<void> {

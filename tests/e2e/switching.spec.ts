@@ -10,10 +10,10 @@ test('switching provider repopulates the model list', async ({ airmailai }) => {
     await airmailai.modelTrigger().click();
 
     await expect(
-        airmailai.page.locator(`[data-model-id="${openai.chat}"]`)
+        airmailai.page.locator(`[data-option-id="${openai.chat}"]`)
     ).toBeVisible();
     await expect(
-        airmailai.page.locator(`[data-model-id="${anthropic.chat}"]`)
+        airmailai.page.locator(`[data-option-id="${anthropic.chat}"]`)
     ).toHaveCount(0);
 });
 

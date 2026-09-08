@@ -16,6 +16,7 @@
         waitForExtension,
     } from './extension';
     import Icon from './Icon.svelte';
+    import Dropdown from './Dropdown.svelte';
     import MarkdownMessage from './MarkdownMessage.svelte';
     import { providersStore } from './providersStore.svelte';
     import { settingsStore } from './settingsStore.svelte';
@@ -406,9 +407,6 @@
 
     const labelClass = 'text-sm text-fg font-medium';
 
-    const selectClass =
-        'w-auto px-2.5 py-[7px] bg-surface-raised border border-border rounded-md text-sm text-fg cursor-pointer';
-
     const rangeClass =
         'range-styled appearance-none w-full h-1 bg-surface-raised border-0 rounded p-0 cursor-pointer outline-none';
 
@@ -651,32 +649,31 @@
         >
             <div class={[rowBase, themeRow]}>
                 <label for="theme-select" class={labelClass}>Theme</label>
-                <select
+                <Dropdown
                     id="theme-select"
-                    class={selectClass}
                     bind:value={settingsStore.theme}
-                >
-                    {#each THEMES as t (t.id)}
-                        <option value={t.id}>{t.name}</option>
-                    {/each}
-                </select>
+                    options={THEMES}
+                />
             </div>
             <div class={[rowBase, themeRow]}>
                 <label for="message-font" class={labelClass}>Message Font</label
                 >
-                <select
+                <Dropdown
                     id="message-font"
-                    class={selectClass}
-                    style="font-family: var(--font-message)"
                     bind:value={settingsStore.messageFont}
-                >
-                    <option value="serif" style="font-family: var(--font-serif)"
-                        >Serif</option
-                    >
-                    <option value="sans" style="font-family: var(--font-sans)"
-                        >Sans</option
-                    >
-                </select>
+                    options={[
+                        {
+                            id: 'serif',
+                            name: 'Serif',
+                            fontFamily: 'var(--font-serif)',
+                        },
+                        {
+                            id: 'sans',
+                            name: 'Sans',
+                            fontFamily: 'var(--font-sans)',
+                        },
+                    ]}
+                />
             </div>
             <div class={rowBase}>
                 <label for="font-size" class={labelClass}>Text Size</label>
@@ -718,30 +715,31 @@
                 <label for="submit-keystroke" class={labelClass}
                     >Submit Keystroke</label
                 >
-                <select
+                <Dropdown
                     id="submit-keystroke"
-                    class={selectClass}
                     bind:value={settingsStore.submitKeystroke}
-                >
-                    <option value="enter">Enter</option>
-                    <option value="ctrl+enter">Control+Enter</option>
-                </select>
+                    options={[
+                        { id: 'enter', name: 'Enter' },
+                        { id: 'ctrl+enter', name: 'Control+Enter' },
+                    ]}
+                />
             </div>
             <div class={[rowBase, themeRow]}>
                 <label for="autoscroll-mode" class={labelClass}
                     >Autoscroll Mode</label
                 >
-                <select
+                <Dropdown
                     id="autoscroll-mode"
-                    class={selectClass}
                     bind:value={settingsStore.autoscrollMode}
-                >
-                    <option value="pin-user-message"
-                        >Scroll to user message</option
-                    >
-                    <option value="pin-bottom">Scroll to bottom</option>
-                    <option value="off">Off</option>
-                </select>
+                    options={[
+                        {
+                            id: 'pin-user-message',
+                            name: 'Scroll to user message',
+                        },
+                        { id: 'pin-bottom', name: 'Scroll to bottom' },
+                        { id: 'off', name: 'Off' },
+                    ]}
+                />
             </div>
             <div class={[rowBase, themeRow]}>
                 <label for="show-previous" class={labelClass}
@@ -1038,29 +1036,30 @@
                         SMOOTH_TEXT_INFO
                     )}
                 </div>
-                <select
+                <Dropdown
                     id="smooth-text-mode"
-                    class={selectClass}
                     bind:value={settingsStore.smoothTextMode}
-                >
-                    <option value="smooth">Smooth rendering</option>
-                    <option value="raw"
-                        >Render text chunks as streamed from API</option
-                    >
-                </select>
+                    options={[
+                        { id: 'smooth', name: 'Smooth rendering' },
+                        {
+                            id: 'raw',
+                            name: 'Render text chunks as streamed from API',
+                        },
+                    ]}
+                />
             </div>
             <div class={[rowBase, themeRow]}>
                 <label for="chat-sort-order" class={labelClass}
                     >Sort Chats By</label
                 >
-                <select
+                <Dropdown
                     id="chat-sort-order"
-                    class={selectClass}
                     bind:value={settingsStore.chatSortOrder}
-                >
-                    <option value="modified">Last updated</option>
-                    <option value="created">Date created</option>
-                </select>
+                    options={[
+                        { id: 'modified', name: 'Last updated' },
+                        { id: 'created', name: 'Date created' },
+                    ]}
+                />
             </div>
             <div class={[rowBase, themeRow]}>
                 <label for="show-legacy" class={labelClass}
@@ -1084,15 +1083,15 @@
                 <label for="show-branding" class={labelClass}
                     >Show Branding</label
                 >
-                <select
+                <Dropdown
                     id="show-branding"
-                    class={selectClass}
                     bind:value={settingsStore.brandingMode}
-                >
-                    <option value="on">On</option>
-                    <option value="stripes">Show stripes</option>
-                    <option value="off">Off</option>
-                </select>
+                    options={[
+                        { id: 'on', name: 'On' },
+                        { id: 'stripes', name: 'Show stripes' },
+                        { id: 'off', name: 'Off' },
+                    ]}
+                />
             </div>
             <div class={[rowBase, themeRow]}>
                 <label for="tag-openrouter" class={labelClass}
@@ -1172,20 +1171,22 @@
                         true
                     )}
                 </div>
-                <select
+                <Dropdown
                     id="openrouter-pdf-engine"
-                    class={selectClass}
                     bind:value={settingsStore.openRouterPdfEngine}
-                >
-                    <option value="native">Provider native only</option>
-                    <option value="auto"
-                        >Provider native preferred, Cloudflare fallback</option
-                    >
-                    <option value="cloudflare-ai"
-                        >Cloudflare processing only</option
-                    >
-                    <option value="mistral-ocr">Mistral-OCR (paid)</option>
-                </select>
+                    options={[
+                        { id: 'native', name: 'Provider native only' },
+                        {
+                            id: 'auto',
+                            name: 'Provider native preferred, Cloudflare fallback',
+                        },
+                        {
+                            id: 'cloudflare-ai',
+                            name: 'Cloudflare processing only',
+                        },
+                        { id: 'mistral-ocr', name: 'Mistral-OCR (paid)' },
+                    ]}
+                />
             </div>
             <p class="m-0 mt-auto pt-2 text-xs text-fg-muted text-center">
                 AirmailAI is made possible by <a

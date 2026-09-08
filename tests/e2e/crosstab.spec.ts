@@ -10,7 +10,9 @@ test('a turn sent in one tab appears in another tab', async ({
     const page2 = await context.newPage();
     const second = new AirmailAI(page2, serviceWorker);
     await second.goto();
-    await expect(second.providerSelect().locator('option')).toHaveCount(4);
+    await second.providerSelect().click();
+    await expect(second.page.getByRole('option')).toHaveCount(4);
+    await second.page.getByRole('listbox').press('Escape');
 
     await airmailai.send('Say the word pineapple and nothing else.');
 

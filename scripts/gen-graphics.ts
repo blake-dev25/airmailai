@@ -83,7 +83,8 @@ function writeCard(
     width: number,
     height: number,
     name: string,
-    tagline?: string
+    tagline?: string,
+    showLockup = true
 ) {
     const viewBoxHeight = (height * DESIGN_WIDTH) / width;
     const taglineFontSize = 36;
@@ -108,7 +109,7 @@ function writeCard(
     <g>
 ${stripePolygons}
     </g>
-    ${renderLockup(logoX, logoY, NAVY)}
+    ${showLockup ? renderLockup(logoX, logoY, NAVY) : ''}
     ${taglineSvg}
 </svg>
 `;
@@ -131,6 +132,7 @@ function writeLockupSvg(name: string, wordmarkColor: string) {
 
 writeCard(1200, 630, 'airmailai-og-1200x630.png');
 writeCard(1200, 400, 'airmailai-banner-1200x400.png');
+writeCard(1500, 500, 'airmailai-banner-1500x500.png', undefined, false);
 writeCard(440, 280, 'airmailai-promo-small-440x280.png');
 writeCard(1400, 560, 'airmailai-promo-marquee-1400x560.png');
 writeCard(
