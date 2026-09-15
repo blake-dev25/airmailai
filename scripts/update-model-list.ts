@@ -387,6 +387,7 @@ async function main(): Promise<void> {
     let googleResult: GooglePipelineResult | undefined;
 
     if (RUN_ANTHROPIC) {
+        console.log();
         anthropic = await fetchAnthropic(docsCache, probeCache);
         if (VERBOSE) {
             printAnthropicSummary('Anthropic', anthropic);
@@ -404,6 +405,7 @@ async function main(): Promise<void> {
     }
 
     if (RUN_OPENAI) {
+        console.log();
         openaiResult = await pipelineOpenAI(openrouter!, docsCache, probeCache);
         if (VERBOSE) {
             printOpenAIPipeline(openaiResult);
@@ -423,8 +425,15 @@ async function main(): Promise<void> {
     }
 
     if (RUN_GOOGLE) {
+        console.log();
         googleResult = await pipelineGoogle(openrouter!, docsCache, probeCache);
-        printGooglePipeline(googleResult, VERBOSE);
+        if (VERBOSE) {
+            printGooglePipeline(googleResult);
+        } else {
+            console.log(
+                `Got ${googleResult.models.length} models from Google (${googleResult.skipped.length} skipped)`
+            );
+        }
         printGoogleWarnings(googleResult);
 
         await writeSnapshot('google', 'Google', googleResult.models);

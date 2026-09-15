@@ -2,6 +2,7 @@ import type { StorageRequest, StorageResponse } from '@airmailai/shared';
 import { CACHE_KEY } from '../../openrouter-models';
 
 const statusEl = document.getElementById('status')!;
+const btnOpenApp = document.getElementById('btn-open-app') as HTMLButtonElement;
 const btnExport = document.getElementById(
     'btn-export-openrouter'
 ) as HTMLButtonElement;
@@ -22,6 +23,21 @@ function setLoading(loading: boolean) {
     btnClearChats.disabled = loading;
     btnClearAll.disabled = loading;
 }
+
+btnOpenApp.addEventListener('click', async () => {
+    btnOpenApp.disabled = true;
+    setStatus('');
+    try {
+        await chrome.windows.create({ url: 'https://airmailai.net/app/' });
+    } catch (error) {
+        setStatus(
+            error instanceof Error ? error.message : 'Could not open the app.',
+            true
+        );
+    } finally {
+        btnOpenApp.disabled = false;
+    }
+});
 
 btnExport.addEventListener('click', async () => {
     setStatus('');

@@ -14,7 +14,7 @@
             }
 
             body {
-                width: 220px;
+                width: 256px;
                 background: #f0e1c3;
                 color: #26214d;
                 font-family: system-ui, sans-serif;
@@ -24,16 +24,21 @@
             .header {
                 display: flex;
                 align-items: center;
+                justify-content: center;
                 gap: 8px;
                 padding: 14px 14px 12px;
                 border-bottom: 1px solid #d4bc87;
             }
 
             .logo {
-                font-family: Courier, monospace;
-                font-size: 18px;
+                font-family: Georgia, Gelasio, serif;
+                font-size: 34px;
                 font-weight: 600;
                 letter-spacing: -0.02em;
+            }
+
+            .logo-icon {
+                transform: translateY(-0.8px);
             }
 
             .actions {
@@ -92,9 +97,19 @@
     </head>
     <body>
         <div class="header">
+            <img
+                class="logo-icon"
+                src="/icon-128.png"
+                width="44"
+                height="44"
+                alt=""
+            />
             <span class="logo">AirmailAI</span>
         </div>
         <div class="actions">
+            <button class="btn" id="btn-open-app" type="button">
+                Open app
+            </button>
             <button class="btn" id="btn-export-openrouter" type="button">
                 Export OpenRouter model list
             </button>

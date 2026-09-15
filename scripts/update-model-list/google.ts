@@ -468,10 +468,7 @@ export async function pipelineGoogle(
     return { raw, models, skipped, needsLevels, missingCutoff, grandfathered };
 }
 
-export function printGooglePipeline(
-    r: GooglePipelineResult,
-    verbose: boolean
-): void {
+export function printGooglePipeline(r: GooglePipelineResult): void {
     console.log(
         `\n=== Google - ${r.models.length} chat models (${r.skipped.length} skipped) ===`
     );
@@ -482,7 +479,7 @@ export function printGooglePipeline(
             showNotes: true,
         });
     }
-    if (verbose && r.skipped.length > 0) {
+    if (r.skipped.length > 0) {
         console.log(`\n   ${r.skipped.length} skipped:`);
         for (const s of r.skipped) console.log(`   - ${s.id} - ${s.reason}`);
     }

@@ -384,9 +384,9 @@
         {#if showKeyPrompt}
             <button
                 type="button"
-                class="key-prompt absolute bottom-full left-3 right-3 mb-2.5 px-3 py-2.5 bg-accent-bg text-on-accent-bg border-0 rounded-lg text-sm font-medium text-left cursor-pointer z-20 shadow-[0_4px_16px_rgba(0,0,0,0.18)] animate-fade-up hover:underline"
+                class="key-prompt absolute bottom-full left-3 right-3 mb-2.5 px-3 py-2.5 bg-accent-bg text-on-accent-bg border-0 rounded-lg text-sm font-medium text-center z-20 shadow-[0_4px_16px_rgba(0,0,0,0.18)] animate-fade-up"
             >
-                Add an API key here to get started
+                Add an API key here to<br />get started
             </button>
         {/if}
         <button
