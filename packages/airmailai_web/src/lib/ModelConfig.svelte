@@ -12,6 +12,7 @@
     import Icon from './Icon.svelte';
     import Dropdown from './Dropdown.svelte';
     import ModelPicker, { type ModelGroup } from './ModelPicker.svelte';
+    import CustomModelConfig from './CustomModelConfig.svelte';
     import { providersStore } from './providersStore.svelte';
     import { settingsStore } from './settingsStore.svelte';
     import Stripes from './Stripes.svelte';
@@ -30,6 +31,7 @@
     );
 
     let providerOptions = $derived.by(() => {
+        if (settingsStore.customModel) return providersStore.providers;
         const out = [...filteredProviders];
         if (!out.find((p) => p.id === settingsStore.providerId)) {
             const stored = providersStore.providers.find(
@@ -201,8 +203,11 @@
         ) ?? providersStore.providers[0]
     );
     let currentModel = $derived<ModelOption | undefined>(
-        currentProvider.models.find((m) => m.id === settingsStore.modelId) ??
-            currentProvider.models[0]
+        settingsStore.customModel
+            ? undefined
+            : (currentProvider.models.find(
+                  (m) => m.id === settingsStore.modelId
+              ) ?? currentProvider.models[0])
     );
     let thinkingConfig = $derived(currentModel?.params.thinking);
     let thinkingIndex = $derived(
@@ -229,6 +234,10 @@
 
     function onProviderChange(id: string) {
         settingsStore.providerId = id;
+        if (settingsStore.customModel) {
+            settingsStore.setCustomModelEnabled(true);
+            return;
+        }
         const filtered = filteredProviders.find(
             (p) => p.id === settingsStore.providerId
         );
@@ -382,16 +391,20 @@
             />
         </div>
 
-        <div class={fieldClass}>
-            <label for="model" class={labelClass}>Model</label>
-            <ModelPicker
-                groups={modelGroups}
-                bind:value={settingsStore.modelId}
-                onchange={onModelChange}
-                disabled={!appLifecycle.initialized}
-                emptyLabel={modelPickerEmptyLabel}
-            />
-        </div>
+        {#if settingsStore.customModel}
+            <CustomModelConfig config={settingsStore.customModel} />
+        {:else}
+            <div class={fieldClass}>
+                <label for="model" class={labelClass}>Model</label>
+                <ModelPicker
+                    groups={modelGroups}
+                    bind:value={settingsStore.modelId}
+                    onchange={onModelChange}
+                    disabled={!appLifecycle.initialized}
+                    emptyLabel={modelPickerEmptyLabel}
+                />
+            </div>
+        {/if}
 
         {#if appLifecycle.initialized && currentModel}
             {#if currentModel.params.temperatureMax !== undefined}
@@ -707,58 +720,63 @@
         {/if}
     </div>
 
-    <div class="border-t border-border mt-auto">
-        <div class="pt-4.5 px-4">
-            <h2
-                class="m-0 text-sm font-semibold text-fg uppercase tracking-widest"
-            >
-                Model Details
-            </h2>
-        </div>
-        <div class="p-4 flex flex-col gap-3">
-            <div class={detailRowClass}>
-                <span class={detailLabelClass}>Context Window</span>
-                <span
-                    class={[
-                        detailValueClass,
-                        contextNearLimit &&
-                            'text-accent-fg! inline-flex items-center gap-1',
-                    ]}
-                    data-testid="context-window-usage"
-                    title={contextNearLimit
-                        ? "This conversation is approaching the model's context limit."
-                        : undefined}
+    {#if !settingsStore.customModel}
+        <div class="border-t border-border mt-auto">
+            <div class="pt-4.5 px-4">
+                <h2
+                    class="m-0 text-sm font-semibold text-fg uppercase tracking-widest"
                 >
-                    {#if !appLifecycle.initialized || !currentModel}
-                        &nbsp;
-                    {:else if contextUsed !== null}
-                        {contextUsed.toLocaleString()} / {currentModel.params.contextWindow.toLocaleString()}
-                        {#if contextNearLimit}
-                            <Icon name="circle-alert" size={12} />
-                        {/if}
-                    {:else}
-                        {currentModel.params.contextWindow.toLocaleString()}
-                    {/if}
-                </span>
+                    Model Details
+                </h2>
             </div>
-            {#if !appLifecycle.initialized || !currentModel || currentModel.params.knowledgeCutoff}
+            <div class="p-4 flex flex-col gap-3">
                 <div class={detailRowClass}>
-                    <span class={detailLabelClass}>Knowledge Cutoff</span>
-                    <span class={detailValueClass}>
-                        {#if appLifecycle.initialized && currentModel}
-                            {currentModel.params.knowledgeCutoff}
-                        {:else}
+                    <span class={detailLabelClass}>Context Window</span>
+                    <span
+                        class={[
+                            detailValueClass,
+                            contextNearLimit &&
+                                'text-accent-fg! inline-flex items-center gap-1',
+                        ]}
+                        data-testid="context-window-usage"
+                        title={contextNearLimit
+                            ? "This conversation is approaching the model's context limit."
+                            : undefined}
+                    >
+                        {#if !appLifecycle.initialized || !currentModel}
                             &nbsp;
+                        {:else if contextUsed !== null}
+                            {contextUsed.toLocaleString()} / {currentModel.params.contextWindow.toLocaleString()}
+                            {#if contextNearLimit}
+                                <Icon name="circle-alert" size={12} />
+                            {/if}
+                        {:else}
+                            {currentModel.params.contextWindow.toLocaleString()}
                         {/if}
                     </span>
                 </div>
-            {/if}
+                {#if !appLifecycle.initialized || !currentModel || currentModel.params.knowledgeCutoff}
+                    <div class={detailRowClass}>
+                        <span class={detailLabelClass}>Knowledge Cutoff</span>
+                        <span class={detailValueClass}>
+                            {#if appLifecycle.initialized && currentModel}
+                                {currentModel.params.knowledgeCutoff}
+                            {:else}
+                                &nbsp;
+                            {/if}
+                        </span>
+                    </div>
+                {/if}
+            </div>
         </div>
-    </div>
+    {/if}
 
     {#if settingsStore.brandingMode === 'on'}
         <div
-            class="py-2 text-[12px] text-fg opacity-40 text-center border-t border-border"
+            class={[
+                'py-2 text-[12px] text-fg opacity-40 text-center border-t border-border',
+                settingsStore.customModel && 'mt-auto',
+            ]}
         >
             Made with &lt;3 by <a
                 href="https://x.com/blake__dev"

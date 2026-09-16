@@ -58,6 +58,12 @@ export {
 } from './assemble';
 export { getMimeTypeFromFilename } from './mime';
 export {
+    type CustomModelConfig,
+    MAX_CUSTOM_MODEL_FIELD_CHARS,
+    emptyCustomModelConfig,
+    isCustomModelConfig,
+} from './custom-model';
+export {
     EXTENSION_ID,
     type ExtensionProbeRequest,
     type ExtensionProbeResponse,

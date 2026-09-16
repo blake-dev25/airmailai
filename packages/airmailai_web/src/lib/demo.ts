@@ -1,7 +1,8 @@
-import type { AirmailAIMessage } from '@airmailai/shared';
+import type { AirmailAIMessage, CustomModelConfig } from '@airmailai/shared';
 import type { Chat } from './types';
 
 interface DemoConfig {
+    customModel: CustomModelConfig | null;
     providerId: string;
     modelId: string;
     temperature: number;

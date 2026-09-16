@@ -617,9 +617,15 @@ export const test = base.extend<AirmailAIOptions & AirmailAIFixtures>({
             const file = info.outputPath('console-warnings.log');
             const block = lines.join('\n') + '\n';
             appendFileSync(file, block);
-            process.stderr.write(
-                `\nConsole warnings - ${info.title}:\n${block}`
-            );
+            await info.attach('console-warnings', {
+                path: file,
+                contentType: 'text/plain',
+            });
+            if (info.status === 'failed' || info.status === 'timedOut') {
+                process.stderr.write(
+                    `\nConsole warnings - ${info.title}:\n${block}`
+                );
+            }
         },
         { auto: true },
     ],

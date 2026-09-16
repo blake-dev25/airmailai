@@ -26,6 +26,7 @@ import type {
     UserSettings,
 } from '@airmailai/shared';
 import { EXTENSION_ID, FILE_TRANSFER_CHUNK_BYTES } from '@airmailai/shared';
+import { validateSettingsForStorage } from './settingsValidation';
 
 export interface StreamHandlers {
     onChunk: (chunk: AirmailAIChunk) => void;
@@ -257,6 +258,7 @@ export async function testApiKey(
 export async function saveSettings(
     settings: Partial<UserSettings>
 ): Promise<void> {
+    validateSettingsForStorage(settings);
     await sendStorageMessage({ type: 'save_settings', settings });
 }
 

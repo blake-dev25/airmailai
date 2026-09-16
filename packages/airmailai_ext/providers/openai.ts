@@ -9,7 +9,7 @@ import {
     type ResolvedAttachment,
     resolveAttachments,
 } from './attachments';
-import { makeDebugFetch } from './debug-fetch';
+import { makeModelFetch } from './custom-model';
 import { foldReplayIntoText } from './fold-replay';
 import { decodeBase64Text } from '../storage/encoding';
 
@@ -139,7 +139,7 @@ export async function* streamOpenAI(
     const client = new OpenAI({
         apiKey: args.apiKey,
         dangerouslyAllowBrowser: true,
-        fetch: makeDebugFetch('openai'),
+        fetch: makeModelFetch('openai', args),
     });
 
     const effort = toEffort(args.params.thinkingLevel as string | undefined);

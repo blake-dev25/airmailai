@@ -5,7 +5,7 @@
         "moduleResolution": "bundler",
         "strict": true,
         "skipLibCheck": true,
-        "types": ["node", "chrome"],
+        "types": ["node", "chrome", "bun"],
         "noEmit": true
     },
     "include": ["playwright.config.ts", "tests/**/*.ts"]

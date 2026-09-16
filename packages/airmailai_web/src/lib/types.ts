@@ -1,8 +1,13 @@
-import type { AirmailAIMessage, DraftAttachment } from '@airmailai/shared';
+import type {
+    AirmailAIMessage,
+    DraftAttachment,
+    CustomModelConfig,
+} from '@airmailai/shared';
 
 export type Message = AirmailAIMessage;
 
 export interface Chat {
+    customModel: CustomModelConfig | null;
     id: string;
     title: string;
     messages: AirmailAIMessage[];

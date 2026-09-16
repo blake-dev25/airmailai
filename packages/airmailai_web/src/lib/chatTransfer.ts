@@ -1,9 +1,17 @@
-import type { AirmailAIMessage } from '@airmailai/shared';
+import {
+    type AirmailAIMessage,
+    type CustomModelConfig,
+} from '@airmailai/shared';
 import { messageText } from './types';
+import {
+    validateCustomModelConfig,
+    validateModelIdLength,
+} from './settingsValidation';
 
 export type ChatExportFormat = 'md' | 'airmailai' | 'lmstudio' | 'sillytavern';
 
 export interface TransferChatInfo {
+    customModel: CustomModelConfig | null;
     title: string;
     createdAt: number;
     systemPrompt: string;
@@ -22,6 +30,7 @@ export interface ImportedMessage {
 }
 
 export interface ImportedChat {
+    customModel?: CustomModelConfig;
     title: string;
     createdAt: number;
     systemPrompt: string;
@@ -186,6 +195,7 @@ function airmailaiChatJson(
     messages: AirmailAIMessage[]
 ): Record<string, unknown> {
     return {
+        customModel: info.customModel,
         title: info.title,
         createdAt: info.createdAt,
         model: `${info.providerId}/${info.modelId}`,
@@ -550,8 +560,18 @@ function parseConversation(value: unknown): ImportedChat {
         typeof value.systemPrompt === 'string'
             ? value.systemPrompt.slice(0, MAX_SYSTEM_PROMPT_CHARS)
             : '';
+    const customModel = value.customModel;
+    if (customModel != null) {
+        validateCustomModelConfig(customModel);
+    }
     let model: string | null =
-        cleanInline(value.model, MAX_MODEL_CHARS) || null;
+        customModel && typeof value.model === 'string'
+            ? value.model
+            : cleanInline(value.model, MAX_MODEL_CHARS) || null;
+    if (customModel && model) {
+        const slash = model.indexOf('/');
+        validateModelIdLength(slash < 0 ? model : model.slice(slash + 1));
+    }
     const messages: ImportedMessage[] = [];
 
     for (const entry of rawMessages) {
@@ -608,5 +628,12 @@ function parseConversation(value: unknown): ImportedChat {
     }
 
     if (messages.length === 0) throw new Error('no messages found');
-    return { title, createdAt, systemPrompt, model, messages };
+    return {
+        title,
+        createdAt,
+        systemPrompt,
+        model,
+        messages,
+        ...(customModel ? { customModel } : {}),
+    };
 }

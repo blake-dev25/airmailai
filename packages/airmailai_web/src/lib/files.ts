@@ -341,14 +341,18 @@ function toProviderId(providerId: string): FileProviderId {
 
 export interface FilePolicyOptions {
     openRouterPdfEngine?: string;
+    customModel?: boolean;
 }
 
 function getOpenRouterMimeTypes(
     model: FilePolicyModel | null | undefined,
-    pdfEngine: string | undefined
+    pdfEngine: string | undefined,
+    customModel: boolean | undefined
 ): Set<string> {
     const mimeTypes = new Set<string>(['text/plain']);
-    for (const modality of model?.inputModalities ?? []) {
+    for (const modality of customModel
+        ? Object.keys(OPENROUTER_MIME_TYPES_BY_MODALITY)
+        : (model?.inputModalities ?? [])) {
         const supported = OPENROUTER_MIME_TYPES_BY_MODALITY[modality];
         if (!supported) continue;
         for (const mimeType of supported) mimeTypes.add(mimeType);
@@ -371,17 +375,21 @@ export function getFilePolicy(
               ...FILE_POLICIES.openrouter,
               mimeTypes: getOpenRouterMimeTypes(
                   model,
-                  opts.openRouterPdfEngine
+                  opts.openRouterPdfEngine,
+                  opts.customModel
               ),
           };
 }
 
 function getAcceptForOpenRouterModel(
     model: FilePolicyModel | null | undefined,
-    pdfEngine: string | undefined
+    pdfEngine: string | undefined,
+    customModel: boolean | undefined
 ): readonly string[] {
     const extensions = new Set<string>(['.md', '.txt']);
-    for (const modality of model?.inputModalities ?? []) {
+    for (const modality of customModel
+        ? Object.keys(OPENROUTER_ACCEPT_EXTENSIONS_BY_MODALITY)
+        : (model?.inputModalities ?? [])) {
         const supported = OPENROUTER_ACCEPT_EXTENSIONS_BY_MODALITY[modality];
         if (!supported) continue;
         for (const extension of supported) extensions.add(extension);
@@ -404,7 +412,11 @@ export function getAcceptForProvider(
     const id = toProviderId(providerId);
     if (id === 'openrouter') {
         return toAcceptString(
-            getAcceptForOpenRouterModel(model, opts.openRouterPdfEngine)
+            getAcceptForOpenRouterModel(
+                model,
+                opts.openRouterPdfEngine,
+                opts.customModel
+            )
         );
     }
 

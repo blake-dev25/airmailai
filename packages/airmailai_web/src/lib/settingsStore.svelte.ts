@@ -1,5 +1,8 @@
 import {
     SETTINGS_KEYS,
+    emptyCustomModelConfig,
+    isCustomModelConfig,
+    type CustomModelConfig,
     type BrandingMode,
     type UserSettings,
 } from '@airmailai/shared';
@@ -19,12 +22,11 @@ import {
 } from './extension';
 
 import { log } from './log';
-
-function saveToExt(snapshot: Partial<UserSettings>): void {
-    saveToExtRaw(snapshot).catch((err) => {
-        reportAppError('settings save failed', "Couldn't save settings", err);
-    });
-}
+import {
+    MAX_MODEL_ID_CHARS,
+    MAX_SETTING_STRING_CHARS,
+    validateSettingsForStorage,
+} from './settingsValidation';
 
 function setSettingValue<K extends keyof UserSettings>(
     target: Partial<UserSettings>,
@@ -52,7 +54,8 @@ const defaultModel =
     defaultModelForProvider(PROVIDERS[0]) ?? PROVIDERS[0].models[0];
 
 const isBool = (v: unknown) => typeof v === 'boolean';
-const isString = (v: unknown) => typeof v === 'string';
+const isString = (v: unknown) =>
+    typeof v === 'string' && v.length <= MAX_SETTING_STRING_CHARS;
 const isIntInRange = (min: number, max: number) => (v: unknown) =>
     typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max;
 const isNumInRange = (min: number, max: number) => (v: unknown) =>
@@ -65,6 +68,7 @@ const isOneOf =
 const SETTING_VALIDATORS: {
     [K in keyof UserSettings]: (v: unknown) => boolean;
 } = {
+    customModel: (v) => v === null || isCustomModelConfig(v),
     theme: (v) => typeof v === 'string' && THEMES.some((t) => t.id === v),
     fontSizeIndex: isIntInRange(0, FONT_SIZES.length - 1),
     chatWidth: isNumInRange(0, 100),
@@ -80,7 +84,7 @@ const SETTING_VALIDATORS: {
     enableProviderFileStorage: isBool,
     providerId: (v) =>
         typeof v === 'string' && PROVIDERS.some((p) => p.id === v),
-    modelId: isString,
+    modelId: (v) => typeof v === 'string' && v.length <= MAX_MODEL_ID_CHARS,
     temperature: isNumInRange(0, 2),
     maxTokens: isIntInRange(1, 1_000_000),
     thinkingLevel: isString,
@@ -98,6 +102,7 @@ const SETTING_VALIDATORS: {
 };
 
 class SettingsStore implements UserSettings {
+    customModel = $state<CustomModelConfig | null>(null);
     theme = $state('airmail-warm');
     fontSizeIndex = $state(getDefaultFontSizeIndex());
     chatWidth = $state(0);
@@ -145,8 +150,24 @@ class SettingsStore implements UserSettings {
     private pendingSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
     private saveChanged(snapshot: Partial<UserSettings>): void {
+        try {
+            validateSettingsForStorage(snapshot);
+        } catch (err) {
+            reportAppError(
+                'settings save failed',
+                "Couldn't save settings",
+                err
+            );
+            return;
+        }
         const changed: Partial<UserSettings> = {};
         for (const key of Object.keys(snapshot) as (keyof UserSettings)[]) {
+            if (
+                key === 'customModel' &&
+                JSON.stringify(this.lastSaved.customModel) ===
+                    JSON.stringify(snapshot.customModel)
+            )
+                continue;
             if (this.lastSaved[key] !== snapshot[key]) {
                 setSettingValue(changed, key, snapshot[key]);
             }
@@ -154,7 +175,13 @@ class SettingsStore implements UserSettings {
         if (Object.keys(changed).length === 0) return;
         Object.assign(this.lastSaved, changed);
         log.info('settings save', changed);
-        saveToExt(changed);
+        void saveToExtRaw(changed).catch((err) =>
+            reportAppError(
+                'settings save failed',
+                "Couldn't save settings",
+                err
+            )
+        );
     }
 
     private queueSave(snapshot: Partial<UserSettings>): void {
@@ -206,6 +233,9 @@ class SettingsStore implements UserSettings {
                     if (key === 'legalAcceptedVersion') continue;
                     setSettingValue(snapshot, key, this[key]);
                 }
+                snapshot.customModel = this.customModel
+                    ? { ...this.customModel }
+                    : null;
                 if (!this.shouldSave()) return;
                 this.queueSave(snapshot);
             });
@@ -254,6 +284,7 @@ class SettingsStore implements UserSettings {
     }
 
     applyChatConfig(meta: {
+        customModel: CustomModelConfig | null;
         providerId: string;
         modelId: string;
         temperature: number;
@@ -265,6 +296,7 @@ class SettingsStore implements UserSettings {
         codeExecution?: boolean;
         systemPrompt: string;
     }): void {
+        this.customModel = meta.customModel ? { ...meta.customModel } : null;
         this.providerId = meta.providerId;
         this.modelId = meta.modelId;
         this.temperature = meta.temperature;
@@ -278,6 +310,7 @@ class SettingsStore implements UserSettings {
     }
 
     snapshotChatConfig(): {
+        customModel: CustomModelConfig | null;
         systemPrompt: string;
         providerId: string;
         modelId: string;
@@ -290,6 +323,7 @@ class SettingsStore implements UserSettings {
         codeExecution: boolean;
     } {
         return {
+            customModel: this.customModel ? { ...this.customModel } : null,
             systemPrompt: this.systemPrompt,
             providerId: this.providerId,
             modelId: this.modelId,
@@ -304,6 +338,7 @@ class SettingsStore implements UserSettings {
     }
 
     applyToolDefaults(model: ModelOption | null): void {
+        if (this.customModel) return;
         this.webSearch = this.enableWebSearch && !!model?.tools?.webSearch;
         this.webFetch = this.enableWebFetch && !!model?.tools?.webFetch;
         this.codeExecution =
@@ -314,6 +349,21 @@ class SettingsStore implements UserSettings {
         this.legalAcceptedVersion = version;
         this.flushPendingSave();
         this.saveChanged({ legalAcceptedVersion: version });
+    }
+
+    setCustomModelEnabled(enabled: boolean, model?: ModelOption): void {
+        this.customModel = enabled
+            ? emptyCustomModelConfig(this.providerId)
+            : null;
+        this.modelId = enabled ? '' : (model?.id ?? '');
+        if (!enabled && model) {
+            this.temperature = model.params.defaultTemperature ?? 1;
+            this.maxTokens = model.params.defaultMaxTokens;
+            this.thinkingLevel = model.params.thinking?.defaultLevel ?? 'none';
+            this.adaptiveThinking =
+                model.params.thinking?.adaptive !== undefined;
+            this.applyToolDefaults(model);
+        }
     }
 
     setFileUploadsEnabled(on: boolean): void {

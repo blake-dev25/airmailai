@@ -1,5 +1,6 @@
 import type {
     ChatMeta,
+    CustomModelConfig,
     AirmailAIChunk,
     AirmailAIMessage,
     DraftAttachment,
@@ -54,6 +55,8 @@ import {
 } from './extension';
 import { triggerBlobDownload } from './files';
 import { providersStore } from './providersStore.svelte';
+import { customModelTools } from './models/custom';
+import { validateModelRequest } from './modelValidation';
 import { settingsStore } from './settingsStore.svelte';
 import { createStreamBatcher, type StreamBatcher } from './streamBatcher';
 import { versionCheck } from './versionCheck.svelte';
@@ -132,6 +135,7 @@ function chatSortKey(c: { createdAt: number; lastMessageAt?: number }): number {
 
 function chatToMeta(chat: Chat): ChatMeta {
     return {
+        customModel: chat.customModel ? { ...chat.customModel } : null,
         id: chat.id,
         title: chat.title,
         createdAt: chat.createdAt,
@@ -261,6 +265,9 @@ class ChatStore {
 
     loadDemo(): void {
         const demoChats = buildDemoChats({
+            customModel: settingsStore.customModel
+                ? { ...settingsStore.customModel }
+                : null,
             providerId: settingsStore.providerId,
             modelId: settingsStore.modelId,
             temperature: settingsStore.temperature,
@@ -564,14 +571,9 @@ class ChatStore {
             });
     }
 
-    private transferInfo(meta: {
-        title: string;
-        createdAt: number;
-        systemPrompt: string;
-        providerId: string;
-        modelId: string;
-    }): TransferChatInfo {
+    private transferInfo(meta: TransferChatInfo): TransferChatInfo {
         return {
+            customModel: meta.customModel ? { ...meta.customModel } : null,
             title: meta.title,
             createdAt: meta.createdAt,
             systemPrompt: meta.systemPrompt,
@@ -682,7 +684,8 @@ class ChatStore {
     }
 
     private resolveImportedModel(
-        model: string | null
+        model: string | null,
+        custom: boolean
     ): { providerId: string; modelId: string } | null {
         if (!model) return null;
         const slash = model.indexOf('/');
@@ -693,13 +696,17 @@ class ChatStore {
             (p) => p.id === providerId
         );
         if (!provider) return null;
-        if (!provider.models.some((m) => m.id === modelId)) return null;
+        if (!custom && !provider.models.some((m) => m.id === modelId))
+            return null;
         return { providerId, modelId };
     }
 
     private buildImportedChat(imp: ImportedChat): Chat {
         const createdAt = imp.createdAt || Date.now();
-        const resolved = this.resolveImportedModel(imp.model);
+        const resolved = this.resolveImportedModel(
+            imp.model,
+            !!imp.customModel
+        );
         const messages: Message[] = imp.messages.map((m, i) => ({
             id: crypto.randomUUID(),
             role: m.role,
@@ -717,6 +724,8 @@ class ChatStore {
                 : createdAt,
             ...settingsStore.snapshotChatConfig(),
             ...(resolved ?? {}),
+            customModel:
+                resolved && imp.customModel ? { ...imp.customModel } : null,
             systemPrompt: imp.systemPrompt,
         };
     }
@@ -962,6 +971,30 @@ class ChatStore {
         if (!this.demoMode) await clearDraftAttachments(chat.id);
     }
 
+    private validateModelConfig(
+        config: {
+            providerId: string;
+            modelId: string;
+            customModel: CustomModelConfig | null;
+        } = settingsStore
+    ): boolean {
+        try {
+            validateModelRequest(
+                config.providerId,
+                config.modelId,
+                config.customModel
+            );
+            return true;
+        } catch (err) {
+            reportAppError(
+                'invalid model configuration',
+                "Couldn't send message",
+                err
+            );
+            return false;
+        }
+    }
+
     async sendMessage(content: string): Promise<boolean> {
         if (
             this.activeChatId &&
@@ -969,6 +1002,8 @@ class ChatStore {
                 this.remoteStreamingChatIds.has(this.activeChatId))
         )
             return false;
+
+        if (!this.validateModelConfig()) return false;
 
         let chatId = this.activeChatId;
         let createdNewChat = false;
@@ -1076,6 +1111,7 @@ class ChatStore {
     async retry(index: number): Promise<void> {
         const chat = this.activeChat;
         if (!chat) return;
+        if (!this.validateModelConfig()) return;
         const chatId = chat.id;
         this.abortLocalStream(chatId);
         const msg = chat.messages[index];
@@ -1148,31 +1184,41 @@ class ChatStore {
             this.streamingChatIds.delete(chatId);
             return;
         }
+        if (!this.validateModelConfig(chat)) {
+            this.streamingChatIds.delete(chatId);
+            chat.messages = chat.messages.filter(
+                (message) => message.id !== assistantId
+            );
+            return;
+        }
 
         const selectedModel = providersStore.providers
             .find((p) => p.id === chat.providerId)
             ?.models.find((m) => m.id === chat.modelId);
         const modelParams = selectedModel?.params;
         const wireTools: Record<string, string | boolean> = {};
-        const modelTools = selectedModel?.tools;
+        const modelTools = chat.customModel
+            ? customModelTools(chat.providerId, chat.customModel)
+            : selectedModel?.tools;
+        const toolConfig = chat.customModel ?? chat;
         if (
             modelTools?.webSearch &&
             settingsStore.enableWebSearch &&
-            chat.webSearch
+            toolConfig.webSearch
         ) {
             wireTools.webSearch = modelTools.webSearch;
         }
         if (
             modelTools?.webFetch &&
             settingsStore.enableWebFetch &&
-            chat.webFetch
+            toolConfig.webFetch
         ) {
             wireTools.webFetch = modelTools.webFetch;
         }
         if (
             modelTools?.codeExecution &&
             settingsStore.enableCodeExecution &&
-            chat.codeExecution
+            toolConfig.codeExecution
         ) {
             wireTools.codeExecution = modelTools.codeExecution;
         }
@@ -1202,16 +1248,20 @@ class ChatStore {
                     ? { system: chat.systemPrompt }
                     : {}),
                 params: {
-                    ...(modelParams?.temperatureMax !== undefined
-                        ? { temperature: chat.temperature }
-                        : {}),
-                    maxTokens: chat.maxTokens,
-                    ...(modelParams?.thinking
-                        ? {
-                              thinkingLevel: chat.thinkingLevel,
-                              adaptiveThinking: chat.adaptiveThinking,
-                          }
-                        : {}),
+                    ...(chat.customModel
+                        ? { customModel: { ...chat.customModel } }
+                        : {
+                              ...(modelParams?.temperatureMax !== undefined
+                                  ? { temperature: chat.temperature }
+                                  : {}),
+                              maxTokens: chat.maxTokens,
+                              ...(modelParams?.thinking
+                                  ? {
+                                        thinkingLevel: chat.thinkingLevel,
+                                        adaptiveThinking: chat.adaptiveThinking,
+                                    }
+                                  : {}),
+                          }),
                     tools: wireTools,
                     tagOpenRouterRequests: settingsStore.tagOpenRouterRequests,
                     openRouterPdfEngine: settingsStore.openRouterPdfEngine,

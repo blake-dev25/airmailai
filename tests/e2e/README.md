@@ -23,9 +23,10 @@ Always go through the project-local binary (`bun run`), not `bunx playwright` -
 test() to be called here".
 
 ```
-bun run test               # all specs
+bun run test               # all e2e specs
 bun run test smoke         # one file
 bun run test --ui          # interactive (time-travel DOM snapshots)
+bun test tests/unit        # unit test
 ```
 
 ## Notes
@@ -78,6 +79,6 @@ bun run test --ui          # interactive (time-travel DOM snapshots)
   `ui-raw` column is the median of each run's `ui - raw`, pairing samples
   from the same run so shared provider jitter cancels out.
 - **Console log:** page warnings/errors + uncaught errors are written to
-  `test-results/<test>/console-warnings.log` and echoed to the terminal when
-  any occur - a focused view without digging through the full trace. The app's
-  normal `console.log` chatter is excluded.
+  `test-results/<test>/console-warnings.log` and attached to the HTML report
+  whenever they occur. They are echoed to the terminal only when the test fails
+  or times out. The app's normal `console.log` chatter is excluded.

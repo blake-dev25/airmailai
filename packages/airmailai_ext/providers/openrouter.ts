@@ -11,7 +11,7 @@ import type {
     ProviderStreamArgs,
 } from '@airmailai/shared';
 import { resolveAttachments } from './attachments';
-import { makeDebugFetch } from './debug-fetch';
+import { makeModelFetch } from './custom-model';
 import { foldReplayIntoText } from './fold-replay';
 import { decodeBase64Text } from '../storage/encoding';
 
@@ -153,7 +153,7 @@ function collectFetchedUrls(response: unknown): string[] {
 export async function* streamOpenRouter(
     args: ProviderStreamArgs
 ): AsyncGenerator<AirmailAIChunk> {
-    const debugFetch = makeDebugFetch('openrouter');
+    const debugFetch = makeModelFetch('openrouter', args);
     const client = new OpenRouter({
         apiKey: args.apiKey,
         ...(debugFetch

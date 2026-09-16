@@ -43,6 +43,7 @@ class AppLifecycle {
                 if (tier === this.lastSnappedTier) return;
                 this.lastSnappedTier = tier;
                 untrack(() => {
+                    if (settingsStore.customModel) return;
                     const active = chatStore.chats.find(
                         (c) => c.id === chatStore.activeChatId
                     );

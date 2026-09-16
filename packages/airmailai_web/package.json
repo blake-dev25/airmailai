@@ -11,24 +11,24 @@
     },
     "dependencies": {
         "@airmailai/shared": "workspace:*",
-        "@lucide/svelte": "^1.42.0",
+        "@lucide/svelte": "^1.46.0",
         "@tailwindcss/typography": "^0.5.20",
         "dompurify": "^3.4.15",
-        "marked": "^18.0.11",
+        "marked": "^18.0.13",
         "marked-footnote": "^1.4.0",
         "shiki": "^4.4.3",
         "svelte": "^5.57.0",
-        "virtua": "^0.51.1"
+        "virtua": "^0.51.3"
     },
     "devDependencies": {
         "@sveltejs/vite-plugin-svelte": "^7.3.0",
         "@tailwindcss/vite": "^4.3.3",
         "@tsconfig/svelte": "^5.0.8",
-        "@types/chrome": "^0.2.9",
+        "@types/chrome": "^0.3.0",
         "@types/node": "^26.5.0",
         "svelte-check": "^4.7.6",
         "tailwindcss": "^4.3.3",
         "typescript": "~6.0.3",
-        "vite": "^8.2.2"
+        "vite": "^8.3.0"
     }
 }

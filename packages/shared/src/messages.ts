@@ -1,3 +1,5 @@
+import type { CustomModelConfig } from './custom-model';
+
 export interface DraftAttachmentMeta {
     name: string;
     mediaType: string;
@@ -322,6 +324,7 @@ export type BroadcastRequest =
 export type BrandingMode = 'on' | 'stripes' | 'off';
 
 export interface UserSettings {
+    customModel: CustomModelConfig | null;
     theme: string;
     fontSizeIndex: number;
     chatWidth: number;
@@ -349,6 +352,7 @@ export interface UserSettings {
 }
 
 const SETTINGS_KEY_MAP: { [K in keyof UserSettings]: 0 } = {
+    customModel: 0,
     theme: 0,
     fontSizeIndex: 0,
     chatWidth: 0,
@@ -379,6 +383,7 @@ export const SETTINGS_KEYS = Object.keys(
 ) as (keyof UserSettings)[];
 
 export interface ChatMeta {
+    customModel: CustomModelConfig | null;
     id: string;
     title: string;
     createdAt: number;

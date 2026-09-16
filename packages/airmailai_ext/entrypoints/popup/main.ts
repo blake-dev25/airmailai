@@ -28,7 +28,7 @@ btnOpenApp.addEventListener('click', async () => {
     btnOpenApp.disabled = true;
     setStatus('');
     try {
-        await chrome.windows.create({ url: 'https://airmailai.net/app/' });
+        await chrome.tabs.create({ url: 'https://airmailai.net/app/' });
     } catch (error) {
         setStatus(
             error instanceof Error ? error.message : 'Could not open the app.',

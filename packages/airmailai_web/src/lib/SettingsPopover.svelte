@@ -1,7 +1,12 @@
 <script lang="ts">
     import type { StorageUsage } from '@airmailai/shared';
     import { chatStore } from './chatStore.svelte';
-    import { EXTENSION_STORE_URL, PROVIDERS, THEMES } from './constants';
+    import {
+        defaultModelForProvider,
+        EXTENSION_STORE_URL,
+        PROVIDERS,
+        THEMES,
+    } from './constants';
     import { formatErr, reportAppError } from './errorStore.svelte';
     import { formatFileSize } from './files';
     import {
@@ -1182,6 +1187,39 @@
                     ]}
                 />
             </div>
+            <div class={[rowBase, themeRow]}>
+                <div class="flex items-center gap-1.25">
+                    <label for="custom-model-configuration" class={labelClass}
+                        >Custom Model Configuration</label
+                    >
+                    {@render toolInfo(
+                        'About custom model configuration',
+                        'Enter a model ID and parameters manually. Blank fields are omitted from requests.',
+                        true
+                    )}
+                </div>
+                <button
+                    id="custom-model-configuration"
+                    type="button"
+                    class={[switchClass, settingsStore.customModel && 'on']}
+                    role="switch"
+                    aria-checked={!!settingsStore.customModel}
+                    aria-label="Custom Model Configuration"
+                    onclick={() => {
+                        const provider = providersStore.providers.find(
+                            (p) => p.id === settingsStore.providerId
+                        );
+                        settingsStore.setCustomModelEnabled(
+                            !settingsStore.customModel,
+                            provider
+                                ? defaultModelForProvider(provider)
+                                : undefined
+                        );
+                    }}
+                >
+                    <span class="toggle-switch-thumb"></span>
+                </button>
+            </div>
             <p class="m-0 mt-auto pt-2 text-xs text-fg-muted text-center">
                 AirmailAI is made possible by <a
                     href="/legal/third-party-licenses.txt"
@@ -1214,6 +1252,7 @@
                 activeTab === 'changelog' && 'visible',
             ]}
             aria-hidden={activeTab !== 'changelog'}
+            style:--font-message="var(--font-sans)"
         >
             {#if changelogError}
                 <p class="text-sm text-accent-fg m-0 py-1">{changelogError}</p>

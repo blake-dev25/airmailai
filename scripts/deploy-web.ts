@@ -106,7 +106,7 @@ for (let offset = 0; offset < retention.expired.length; offset += 1000) {
     const deleteFile = join(root, '.tmp/expired-assets.json');
     await Bun.write(
         deleteFile,
-        JSON.stringify({ Objects: batch.map((Key) => ({ Key })), Quiet: true })
+        JSON.stringify({ Objects: batch.map((Key) => ({ Key })), Quiet: false })
     );
     const result =
         (await $`aws s3api delete-objects --bucket ${BUCKET} --delete ${`file://${deleteFile}`} --output json`.json()) as {

@@ -20,6 +20,7 @@ import { log } from '../debug';
 import { base64ToBytes, hashBytes } from '../storage/encoding';
 import { type ProviderReplicas, resolveAttachments } from './attachments';
 import { foldReplayIntoText } from './fold-replay';
+import { customModelParameters, getCustomModel } from './custom-model';
 
 function outputFilename(index: number, mediaType: string): string {
     const subtype = mediaType.split('/')[1]?.split(';')[0] ?? '';
@@ -135,6 +136,7 @@ export async function* streamGoogle(
     args: ProviderStreamArgs
 ): AsyncGenerator<AirmailAIChunk> {
     const client = new GoogleGenAI({ apiKey: args.apiKey });
+    const customModel = getCustomModel(args);
 
     const thinkingLevel = args.params.thinkingLevel as string | undefined;
     const adaptive =
@@ -164,7 +166,18 @@ export async function* streamGoogle(
         contents: toGoogleContents(args.messages, args.blobs ?? {}, replicas),
         config: {
             ...(args.system ? { systemInstruction: args.system } : {}),
-            maxOutputTokens: maxTokens,
+            ...(customModel
+                ? {
+                      httpOptions: {
+                          extraBody: {
+                              generationConfig: customModelParameters(
+                                  'google',
+                                  customModel
+                              ),
+                          },
+                      },
+                  }
+                : { maxOutputTokens: maxTokens }),
             ...(args.params.temperature !== undefined
                 ? { temperature: args.params.temperature as number }
                 : {}),

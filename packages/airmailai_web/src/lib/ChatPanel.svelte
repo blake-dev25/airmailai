@@ -102,6 +102,7 @@
     let fileProcessingQueue = Promise.resolve();
     let filePolicyOpts = $derived({
         openRouterPdfEngine: settingsStore.openRouterPdfEngine,
+        customModel: !!settingsStore.customModel,
     });
     let filePolicy = $derived(
         getFilePolicy(

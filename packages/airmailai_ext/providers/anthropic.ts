@@ -13,7 +13,7 @@ import {
 } from '../storage/encoding';
 import { FILES_BETA } from './anthropic-files';
 import { type ProviderReplicas, resolveAttachments } from './attachments';
-import { makeDebugFetch } from './debug-fetch';
+import { makeModelFetch } from './custom-model';
 import { foldReplayIntoText } from './fold-replay';
 
 const BUDGET_TOKENS: Record<Effort, number> = {
@@ -269,7 +269,7 @@ export async function* streamAnthropic(
     const client = new Anthropic({
         apiKey: args.apiKey,
         dangerouslyAllowBrowser: true,
-        fetch: makeDebugFetch('anthropic'),
+        fetch: makeModelFetch('anthropic', args),
     });
 
     const thinkingLevel = args.params.thinkingLevel as string | undefined;

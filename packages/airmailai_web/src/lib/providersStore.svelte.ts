@@ -19,9 +19,11 @@ class ProvidersStore {
     savedKeys = $state<Record<string, boolean> | null>(null);
 
     selectedModel = $derived(
-        this.providers
-            .find((p) => p.id === settingsStore.providerId)
-            ?.models.find((m) => m.id === settingsStore.modelId) ?? null
+        settingsStore.customModel
+            ? null
+            : (this.providers
+                  .find((p) => p.id === settingsStore.providerId)
+                  ?.models.find((m) => m.id === settingsStore.modelId) ?? null)
     );
 
     hasAnyKey = $derived(
