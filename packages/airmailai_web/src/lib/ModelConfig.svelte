@@ -220,11 +220,14 @@
               )
             : 0
     );
-    let modelPickerEmptyLabel = $derived(
-        currentProvider.id === 'openrouter'
-            ? OPENROUTER_EMPTY_LABEL
-            : 'Loading models...'
-    );
+    let modelPickerEmptyLabel = $derived.by(() => {
+        if (currentProvider.id !== 'openrouter') return 'Loading models...';
+        if (providersStore.openRouterCatalogLoading)
+            return 'Downloading the OpenRouter model catalog...';
+        if (providersStore.openRouterCatalogError)
+            return `Couldn't download the OpenRouter model catalog: ${providersStore.openRouterCatalogError}. Retry from Settings > Refresh OpenRouter Model List.`;
+        return OPENROUTER_EMPTY_LABEL;
+    });
 
     function levelLabel(level: string): string {
         if (level === 'medium') return 'Med';
@@ -234,6 +237,7 @@
 
     function onProviderChange(id: string) {
         settingsStore.providerId = id;
+        if (id === 'openrouter') providersStore.ensureOpenRouterCatalog();
         if (settingsStore.customModel) {
             settingsStore.setCustomModelEnabled(true);
             return;

@@ -474,13 +474,16 @@ export async function dbPutMessage(
     }
 }
 
-export async function dbImportChats(entries: ImportChatEntry[]): Promise<void> {
+export async function dbImportChats(
+    entries: ImportChatEntry[]
+): Promise<ChatMeta[]> {
     log.info('db: import chats', `${entries.length} chats`);
-    if (entries.length === 0) return;
+    if (entries.length === 0) return [];
     const db = await getDb();
     const tx = db.transaction([STORE_MESSAGES, STORE_META], 'readwrite');
     const messagesStore = tx.objectStore(STORE_MESSAGES);
     const chatMetaStore = tx.objectStore(STORE_META);
+    const imported: ChatMeta[] = [];
     try {
         for (const entry of entries) {
             const chatId = entry.meta.id;
@@ -495,19 +498,20 @@ export async function dbImportChats(entries: ImportChatEntry[]): Promise<void> {
                 );
                 messagesStore.put(stored);
             }
-            chatMetaStore.put(
-                mergeChatMeta(
-                    existing,
-                    {
-                        ...entry.meta,
-                        ...(lastMessageAt ? { lastMessageAt } : {}),
-                    },
-                    undefined,
-                    true
-                )
+            const merged = mergeChatMeta(
+                existing,
+                {
+                    ...entry.meta,
+                    ...(lastMessageAt ? { lastMessageAt } : {}),
+                },
+                undefined,
+                true
             );
+            chatMetaStore.put(merged);
+            imported.push(merged);
         }
         await txDone(tx);
+        return imported;
     } catch (err) {
         abortActiveTransaction(tx);
         throw err;
@@ -586,7 +590,11 @@ export async function dbSetContainer(
         containerProvider,
         containerId,
         containerExpiresAt,
-        containerFileIds,
+        containerFileIds:
+            containerFileIds ??
+            (meta.containerId === containerId
+                ? meta.containerFileIds
+                : undefined),
     });
     await txDone(tx);
 }
@@ -944,11 +952,21 @@ export async function dbListLocalFiles(): Promise<LocalFileInfo[]> {
     });
 }
 
-export async function dbDeleteStoredFile(hash: string): Promise<string[]> {
+export interface StoredFileDeletion {
+    chatIds: string[];
+    draftMetas: ChatMeta[];
+    refs: ProviderFileRef[];
+}
+
+export async function dbDeleteStoredFile(
+    hash: string
+): Promise<StoredFileDeletion> {
     log.info('db: delete stored file', hash);
     const db = await getDb();
     const { tx, stores } = fileTx(db);
     const affected = new Set<string>();
+    const draftMetas: ChatMeta[] = [];
+    const refs: ProviderFileRef[] = [];
 
     const metas = (await reqAsPromise(
         stores.chatMetaStore.getAll()
@@ -958,10 +976,9 @@ export async function dbDeleteStoredFile(hash: string): Promise<string[]> {
         if (!drafts?.length) continue;
         const keptDrafts = drafts.filter((d) => d.hash !== hash);
         if (keptDrafts.length === drafts.length) continue;
-        stores.chatMetaStore.put({
-            ...m,
-            draftAttachments: keptDrafts,
-        });
+        const updated = { ...m, draftAttachments: keptDrafts };
+        stores.chatMetaStore.put(updated);
+        draftMetas.push(updated);
         affected.add(m.id);
     }
 
@@ -969,9 +986,14 @@ export async function dbDeleteStoredFile(hash: string): Promise<string[]> {
         FileMetaRecord | undefined;
     for (const chatId of rec?.chats ?? []) affected.add(chatId);
     stores.filesStore.delete(hash);
+    for (const m of draftMetas) {
+        refs.push(
+            ...(await reconcileChatFileRefs(stores, m.id, new Set([hash])))
+        );
+    }
 
     await txDone(tx);
-    return [...affected];
+    return { chatIds: [...affected], draftMetas, refs };
 }
 
 export interface FileFacts {

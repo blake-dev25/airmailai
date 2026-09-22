@@ -21,6 +21,34 @@ export const OPENAI: ProviderOption = {
             },
         },
         {
+            id: 'gpt-6-luna',
+            name: 'GPT-6 Luna',
+            params: {
+                contextWindow: 1050000,
+                maxOutputTokens: 128000,
+                defaultMaxTokens: 8192,
+                knowledgeCutoff: 'May 2026',
+                thinking: {
+                    levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
+                    defaultLevel: 'none',
+                },
+            },
+        },
+        {
+            id: 'gpt-6-sol',
+            name: 'GPT-6 Sol',
+            params: {
+                contextWindow: 1050000,
+                maxOutputTokens: 128000,
+                defaultMaxTokens: 8192,
+                knowledgeCutoff: 'Apr 2026',
+                thinking: {
+                    levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
+                    defaultLevel: 'none',
+                },
+            },
+        },
+        {
             id: 'gpt-5.6-luna',
             name: 'GPT-5.6 Luna',
             params: {

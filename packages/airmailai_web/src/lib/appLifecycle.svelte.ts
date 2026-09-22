@@ -112,13 +112,7 @@ class AppLifecycle {
                 extVersion.versionName
             );
 
-            providersStore.hydrateOpenRouter().catch((err) => {
-                reportAppError(
-                    'openrouter hydrate failed',
-                    "Couldn't load OpenRouter models",
-                    err
-                );
-            });
+            void providersStore.hydrateOpenRouter();
             providersStore.refreshSavedKeys().catch((err) => {
                 reportAppError(
                     'saved key check failed',

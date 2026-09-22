@@ -92,6 +92,9 @@ function handleBroadcastEvent(event: BroadcastEvent): void {
         case 'meta-changed':
             chatStore.applyRemoteMetaChanged(event.meta);
             return;
+        case 'chats-imported':
+            chatStore.applyRemoteChatsImported(event.metas);
+            return;
         case 'chat-deleted':
             chatStore.applyRemoteChatDeleted(event.chatId);
             return;

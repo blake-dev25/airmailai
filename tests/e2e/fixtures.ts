@@ -17,6 +17,11 @@ import {
     CACHE_VERSION as OPENROUTER_CACHE_VERSION,
 } from '../../packages/airmailai_ext/openrouter-models';
 import {
+    type FakeProviderMarks,
+    type FakeProviderStream,
+    PROVIDER_HOSTS,
+} from './fake-provider';
+import {
     DEFAULT_MODEL,
     DEFAULT_MODEL_PARAMS,
     DEFAULT_PROVIDER,
@@ -142,6 +147,10 @@ interface StoredMsg {
         metadata?: { createdAt?: number };
     };
 }
+
+type FakeProviderGlobal = typeof globalThis & {
+    airmailaiFakeProvider?: FakeProviderMarks;
+};
 
 function storedMessageText(msg: StoredMsg): string {
     return msg.message.parts
@@ -439,6 +448,82 @@ export class AirmailAI {
                 );
             };
         });
+    }
+
+    async installFakeProvider(
+        stream: FakeProviderStream,
+        firstByteDelayMs: number
+    ): Promise<void> {
+        await this.sw.evaluate(
+            ({ preamble, content, firstByteDelayMs, hosts }) => {
+                const now = () => performance.timeOrigin + performance.now();
+                const marks: FakeProviderMarks = {
+                    url: '',
+                    requestAt: 0,
+                    firstByteAt: 0,
+                };
+                (globalThis as FakeProviderGlobal).airmailaiFakeProvider =
+                    marks;
+                const original = globalThis.fetch;
+                const fakeFetch: (
+                    input: RequestInfo | URL,
+                    init?: RequestInit
+                ) => Promise<Response> = (input, init) => {
+                    const url =
+                        input instanceof Request
+                            ? input.url
+                            : input instanceof URL
+                              ? input.href
+                              : input;
+                    const method = (
+                        init?.method ??
+                        (input instanceof Request ? input.method : 'GET')
+                    ).toUpperCase();
+                    if (
+                        method !== 'POST' ||
+                        !hosts.includes(new URL(url).hostname)
+                    ) {
+                        return original(input, init);
+                    }
+                    globalThis.fetch = original;
+                    marks.url = url;
+                    marks.requestAt = now();
+                    const encoder = new TextEncoder();
+                    const body = new ReadableStream<Uint8Array>({
+                        start(controller) {
+                            if (preamble) {
+                                controller.enqueue(encoder.encode(preamble));
+                            }
+                            setTimeout(() => {
+                                marks.firstByteAt = now();
+                                controller.enqueue(encoder.encode(content));
+                                controller.close();
+                            }, firstByteDelayMs);
+                        },
+                    });
+                    return Promise.resolve(
+                        new Response(body, {
+                            status: 200,
+                            headers: { 'content-type': 'text/event-stream' },
+                        })
+                    );
+                };
+                globalThis.fetch = fakeFetch as typeof fetch;
+            },
+            { ...stream, firstByteDelayMs, hosts: PROVIDER_HOSTS }
+        );
+    }
+
+    async readFakeProviderMarks(): Promise<FakeProviderMarks> {
+        const marks = await this.sw.evaluate(
+            () => (globalThis as FakeProviderGlobal).airmailaiFakeProvider
+        );
+        if (!marks) {
+            throw new Error(
+                'Fake provider was not installed in the service worker.'
+            );
+        }
+        return marks;
     }
 
     sendStorageRequest(

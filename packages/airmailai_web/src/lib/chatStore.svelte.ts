@@ -499,6 +499,21 @@ class ChatStore {
         this.chats.unshift(chatFromMeta(meta));
     }
 
+    applyRemoteChatsImported(metas: ChatMeta[]): void {
+        this.searchCache = null;
+        this.allChatsSearched = false;
+        for (const meta of metas) {
+            const chat = this.findChat(meta.id);
+            if (chat?.messagesLoaded) {
+                void this.refreshChatFromIDB(meta.id, {
+                    context: 'chats-imported: reload failed',
+                    userMessage: "Couldn't refresh an imported chat",
+                });
+            }
+            this.applyRemoteMetaChanged(meta);
+        }
+    }
+
     async applyMessageChanged(
         chatId: string,
         messageId: string,
@@ -723,9 +738,14 @@ class ChatStore {
                 ? messages[messages.length - 1].metadata.createdAt
                 : createdAt,
             ...settingsStore.snapshotChatConfig(),
-            ...(resolved ?? {}),
-            customModel:
-                resolved && imp.customModel ? { ...imp.customModel } : null,
+            ...(resolved
+                ? {
+                      ...resolved,
+                      customModel: imp.customModel
+                          ? { ...imp.customModel }
+                          : null,
+                  }
+                : {}),
             systemPrompt: imp.systemPrompt,
         };
     }

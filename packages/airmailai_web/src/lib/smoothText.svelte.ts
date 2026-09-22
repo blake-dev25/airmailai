@@ -5,6 +5,13 @@ const DRAIN_MIN_CHARS_PER_SEC_COMPLETE = 300;
 const DRAIN_GAP_MULTIPLIER = 2;
 const MAX_TICK_ELAPSED_MS = 1000;
 
+function graphemeSafeEnd(text: string, end: number): number {
+    if (end >= text.length) return text.length;
+    const code = text.charCodeAt(end - 1);
+    const endsOnHighSurrogate = code >= 0xd800 && code <= 0xdbff;
+    return endsOnHighSurrogate ? end + 1 : end;
+}
+
 export interface SmoothTextOpts {
     mode: () => SmoothMode;
     streaming: () => boolean;
@@ -51,7 +58,7 @@ export function createSmoothText(opts: SmoothTextOpts) {
                 if (step > 0) {
                     display = target.slice(
                         0,
-                        Math.min(target.length, display.length + step)
+                        graphemeSafeEnd(target, display.length + step)
                     );
                 }
             }

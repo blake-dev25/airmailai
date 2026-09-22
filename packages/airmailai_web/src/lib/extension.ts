@@ -309,7 +309,11 @@ export async function putMessage(message: StoredMessage): Promise<void> {
 }
 
 export async function importChats(chats: ImportChatEntry[]): Promise<void> {
-    await sendStorageMessage({ type: 'import_chats', chats });
+    await sendStorageMessage({
+        type: 'import_chats',
+        chats,
+        sourceTabId: tabId,
+    });
 }
 
 export async function stageDraftAttachment(

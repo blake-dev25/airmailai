@@ -29,8 +29,10 @@ type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 function mapStopReason(
     reason: string | null
 ): AirmailAIMessageMetadata['stopReason'] {
-    if (reason === 'max_tokens') return 'length';
+    if (reason === 'max_tokens' || reason === 'model_context_window_exceeded')
+        return 'length';
     if (reason === 'refusal') return 'refusal';
+    if (reason === 'pause_turn') return 'paused';
     return 'stop';
 }
 
@@ -395,7 +397,11 @@ export async function* streamAnthropic(
         for await (const event of stream) {
             switch (event.type) {
                 case 'message_start': {
-                    inputTokens = event.message.usage.input_tokens;
+                    const usage = event.message.usage;
+                    inputTokens =
+                        usage.input_tokens +
+                        (usage.cache_creation_input_tokens ?? 0) +
+                        (usage.cache_read_input_tokens ?? 0);
                     if (event.message.container) {
                         containerId = event.message.container.id;
                         containerExpiresAt = event.message.container.expires_at;

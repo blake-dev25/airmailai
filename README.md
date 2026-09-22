@@ -44,11 +44,11 @@ Requires [Bun](https://bun.sh) and a Chromium-based browser.
 
 ```sh
 bun install
-bun run build:local
+bun run build:localhost
 bun run start:web
 ```
 
-1. `bun run build:local` builds the extension into `packages/airmailai_ext/.output/chrome-mv3` with localhost access enabled. The Chrome Web Store version only talks to airmailai.net, so a local website needs this local build.
+1. `bun run build:localhost` builds the extension into `packages/airmailai_ext/.output/chrome-mv3` with localhost access enabled. The Chrome Web Store version only talks to airmailai.net, so a local website needs this local build.
 2. Load the extension: open `chrome://extensions`, enable Developer mode, click "Load unpacked", and select `packages/airmailai_ext/.output/chrome-mv3`.
 3. `bun run start:web` builds the website and serves it at `http://localhost:4173`, opening the app in your browser. Leave it running while you use AirmailAI. Re-run it after pulling updates.
 

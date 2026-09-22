@@ -15,6 +15,7 @@ interface CacheEntry {
     models: OpenRouterModel[];
     fetchedAt: number;
     nextRetryAt?: number;
+    lastError?: string;
 }
 
 interface RawModel {
@@ -67,7 +68,21 @@ async function fetchAndSlim(apiKey: string): Promise<OpenRouterModel[]> {
         .map(slim)
         .filter((m): m is OpenRouterModel => m !== null);
     log.info('openrouter: fetched', models.length, 'models');
+    if (models.length === 0) {
+        throw new Error('OpenRouter returned an empty model catalog');
+    }
     return models;
+}
+
+function errorMessage(e: unknown): string {
+    return e instanceof Error ? e.message : String(e);
+}
+
+function formatRetryTime(at: number): string {
+    return new Date(at).toLocaleTimeString([], {
+        hour: 'numeric',
+        minute: '2-digit',
+    });
 }
 
 async function readCache(): Promise<CacheEntry | null> {
@@ -105,7 +120,9 @@ export async function getOpenRouterModels(
     }
 
     if (cache?.nextRetryAt && now < cache.nextRetryAt) {
-        return null;
+        throw new Error(
+            `${cache.lastError ?? 'download failed'} (next automatic attempt after ${formatRetryTime(cache.nextRetryAt)})`
+        );
     }
 
     try {
@@ -114,15 +131,15 @@ export async function getOpenRouterModels(
         return models;
     } catch (e) {
         log.error('openrouter: cold fetch failed', e);
+        const lastError = errorMessage(e);
         await writeCache({
             version: CACHE_VERSION,
             models: [],
             fetchedAt: 0,
             nextRetryAt: now + ERROR_COOLDOWN_MS,
+            lastError,
         });
-        throw e instanceof Error
-            ? e
-            : new Error(`OpenRouter fetch failed: ${String(e)}`);
+        throw new Error(lastError, { cause: e });
     }
 }
 
@@ -171,7 +188,7 @@ function refreshInBackground(apiKey: string): void {
                 version: CACHE_VERSION,
                 models,
                 fetchedAt: Date.now(),
-            }).catch(() => {})
+            })
         )
         .catch(async (e) => {
             log.error('openrouter: background refresh failed', e);

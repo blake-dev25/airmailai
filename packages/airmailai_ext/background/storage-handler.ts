@@ -241,7 +241,8 @@ async function handleStorage(
             return { type: 'saved' };
         }
         case 'import_chats': {
-            await dbImportChats(message.chats);
+            const metas = await dbImportChats(message.chats);
+            broadcast({ type: 'chats-imported', metas }, message.sourceTabId);
             log.info(
                 '-> storage response: chats imported',
                 message.chats.length
@@ -404,12 +405,21 @@ async function handleStorage(
                 );
                 return { type: 'stored_file_deleted', chatIds };
             }
-            const chatIds = await dbDeleteStoredFile(message.target.hash);
+            const { chatIds, draftMetas, refs } = await dbDeleteStoredFile(
+                message.target.hash
+            );
             if (chatIds.length) {
                 broadcast(
                     { type: 'files-changed', chatIds },
                     message.sourceTabId
                 );
+            }
+            for (const meta of draftMetas) {
+                broadcast({ type: 'meta-changed', meta });
+            }
+            const warnChat = draftMetas[0];
+            if (warnChat) {
+                cleanupProviderFiles(refs, warnChat.id, message.sourceTabId);
             }
             log.info(
                 '-> storage response: stored_file_deleted',

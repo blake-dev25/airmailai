@@ -14,7 +14,6 @@ function readFile(name: string): string | undefined {
 }
 
 const version = readFile('VERSION') ?? '0.0.0.1';
-const versionName = readFile('VERSION_NAME');
 
 function readRootEnvVar(name: string): string | undefined {
     const env = readFile('.env');
@@ -35,6 +34,11 @@ const logLevel = readBuildFlag('AIRMAILAI_LOG_LEVEL') ?? 'errors';
 const allowLocalhost = readBuildFlag('WXT_ALLOW_LOCALHOST') === 'true';
 const verbose = !!process.env.BUILD_VERBOSE;
 
+const channelName = readFile('VERSION_NAME');
+const versionName = channelName
+    ? `${channelName}${allowLocalhost ? '.localhost' : ''}`
+    : undefined;
+
 export default defineConfig({
     vite: () => ({
         logLevel: verbose ? 'info' : 'error',
@@ -51,6 +55,9 @@ export default defineConfig({
         exclude: ['**/*.map'],
     },
     hooks: {
+        'build:done': () => {
+            console.log(`Extension version: ${versionName ?? version}`);
+        },
         'zip:extension:start': (wxt) => {
             mkdirSync(join(wxt.config.outBaseDir, 'zip'), { recursive: true });
         },

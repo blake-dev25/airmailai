@@ -18,6 +18,7 @@ import {
     downloadOpenAIContainerFile,
     listOpenAIContainerFiles,
 } from '../providers/openai-container-files';
+import { hasReplayableContent } from '../providers/fold-replay';
 import { streamProvider } from '../providers/stream';
 import {
     dbGetFileBlob,
@@ -47,14 +48,16 @@ import {
     uploadWithDedup,
 } from './provider-file-sync';
 
+const TEXT_PART_SEPARATOR = '\n\n';
+
 interface OpenAICaptureResult {
+    parts: AirmailAIMessage['parts'];
     freshBlobs: Map<string, Blob>;
     containerFileIds: string[];
     warning?: string;
 }
 
 async function captureOpenAIOutputs(
-    message: AirmailAIMessage,
     chatId: string,
     apiKey: string,
     containerId: string,
@@ -129,8 +132,8 @@ async function captureOpenAIOutputs(
             }
         }
     }
-    message.parts.push(...capturedParts);
     return {
+        parts: capturedParts,
         freshBlobs,
         containerFileIds,
         ...(warnings.length ? { warning: warnings.join('; ') } : {}),
@@ -199,6 +202,7 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
     let errorSource: StreamErrorSource = 'extension';
     let portOpen = true;
     let truncateTo: number | null = null;
+    let persisted = false;
     let chatRevision: number | null = null;
 
     const send = (event: ExtensionStreamEvent) => {
@@ -220,7 +224,7 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
             if (disposition !== 'streaming' && disposition !== 'completed')
                 return;
             log.info('stop received', 'truncateTo:', msg.truncateTo);
-            if (disposition === 'streaming') {
+            if (!persisted) {
                 disposition = 'stopped';
                 truncateTo = msg.truncateTo;
                 if (lockedChatId) {
@@ -371,7 +375,7 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
                                         !missing.has(p.hash)
                                 ),
                             }))
-                            .filter((m) => m.parts.length > 0);
+                            .filter(hasReplayableContent);
                         const blobs = await hydrateBlobs(
                             availableMessages,
                             msg.provider,
@@ -415,6 +419,23 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
                         }
                     }
                 };
+
+            const deliver = (
+                chunk: AirmailAIChunk,
+                outbound: AirmailAIChunk
+            ) => {
+                applyAirmailAIChunk(assembler, chunk);
+                if (disposition !== 'streaming') return;
+                send({ type: 'chunk', chunk: outbound });
+                broadcast(
+                    {
+                        type: 'turn-chunk',
+                        chatId: msg.chatId,
+                        chunk: outbound,
+                    },
+                    msg.sourceTabId
+                );
+            };
 
             for await (const chunk of generateChunks()) {
                 let outbound = chunk;
@@ -460,23 +481,23 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
                     delete stripped.replicaFileId;
                     outbound = stripped;
                 }
-                applyAirmailAIChunk(assembler, chunk);
                 if (chunk.type === 'finish') {
                     if (chunk.containerId)
                         capturedContainerId = chunk.containerId;
                     if (chunk.containerExpiresAt)
                         capturedContainerExpiresAt = chunk.containerExpiresAt;
                 }
-                if (disposition === 'streaming') {
-                    send({ type: 'chunk', chunk: outbound });
-                    broadcast(
-                        {
-                            type: 'turn-chunk',
-                            chatId: msg.chatId,
-                            chunk: outbound,
-                        },
-                        msg.sourceTabId
-                    );
+                const hadTextBefore = assembler.message.parts.some(
+                    (p) => p.type === 'text' && p.text.length > 0
+                );
+                deliver(chunk, outbound);
+                if (chunk.type === 'text-start' && hadTextBefore) {
+                    const separator: AirmailAIChunk = {
+                        type: 'text-delta',
+                        id: chunk.id,
+                        delta: TEXT_PART_SEPARATOR,
+                    };
+                    deliver(separator, separator);
                 }
             }
             errorSource = 'extension';
@@ -519,6 +540,7 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
                     },
                 };
                 const freshBlobs = new Map(streamOutputBlobs);
+                const capturedParts: AirmailAIMessage['parts'] = [];
                 let containerFileIds: string[] | undefined;
                 if (
                     apiKey &&
@@ -527,7 +549,6 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
                 ) {
                     try {
                         const captured = await captureOpenAIOutputs(
-                            finalMessage,
                             lockedChatId,
                             apiKey,
                             capturedContainerId,
@@ -537,6 +558,7 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
                         for (const [hash, blob] of captured.freshBlobs) {
                             freshBlobs.set(hash, blob);
                         }
+                        capturedParts.push(...captured.parts);
                         containerFileIds = captured.containerFileIds;
                         if (captured.warning) {
                             outputWarnings.push(
@@ -553,10 +575,15 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
                         }
                     }
                 }
+                if (truncateTo !== null) {
+                    truncateMessageTextParts(finalMessage, truncateTo);
+                }
+                finalMessage.parts.push(...capturedParts);
                 const stored: StoredMessage = {
                     chatId: lockedChatId,
                     message: finalMessage,
                 };
+                persisted = true;
                 try {
                     const saved = await dbPutMessage(stored, freshBlobs);
                     orphanedReplicas = saved.refs;

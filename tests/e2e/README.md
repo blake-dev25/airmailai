@@ -78,6 +78,34 @@ bun test tests/unit        # unit test
   a failed call shows its count, e.g. `1180/1400/2050 (4/5)`. The final
   `ui-raw` column is the median of each run's `ui - raw`, pairing samples
   from the same run so shared provider jitter cancels out.
+- **Pipeline latency:** `bun run test pipeline-latency` measures the app's
+  own overhead around a turn with no provider call. The fixture swaps the
+  service worker's global `fetch` for one that answers the provider request
+  with a synthetic SSE stream (`fake-provider.ts`, one text delta in each
+  provider's wire format), so the real SDK, turn loop, port, stream batcher
+  and render path all run unchanged. Columns per provider: `click-request`
+  (send click -> provider request fired), `bytes-port` (first content bytes
+  enqueued in the service worker -> page port receives the first delta),
+  `port-dom` (-> assistant text in the DOM), `dom-paint` (-> the frame after
+  that mutation), `bytes-paint` (first content bytes -> painted), and
+  `app-total` (`click-request` + `bytes-paint`, excluding provider wait).
+  The total is calculated per run before computing min/median/max.
+  The batcher coalesces deltas per animation frame, so `port-dom` and
+  `dom-paint` are frame-bound. `PIPELINE_RUNS=5` repeats like `TTFT_RUNS`.
+  Provider keys must still be present in `.env` because the turn reads one
+  before it calls the provider, but nothing is sent to the provider.
+  `CPU_THROTTLE` sets the pipeline test page's CPU slowdown through Chromium
+  CDP (a finite number >= 1, default `1`). It applies before navigation and
+  does not configure throttling for the extension service worker or other
+  tests.
+
+  ```bash
+  bun run test pipeline-latency
+  CPU_THROTTLE=4 PIPELINE_RUNS=5 bun run test pipeline-latency
+  ```
+
+  The rate is relative to the host CPU, not a specific hardware model, and
+  appears in the results table heading.
 - **Console log:** page warnings/errors + uncaught errors are written to
   `test-results/<test>/console-warnings.log` and attached to the HTML report
   whenever they occur. They are echoed to the terminal only when the test fails

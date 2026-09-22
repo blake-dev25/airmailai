@@ -34,9 +34,7 @@ if (isOfficial && dirty) {
 
 const versionName = isOfficial
     ? `${version}-beta`
-    : `${version}-local${dirty ? '.modified' : `.${git('rev-parse --short HEAD')}`}`;
+    : `${version}-dev.${dirty ? 'modified' : git('rev-parse --short HEAD')}`;
 
 writeFileSync(VERSION_FILE, version);
 writeFileSync(VERSION_NAME_FILE, versionName);
-
-console.log(`Version: ${versionName}${isOfficial ? '' : ' (local)'}`);

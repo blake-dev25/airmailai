@@ -152,6 +152,8 @@
                 return 'Model declined to continue';
             case 'content-filter':
                 return 'Stopped by content filter';
+            case 'paused':
+                return 'Paused (server tool limit reached) - send a message to continue';
             default:
                 return null;
         }
@@ -172,6 +174,14 @@
         }
         return null;
     });
+
+    const hasExtras = $derived(
+        !isUser &&
+            (chips.length > 0 ||
+                codeExecutions.length > 0 ||
+                citationView.sources.length > 0 ||
+                suggestionsSrcdoc !== null)
+    );
 
     let copied = $state(false);
     let copiedTimer: ReturnType<typeof setTimeout> | null = null;
@@ -246,6 +256,8 @@
     const codePreClass =
         'm-0 px-2.5 py-2 bg-canvas border border-border rounded-md font-mono text-xs leading-normal overflow-x-auto whitespace-pre-wrap wrap-break-word';
     const codeLabelClass = 'text-[11px] font-medium opacity-50';
+    const extraSectionClass =
+        'not-first:mt-2 not-first:pt-2 not-first:border-t border-current/15';
     const chipBtnClass =
         'flex items-center justify-center w-4 h-4 p-0 bg-transparent border-0 text-current opacity-50 cursor-pointer shrink-0 transition-opacity duration-150 hover:opacity-100';
 </script>
@@ -391,23 +403,23 @@
                     onclick={oncanceledit}>Cancel</button
                 >
             </div>
-        {:else if displayContent}
+        {:else if displayContent || hasExtras}
             {#if isUser}
                 <div bind:this={bubbleEl} class={bubbleUser}>
                     {messageContent}
                 </div>
             {:else}
                 <div bind:this={bubbleEl} class={bubbleAssistant}>
-                    <MarkdownMessage
-                        content={markedContent}
-                        citations={citationView.anchors}
-                        streaming={isLastStreaming}
-                        deferred={deferRender}
-                    />
+                    {#if displayContent}
+                        <MarkdownMessage
+                            content={markedContent}
+                            citations={citationView.anchors}
+                            streaming={isLastStreaming}
+                            deferred={deferRender}
+                        />
+                    {/if}
                     {#if imageChips.length}
-                        <div
-                            class="mt-2 pt-2 border-t border-current/15 flex flex-wrap gap-1.5"
-                        >
+                        <div class="{extraSectionClass} flex flex-wrap gap-1.5">
                             {#each imageChips as c (c.key)}
                                 <MessageImage
                                     hash={c.hash}
@@ -418,16 +430,14 @@
                         </div>
                     {/if}
                     {#if chips.length}
-                        <div
-                            class="mt-2 pt-2 border-t border-current/15 flex flex-wrap gap-1.5"
-                        >
+                        <div class="{extraSectionClass} flex flex-wrap gap-1.5">
                             {#each chips as c (c.key)}
                                 {@render chip(c)}
                             {/each}
                         </div>
                     {/if}
                     {#if codeExecutions.length}
-                        <div class="mt-2 pt-2 border-t border-current/15">
+                        <div class={extraSectionClass}>
                             <button
                                 type="button"
                                 class={expandoBtnClass}
@@ -486,7 +496,7 @@
                         </div>
                     {/if}
                     {#if citationView.sources.length}
-                        <div class="mt-2 pt-2 border-t border-current/15">
+                        <div class={extraSectionClass}>
                             <button
                                 type="button"
                                 class={expandoBtnClass}
@@ -550,7 +560,7 @@
                         </div>
                     {/if}
                     {#if suggestionsSrcdoc}
-                        <div class="mt-2 pt-2 border-t border-current/15">
+                        <div class={extraSectionClass}>
                             <button
                                 type="button"
                                 class={expandoBtnClass}

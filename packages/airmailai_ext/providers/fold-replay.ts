@@ -32,6 +32,13 @@ function codeBlock(runs: CodeExecPart[]): string {
     return blocks.length ? 'Code:\n' + blocks.join('\n\n') : '';
 }
 
+export function hasReplayableContent(msg: AirmailAIMessage): boolean {
+    return (
+        msg.parts.some((p) => p.type === 'file') ||
+        foldReplayIntoText(msg).length > 0
+    );
+}
+
 export function foldReplayIntoText(msg: AirmailAIMessage): string {
     let text = '';
     const sources: AirmailAISourceUrlPart[] = [];

@@ -4,7 +4,7 @@ import {
     PROVIDERS,
     type ProviderOption,
 } from './constants';
-import { reportAppError } from './errorStore.svelte';
+import { formatErr, reportAppError } from './errorStore.svelte';
 import {
     checkApiKeys,
     loadOpenRouterModels,
@@ -17,6 +17,8 @@ import { log } from './log';
 class ProvidersStore {
     providers = $state<ProviderOption[]>(PROVIDERS);
     savedKeys = $state<Record<string, boolean> | null>(null);
+    openRouterCatalogLoading = $state(false);
+    openRouterCatalogError = $state<string | null>(null);
 
     selectedModel = $derived(
         settingsStore.customModel
@@ -35,9 +37,27 @@ class ProvidersStore {
     }
 
     async hydrateOpenRouter(): Promise<void> {
-        const raw = await loadOpenRouterModels();
-        if (!raw || raw.length === 0) return;
-        this.setOpenRouterModels(raw);
+        this.openRouterCatalogLoading = true;
+        this.openRouterCatalogError = null;
+        try {
+            const raw = await loadOpenRouterModels();
+            if (raw) this.setOpenRouterModels(raw);
+        } catch (err) {
+            this.openRouterCatalogError = formatErr(err);
+            reportAppError(
+                'openrouter hydrate failed',
+                "Couldn't load OpenRouter models",
+                err
+            );
+        } finally {
+            this.openRouterCatalogLoading = false;
+        }
+    }
+
+    ensureOpenRouterCatalog(): void {
+        if (this.savedKeys?.openrouter !== true) return;
+        if (this.hasOpenRouterModels() || this.openRouterCatalogLoading) return;
+        void this.hydrateOpenRouter();
     }
 
     async refreshOpenRouterModels(): Promise<void> {
@@ -50,6 +70,7 @@ class ProvidersStore {
         this.providers = this.providers.map((p) =>
             p.id === 'openrouter' ? built : p
         );
+        this.openRouterCatalogError = null;
         log.info('openrouter hydrated', `${raw.length} models`);
     }
 
@@ -62,15 +83,7 @@ class ProvidersStore {
 
     onApiKeySaved(providerId: string): void {
         this.savedKeys = { ...(this.savedKeys ?? {}), [providerId]: true };
-        if (providerId === 'openrouter' && !this.hasOpenRouterModels()) {
-            this.hydrateOpenRouter().catch((err) => {
-                reportAppError(
-                    'openrouter hydrate failed',
-                    "Couldn't load OpenRouter models",
-                    err
-                );
-            });
-        }
+        if (providerId === 'openrouter') this.ensureOpenRouterCatalog();
     }
 
     onApiKeyCleared(providerId: string): void {

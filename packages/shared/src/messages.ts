@@ -45,7 +45,8 @@ export interface AirmailAIMessageMetadata {
     createdAt: number;
     model?: string;
     tokens?: { input: number; output: number };
-    stopReason?: 'stop' | 'length' | 'refusal' | 'content-filter' | 'error';
+    stopReason?:
+        'stop' | 'length' | 'refusal' | 'content-filter' | 'paused' | 'error';
 }
 
 export type AirmailAIToolName = 'web_search' | 'web_fetch' | 'code_execution';
@@ -308,6 +309,7 @@ export type BroadcastEvent =
           message: string;
       }
     | { type: 'meta-changed'; meta: ChatMeta }
+    | { type: 'chats-imported'; metas: ChatMeta[] }
     | { type: 'chat-deleted'; chatId: string }
     | { type: 'chats-cleared' };
 
@@ -495,7 +497,7 @@ export type StorageRequest =
     | { type: 'remove_draft_attachment'; chatId: string; key: string }
     | { type: 'clear_draft_attachments'; chatId: string }
     | { type: 'put_message'; message: StoredMessage; sourceTabId?: string }
-    | { type: 'import_chats'; chats: ImportChatEntry[] }
+    | { type: 'import_chats'; chats: ImportChatEntry[]; sourceTabId?: string }
     | {
           type: 'delete_message';
           chatId: string;

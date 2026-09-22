@@ -75,8 +75,8 @@ class VersionCheck {
         if (window.location.hostname !== 'airmailai.net') return;
         const outdated = !version || versionLessThan(version, MIN_EXT_VERSION);
         if (!outdated) return;
-        if (versionName?.includes('-local')) {
-            log.warn('local extension build older than MIN_EXT_VERSION', {
+        if (versionName?.includes('-dev')) {
+            log.warn('dev extension build older than MIN_EXT_VERSION', {
                 version,
                 versionName,
                 min: MIN_EXT_VERSION,

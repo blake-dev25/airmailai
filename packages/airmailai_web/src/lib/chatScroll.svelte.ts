@@ -61,7 +61,7 @@ export function createChatScroll() {
             containerEl.clientHeight -
             PIN_USER_TOP_PADDING_PX -
             naturalHeightBelow;
-        spacerHeight = Math.max(0, needed);
+        spacerHeight = Math.max(0, Math.ceil(needed));
     }
 
     function shrinkSpacerToViewport() {
@@ -72,7 +72,7 @@ export function createChatScroll() {
             containerEl.scrollTop +
             containerEl.clientHeight -
             naturalScrollHeight();
-        const next = Math.min(current, Math.max(0, overhang));
+        const next = Math.min(current, Math.max(0, Math.ceil(overhang)));
         if (next !== current) spacerHeight = next;
     }
 
