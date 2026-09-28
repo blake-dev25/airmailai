@@ -219,8 +219,8 @@ export const GOOGLE: ProviderOption = {
                 defaultTemperature: 1,
                 knowledgeCutoff: 'Jan 2025',
                 thinking: {
-                    levels: ['none', 'low', 'high'],
-                    defaultLevel: 'none',
+                    levels: ['minimal', 'low', 'medium', 'high'],
+                    defaultLevel: 'high',
                 },
             },
         },
@@ -259,7 +259,16 @@ export const GOOGLE: ProviderOption = {
             id: 'antigravity-preview-05-2026',
             name: 'Antigravity Agent Preview',
             params: {
-                contextWindow: 131072,
+                contextWindow: 1048576,
+                maxOutputTokens: 65536,
+                defaultMaxTokens: 8192,
+            },
+        },
+        {
+            id: 'antigravity-preview-09-2026',
+            name: 'Antigravity Agent Preview',
+            params: {
+                contextWindow: 1048576,
                 maxOutputTokens: 65536,
                 defaultMaxTokens: 8192,
             },

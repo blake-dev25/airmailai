@@ -19,7 +19,11 @@ import {
     applyOverride,
     staleOverrideIds,
 } from './overrides';
-import { type DocsCache, splitCached } from './docs-cache';
+import {
+    type DocsCache,
+    type DocsCacheSection,
+    splitCached,
+} from './docs-cache';
 import { type ProbeCache, splitCachedProbes } from './probe-cache';
 
 const ANTHROPIC_MODELS_OVERVIEW_URL =
@@ -143,13 +147,28 @@ export function parseAnthropicModelPage(md: string): AnthropicModelPage {
     return page;
 }
 
-async function scrapeAnthropicCutoffs(
-    cache: DocsCache
-): Promise<Map<string, string>> {
+function addPageCutoff(
+    cutoffs: Map<string, string>,
+    slug: string,
+    page: AnthropicModelPage
+): boolean {
+    if (!page.id || !page.knowledgeCutoff) {
+        console.log(
+            `⚠ model page ${slug} parsed to id=${page.id} cutoff=${page.knowledgeCutoff} - page layout may have changed`
+        );
+        return false;
+    }
+    cutoffs.set(page.id, page.knowledgeCutoff);
+    if (page.alias) cutoffs.set(page.alias, page.knowledgeCutoff);
+    return true;
+}
+
+async function scrapeAnthropicModelPages(
+    cache: DocsCache,
+    pages: DocsCacheSection<AnthropicModelPage>
+): Promise<Array<{ slug: string; page: AnthropicModelPage }>> {
     console.log('scraping Anthropic model pages for knowledge cutoffs');
-    const cutoffs = new Map<string, string>();
     const slugs = await fetchAnthropicModelSlugs();
-    const pages = cache.section<AnthropicModelPage>('anthropic', 'pages');
     const { hits, failures, misses } = splitCached(
         slugs,
         pages,
@@ -192,51 +211,47 @@ async function scrapeAnthropicCutoffs(
     );
     await cache.save();
 
-    const pagesBySlug = new Map<string, AnthropicModelPage>();
-    for (const { item, parsed } of hits) pagesBySlug.set(item, parsed);
+    const scraped: Array<{ slug: string; page: AnthropicModelPage }> = [];
     for (const { slug, page } of fresh) {
-        if (page) pagesBySlug.set(slug, page);
+        if (page) scraped.push({ slug, page });
     }
-    for (const [slug, page] of pagesBySlug) {
-        if (!page.id || !page.knowledgeCutoff) {
-            console.log(
-                `⚠ model page ${slug} parsed to id=${page.id} cutoff=${page.knowledgeCutoff} - page layout may have changed`
-            );
-            continue;
-        }
-        cutoffs.set(page.id, page.knowledgeCutoff);
-        if (page.alias) cutoffs.set(page.alias, page.knowledgeCutoff);
-        console.log(`scraped ${slug}: ${page.id} -> ${page.knowledgeCutoff}`);
-    }
-    return cutoffs;
+    return scraped;
 }
 
 async function applyAnthropicCutoffs(
     models: DerivedModel[],
     cache: DocsCache
 ): Promise<void> {
-    const cutoffs = cache.section<string>('anthropic');
+    const pages = cache.section<AnthropicModelPage>('anthropic');
+    const cutoffs = new Map<string, string>();
+    const { hits } = splitCached(pages.keys(), pages, (slug) => slug);
+    for (const { item, parsed } of hits) addPageCutoff(cutoffs, item, parsed);
+
     const uncached = models
-        .filter((m) => !m.knowledgeCutoff && cutoffs.get(m.id) === undefined)
+        .filter((m) => !m.knowledgeCutoff && !cutoffs.has(m.id))
         .map((m) => m.id);
     printIdList(
         `${uncached.length} Anthropic model(s) without a cached knowledge cutoff:`,
         uncached
     );
-    const fresh =
-        uncached.length > 0
-            ? await scrapeAnthropicCutoffs(cache)
-            : new Map<string, string>();
     if (uncached.length === 0) {
         console.log('all Anthropic knowledge cutoffs cached - skipping docs');
+    } else {
+        for (const { slug, page } of await scrapeAnthropicModelPages(
+            cache,
+            pages
+        )) {
+            if (addPageCutoff(cutoffs, slug, page)) {
+                console.log(
+                    `scraped ${slug}: ${page.id} -> ${page.knowledgeCutoff}`
+                );
+            }
+        }
     }
-    for (const [id, cutoff] of fresh) {
-        cutoffs.set(id, { code: '200', value: cutoff });
-    }
-    if (fresh.size > 0) await cache.save();
+
     for (const m of models) {
         if (m.knowledgeCutoff) continue;
-        const cutoff = fresh.get(m.id) ?? cutoffs.get(m.id)?.value;
+        const cutoff = cutoffs.get(m.id);
         if (cutoff) m.knowledgeCutoff = cutoff;
     }
 }

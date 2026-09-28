@@ -1,8 +1,14 @@
 import { resolve } from 'node:path';
-import { type ModelProbeResult, SNAPSHOT_DIR } from './shared';
+import {
+    type ModelProbeResult,
+    type ModelProbeStatus,
+    SNAPSHOT_DIR,
+} from './shared';
 
 export const PROBE_CACHE_PATH = resolve(SNAPSHOT_DIR, 'probe-cache.json');
-export const NON_200_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+export const NON_200_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+const PROBE_STATUSES: ModelProbeStatus[] = ['ok', 'grandfathered', 'dead'];
 
 type CacheProvider = 'anthropic' | 'openai' | 'google';
 const CACHE_PROVIDERS: CacheProvider[] = ['anthropic', 'openai', 'google'];
@@ -46,13 +52,24 @@ export class ProbeCache {
             );
             return new ProbeCache(sections, options);
         }
-        const parsed = JSON.parse(await file.text()) as Partial<CacheSections>;
+        const parsed = JSON.parse(await file.text()) as Partial<
+            Record<CacheProvider, Record<string, unknown>>
+        >;
         let entries = 0;
+        const malformed: string[] = [];
         for (const provider of CACHE_PROVIDERS) {
             const section = parsed[provider];
             if (!section || typeof section !== 'object') continue;
+            for (const [key, value] of Object.entries(section)) {
+                if (isStoredProbe(value)) sections[provider][key] = value;
+                else malformed.push(`${provider}/${key}`);
+            }
             entries += Object.keys(section).length;
-            sections[provider] = section;
+        }
+        if (malformed.length > 0) {
+            throw new Error(
+                `${malformed.length} malformed probe cache entry/entries in ${PROBE_CACHE_PATH} - delete them to re-probe:\n${malformed.map((k) => `   - ${k}`).join('\n')}`
+            );
         }
         console.log(
             options.refresh
@@ -108,4 +125,15 @@ export function splitCachedProbes<T>(
         else misses.push(item);
     }
     return { hits, misses };
+}
+
+function isStoredProbe(value: unknown): value is StoredProbe {
+    if (!value || typeof value !== 'object') return false;
+    const candidate = value as Partial<StoredProbe>;
+    return (
+        candidate.status !== undefined &&
+        PROBE_STATUSES.includes(candidate.status) &&
+        typeof candidate.code === 'string' &&
+        typeof candidate.probedAt === 'number'
+    );
 }

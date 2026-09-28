@@ -15,8 +15,9 @@ export const MODEL_TIERS: Record<string, ModelTierAssignment> = {
     'claude-opus-5': 'previous',
     'claude-opus-5-5': 'latest',
     'claude-sonnet-4-5-20250929': 'legacy',
-    'claude-sonnet-4-6': 'previous',
-    'claude-sonnet-5': ['latest', 'test'],
+    'claude-sonnet-4-6': 'legacy',
+    'claude-sonnet-5': 'previous',
+    'claude-sonnet-5-5': ['latest', 'test'],
     // *** openai
     'gpt-3.5-turbo': 'legacy',
     'gpt-3.5-turbo-16k': 'legacy',
@@ -55,6 +56,7 @@ export const MODEL_TIERS: Record<string, ModelTierAssignment> = {
     'o4-mini': 'legacy',
     // *** google
     'antigravity-preview-05-2026': 'legacy',
+    'antigravity-preview-09-2026': 'latest',
     'deep-research-max-preview-04-2026': 'legacy',
     'deep-research-preview-04-2026': 'legacy',
     'deep-research-pro-preview-12-2025': 'legacy',

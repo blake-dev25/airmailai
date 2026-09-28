@@ -27,6 +27,26 @@ export const ANTHROPIC: ProviderOption = {
             },
         },
         {
+            id: 'claude-sonnet-5-5',
+            name: 'Claude Sonnet 5.5',
+            params: {
+                contextWindow: 1000000,
+                maxOutputTokens: 128000,
+                defaultMaxTokens: 8192,
+                knowledgeCutoff: 'Jun 2026',
+                thinking: {
+                    levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
+                    defaultLevel: 'high',
+                    adaptive: 'required',
+                },
+            },
+            tools: {
+                webSearch: 'web_search_20260318',
+                webFetch: 'web_fetch_20260318',
+                codeExecution: 'code_execution_20260521',
+            },
+        },
+        {
             id: 'claude-fable-5-1',
             name: 'Claude Fable 5.1',
             params: {

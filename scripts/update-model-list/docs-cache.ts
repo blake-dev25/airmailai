@@ -25,6 +25,7 @@ export interface CachedOutcome<T> {
 }
 
 export interface DocsCacheSection<T> {
+    keys(): string[];
     get(key: string): CachedOutcome<T> | undefined;
     set(key: string, outcome: CachedOutcome<T>): void;
 }
@@ -50,11 +51,22 @@ export class DocsCache {
         }
         const parsed = JSON.parse(await file.text()) as Partial<CacheSections>;
         let entries = 0;
+        const malformed: string[] = [];
         for (const provider of CACHE_PROVIDERS) {
             const section = parsed[provider];
             if (!section || typeof section !== 'object') continue;
+            for (const [key, value] of Object.entries(section)) {
+                if (isFailureShaped(value) && !isStoredFailure(value)) {
+                    malformed.push(`${provider}/${key}`);
+                }
+            }
             entries += Object.keys(section).length;
             sections[provider] = section;
+        }
+        if (malformed.length > 0) {
+            throw new Error(
+                `${malformed.length} malformed docs cache entry/entries in ${DOCS_CACHE_PATH} - delete them to re-scrape:\n${malformed.map((k) => `   - ${k}`).join('\n')}`
+            );
         }
         console.log(
             options.refresh
@@ -64,17 +76,13 @@ export class DocsCache {
         return new DocsCache(sections, options);
     }
 
-    section<T>(
-        provider: CacheProvider,
-        namespace?: string
-    ): DocsCacheSection<T> {
+    section<T>(provider: CacheProvider): DocsCacheSection<T> {
         const store = this.sections[provider];
-        const cacheKey = (key: string): string =>
-            namespace ? `${namespace}:${key}` : key;
         return {
+            keys: () => Object.keys(store),
             get: (key) => {
                 if (this.options.refresh) return undefined;
-                const stored = store[cacheKey(key)];
+                const stored = store[key];
                 if (stored === undefined) return undefined;
                 if (isStoredFailure(stored)) {
                     if (
@@ -93,10 +101,10 @@ export class DocsCache {
                             'Cannot cache a 200 docs result without data'
                         );
                     }
-                    store[cacheKey(key)] = outcome.value;
+                    store[key] = outcome.value;
                     return;
                 }
-                store[cacheKey(key)] = {
+                store[key] = {
                     cacheResult: 'non-200',
                     code: outcome.code,
                     cachedAt: Date.now(),
@@ -138,8 +146,12 @@ export function splitCached<I, T>(
     return { hits, failures, misses };
 }
 
+function isFailureShaped(value: unknown): boolean {
+    return !!value && typeof value === 'object' && 'cacheResult' in value;
+}
+
 function isStoredFailure(value: unknown): value is StoredFailure {
-    if (!value || typeof value !== 'object') return false;
+    if (!isFailureShaped(value)) return false;
     const candidate = value as Partial<StoredFailure>;
     return (
         candidate.cacheResult === 'non-200' &&
