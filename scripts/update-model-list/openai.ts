@@ -264,6 +264,7 @@ function shortenCutoff(raw: string): string | null {
 
 function parseReasoningEffort(raw: string): ScrapedOpenAI['reasoning'] {
     const tokens = raw
+        .replace(/`/g, '')
         .replace(/\band\b/g, ',')
         .split(',')
         .map((s) => s.trim())
@@ -300,8 +301,8 @@ export function parseOpenAIDoc(id: string, md: string): ScrapedOpenAI {
     const ko = md.match(/^(\w+ \d{1,2}, \d{4}) knowledge cutoff$/m)?.[1];
 
     const effortMatch =
-        md.match(/[Rr]easoning\.effort supports[:\s]+([^.\n]+)\.?/)?.[1] ??
-        md.match(/supports reasoning\.effort[:\s]+([^.\n]+)\.?/)?.[1];
+        md.match(/`?[Rr]easoning\.effort`? supports[:\s]+([^.\n]+)\.?/)?.[1] ??
+        md.match(/supports `?reasoning\.effort`?[:\s]+([^.\n]+)\.?/)?.[1];
     let reasoning: ScrapedOpenAI['reasoning'];
     if (effortMatch) {
         reasoning = parseReasoningEffort(effortMatch);

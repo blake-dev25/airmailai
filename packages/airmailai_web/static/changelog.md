@@ -1,3 +1,6 @@
+**26.9.29.1** - Website
+- Added GPT-6.1-Sol, bugfixes
+
 **26.9.28.1** - Website
 - Added Claude Sonnet 5.5, bugfixes
 
