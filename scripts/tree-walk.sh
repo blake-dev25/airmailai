@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# *** List the project tree, collapsing noisy dirs into an entry count.
+# *** Print the project tree with noisy directories collapsed
 
 echo 'Project layout:'
 
 prune=(
   -name .git -o -name .tmp -o -name playwright-report
   -o -name test-results -o -name .output -o -name .wxt
-  -o -name dist -o -name node_modules
+  -o -name dist -o -name node_modules -o -name static
+  -o -name tests -o -name .historical
 )
 
 {

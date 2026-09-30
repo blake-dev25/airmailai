@@ -1,11 +1,22 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { OpenRouterModel } from '../../packages/shared/src/messages';
 import {
+    buildFirstPartyProviders,
     modelHasTier,
-    PROVIDERS,
     type ModelOption,
+    parseModelsFile,
 } from '../../packages/airmailai_web/src/lib/models';
 
 export const DEFAULT_PROVIDER = 'anthropic';
+
+const MODELS_FILE = join(
+    __dirname,
+    '../../packages/airmailai_web/static/models.json'
+);
+export const PROVIDERS = buildFirstPartyProviders(
+    parseModelsFile(JSON.parse(readFileSync(MODELS_FILE, 'utf-8')))
+);
 
 function testProviderModel(providerId: string): {
     label: string;

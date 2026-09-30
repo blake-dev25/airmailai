@@ -1,8 +1,9 @@
 export type ThinkingLevel =
     'none' | 'minimal' | 'low' | 'medium' | 'high' | 'max' | 'xhigh';
 
-export type VisibleModelTier = 'latest' | 'previous' | 'legacy';
+export type VisibleModelTier = 'new' | 'latest' | 'previous' | 'legacy';
 export type ModelTier = VisibleModelTier | 'test';
+export type ModelTierFilter = Exclude<ModelTier, 'new'>;
 export type ModelTierAssignment =
     VisibleModelTier | readonly [VisibleModelTier, 'test'];
 
@@ -50,4 +51,14 @@ export interface ProviderOption {
     models: ModelOption[];
     marketplace?: boolean;
     sandboxFileAttach?: boolean;
+}
+
+export type ProviderMeta = Omit<ProviderOption, 'models'>;
+
+export type FirstPartyProviderId = 'anthropic' | 'openai' | 'google';
+
+export interface ModelsFile {
+    schemaVersion: 1;
+    generatedAt: string;
+    providers: Record<FirstPartyProviderId, ModelOption[]>;
 }

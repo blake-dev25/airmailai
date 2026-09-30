@@ -1,7 +1,8 @@
 import type { ModelTier, ModelTierAssignment, VisibleModelTier } from './types';
 
-// *** Manually curated. Unknown ids fall through to 'legacy', so new models
-// never auto-surface in 'latest' or 'previous' without explicit promotion.
+// *** Manually curated. Unknown ids fall through to 'new', so a freshly
+// released model surfaces under "New" the moment models.json lists it and
+// stays there until it gets an explicit tier here.
 // 'test' tier is used for playwright testing and not exposed in the UI.
 export const MODEL_TIERS: Record<string, ModelTierAssignment> = {
     // *** anthropic
@@ -82,13 +83,13 @@ export const MODEL_TIERS: Record<string, ModelTierAssignment> = {
 };
 
 export function modelHasTier(modelId: string, tier: ModelTier): boolean {
-    const assignment = MODEL_TIERS[modelId] ?? 'legacy';
+    const assignment = MODEL_TIERS[modelId] ?? 'new';
     return typeof assignment === 'string'
         ? assignment === tier
         : assignment.includes(tier);
 }
 
 export function visibleModelTier(modelId: string): VisibleModelTier {
-    const assignment = MODEL_TIERS[modelId] ?? 'legacy';
+    const assignment = MODEL_TIERS[modelId] ?? 'new';
     return typeof assignment === 'string' ? assignment : assignment[0];
 }

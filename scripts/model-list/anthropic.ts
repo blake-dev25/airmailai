@@ -1,4 +1,5 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { requireApiKey } from './env';
+import { HttpError, httpJson, httpRequest } from './http';
 import {
     type DerivedModel,
     type DerivedThinking,
@@ -6,11 +7,14 @@ import {
     type ThinkingLevel,
     MODEL_PROBE_DELAY_MS,
     WEBPAGE_SCRAPE_DELAY_MS,
+    idListWarning,
     pollWithDelay,
     printIdList,
     printModelRow,
     printPollingCacheSummary,
-    probeErrorCode,
+    printStep,
+    probeFailureCode,
+    scrapeMarkdownRaw,
     sortLevels,
 } from './shared';
 import {
@@ -26,11 +30,75 @@ import {
 } from './docs-cache';
 import { type ProbeCache, splitCachedProbes } from './probe-cache';
 
+const ANTHROPIC_API = 'https://api.anthropic.com/v1';
+const ANTHROPIC_VERSION = '2023-06-01';
 const ANTHROPIC_MODELS_OVERVIEW_URL =
     'https://platform.claude.com/docs/en/models/overview.md';
 const ANTHROPIC_MODEL_PAGE_BASE = 'https://platform.claude.com/docs/en/models/';
 const ANTHROPIC_TOOL_REFERENCE_URL =
     'https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference.md';
+
+interface AnthropicCapability {
+    supported?: boolean;
+}
+
+interface AnthropicRawModel {
+    id: string;
+    display_name: string;
+    created_at?: string;
+    max_input_tokens?: number | null;
+    max_tokens?: number | null;
+    capabilities?: {
+        thinking?: AnthropicCapability & {
+            types?: {
+                enabled?: AnthropicCapability;
+                adaptive?: AnthropicCapability;
+            };
+        };
+        effort?: AnthropicCapability &
+            Partial<
+                Record<
+                    'low' | 'medium' | 'high' | 'xhigh' | 'max',
+                    AnthropicCapability
+                >
+            >;
+    };
+}
+
+interface AnthropicModelsPage {
+    data?: AnthropicRawModel[];
+    has_more?: boolean;
+    last_id?: string | null;
+}
+
+function anthropicHeaders(): Record<string, string> {
+    return {
+        'x-api-key': requireApiKey('ANTHROPIC_API_KEY'),
+        'anthropic-version': ANTHROPIC_VERSION,
+    };
+}
+
+async function listAnthropicModels(): Promise<AnthropicRawModel[]> {
+    const out: AnthropicRawModel[] = [];
+    let afterId: string | undefined;
+    do {
+        const url = new URL(`${ANTHROPIC_API}/models`);
+        url.searchParams.set('limit', '1000');
+        if (afterId) url.searchParams.set('after_id', afterId);
+        const page = await httpJson<AnthropicModelsPage>({
+            url: url.toString(),
+            label: 'Anthropic /v1/models',
+            headers: anthropicHeaders(),
+        });
+        out.push(...(page.data ?? []));
+        afterId = page.has_more && page.last_id ? page.last_id : undefined;
+    } while (afterId);
+    return out;
+}
+
+export async function fetchAnthropicModelIds(): Promise<string[]> {
+    return (await listAnthropicModels()).map((m) => m.id).sort();
+}
 
 export function parseAnthropicToolVersions(md: string): Map<string, string> {
     const newest = new Map<string, string>();
@@ -44,38 +112,41 @@ export function parseAnthropicToolVersions(md: string): Map<string, string> {
     return newest;
 }
 
-async function checkAnthropicToolVersions(): Promise<void> {
+async function checkAnthropicToolVersions(): Promise<string[]> {
     console.log('scraping tool reference for current tool versions');
     try {
-        const res = await fetch(ANTHROPIC_TOOL_REFERENCE_URL);
-        if (!res.ok) {
-            console.log(`⚠ tool reference scrape failed (HTTP ${res.status})`);
-            return;
+        const { status, text } = await httpRequest({
+            url: ANTHROPIC_TOOL_REFERENCE_URL,
+            label: 'Anthropic tool reference',
+        });
+        if (status !== 200) {
+            return [`tool reference scrape failed (HTTP ${status})`];
         }
-        const newest = parseAnthropicToolVersions(await res.text());
+        const newest = parseAnthropicToolVersions(text);
         if (newest.size === 0) {
-            console.log(
-                '⚠ tool reference parsed to 0 tool versions - page layout may have changed'
-            );
-            return;
+            return [
+                'tool reference parsed to 0 tool versions - page layout may have changed',
+            ];
         }
         const pins: Array<[string, string | boolean | undefined]> = [
             ['web_search', ANTHROPIC_TOOLS_LATEST.webSearch],
             ['web_fetch', ANTHROPIC_TOOLS_LATEST.webFetch],
             ['code_execution', ANTHROPIC_TOOLS_LATEST.codeExecution],
         ];
+        const warnings: string[] = [];
         for (const [family, pinned] of pins) {
             const date = newest.get(family);
             if (!date || typeof pinned !== 'string') continue;
             const candidate = `${family}_${date}`;
             if (pinned !== candidate) {
-                console.log(
-                    `⚠ ANTHROPIC_TOOLS_LATEST pins ${pinned} but ${candidate} exists - review and bump`
+                warnings.push(
+                    `ANTHROPIC_TOOLS_LATEST pins ${pinned} but ${candidate} exists - review and bump`
                 );
             }
         }
+        return warnings;
     } catch (e) {
-        console.log(`⚠ tool reference scrape failed: ${(e as Error).message}`);
+        return [`tool reference scrape failed: ${(e as Error).message}`];
     }
 }
 
@@ -92,36 +163,31 @@ export function parseAnthropicModelSlugs(overviewMd: string): string[] {
 
 async function fetchAnthropicModelSlugs(): Promise<string[]> {
     try {
-        const res = await fetch(ANTHROPIC_MODELS_OVERVIEW_URL);
-        if (!res.ok) {
-            console.log(`⚠ models overview scrape failed (HTTP ${res.status})`);
+        const { status, text } = await httpRequest({
+            url: ANTHROPIC_MODELS_OVERVIEW_URL,
+            label: 'Anthropic models overview',
+        });
+        if (status !== 200) {
+            console.log(`WARN models overview scrape failed (HTTP ${status})`);
             return [];
         }
-        const slugs = parseAnthropicModelSlugs(await res.text());
+        const slugs = parseAnthropicModelSlugs(text);
         if (slugs.length === 0) {
             console.log(
-                '⚠ models overview linked 0 model pages - page layout may have changed'
+                'WARN models overview linked 0 model pages - page layout may have changed'
             );
         }
         return slugs;
     } catch (e) {
-        console.log(`⚠ models overview scrape failed: ${(e as Error).message}`);
+        console.log(
+            `WARN models overview scrape failed: ${(e as Error).message}`
+        );
         return [];
     }
 }
 
-export async function scrapeAnthropicModelPageRaw(slug: string): Promise<{
-    url: string;
-    status: number;
-    markdown: string | null;
-}> {
-    const url = `${ANTHROPIC_MODEL_PAGE_BASE}${slug}/overview.md`;
-    const res = await fetch(url);
-    return {
-        url,
-        status: res.status,
-        markdown: res.ok ? await res.text() : null,
-    };
+export function scrapeAnthropicModelPageRaw(slug: string) {
+    return scrapeMarkdownRaw(`${ANTHROPIC_MODEL_PAGE_BASE}${slug}/overview.md`);
 }
 
 export interface AnthropicModelPage {
@@ -154,7 +220,7 @@ function addPageCutoff(
 ): boolean {
     if (!page.id || !page.knowledgeCutoff) {
         console.log(
-            `⚠ model page ${slug} parsed to id=${page.id} cutoff=${page.knowledgeCutoff} - page layout may have changed`
+            `WARN model page ${slug} parsed to id=${page.id} cutoff=${page.knowledgeCutoff} - page layout may have changed`
         );
         return false;
     }
@@ -194,7 +260,7 @@ async function scrapeAnthropicModelPages(
                         value: null,
                     });
                     console.log(
-                        `⚠ model page ${slug} scrape failed (HTTP ${res.status})`
+                        `WARN model page ${slug} scrape failed (HTTP ${res.status})`
                     );
                     return { slug, page: null };
                 }
@@ -203,7 +269,7 @@ async function scrapeAnthropicModelPages(
                 return { slug, page };
             } catch (e) {
                 console.log(
-                    `⚠ model page ${slug} scrape failed: ${(e as Error).message}`
+                    `WARN model page ${slug} scrape failed: ${(e as Error).message}`
                 );
                 return { slug, page: null };
             }
@@ -256,18 +322,22 @@ async function applyAnthropicCutoffs(
     }
 }
 
-export async function fetchAnthropic(
+export interface AnthropicPipelineResult {
+    models: DerivedModel[];
+    dead: string[];
+    toolVersionWarnings: string[];
+}
+
+export async function pipelineAnthropic(
     docsCache: DocsCache,
     probeCache: ProbeCache
-): Promise<DerivedModel[]> {
+): Promise<AnthropicPipelineResult> {
     console.log('starting Anthropic polling');
-    const key = process.env.ANTHROPIC_API_KEY;
-    if (!key) throw new Error('ANTHROPIC_API_KEY missing from .env');
-    const client = new Anthropic({ apiKey: key });
+    const toolVersionWarnings = await checkAnthropicToolVersions();
+    for (const w of toolVersionWarnings) console.log(`WARN ${w}`);
 
-    await checkAnthropicToolVersions();
     const out: DerivedModel[] = [];
-    for await (const m of client.models.list({ limit: 1000 })) {
+    for (const m of await listAnthropicModels()) {
         const d = deriveAnthropic(m);
         const o = ANTHROPIC_OVERRIDES[d.id];
         if (o) applyOverride(d, o);
@@ -290,7 +360,7 @@ export async function fetchAnthropic(
         misses,
         MODEL_PROBE_DELAY_MS,
         async (m) => {
-            const probe = await probeAnthropicModel(client, m.id);
+            const probe = await probeAnthropicModel(m.id);
             probeSection.set(m.id, probe);
             console.log(`tested ${m.id}, ${probe.code}`);
             return { model: m, probe };
@@ -314,31 +384,36 @@ export async function fetchAnthropic(
         `${dead.length} Anthropic model(s) failed runtime probe - skipped:`,
         dead
     );
-    return kept;
+    return { models: kept, dead, toolVersionWarnings };
 }
 
-async function probeAnthropicModel(
-    client: Anthropic,
-    id: string
-): Promise<ModelProbeResult> {
+async function probeAnthropicModel(id: string): Promise<ModelProbeResult> {
     try {
-        await client.messages.create({
-            model: id,
-            max_tokens: 1,
-            messages: [{ role: 'user', content: 'a' }],
+        await httpJson({
+            url: `${ANTHROPIC_API}/messages`,
+            label: `Anthropic probe ${id}`,
+            method: 'POST',
+            headers: anthropicHeaders(),
+            body: {
+                model: id,
+                max_tokens: 1,
+                messages: [{ role: 'user', content: 'a' }],
+            },
         });
         return { status: 'ok', code: '200' };
     } catch (e) {
-        const msg = (e as Error).message ?? String(e);
-        const code = probeErrorCode(e);
-        if (code === '404' || /not_found_error|model:/i.test(msg)) {
+        const code = probeFailureCode(e);
+        if (
+            e instanceof HttpError &&
+            (e.status === 404 || /not_found_error/i.test(e.body))
+        ) {
             return { status: 'dead', code };
         }
         return { status: 'ok', code };
     }
 }
 
-function deriveAnthropic(m: Anthropic.ModelInfo): DerivedModel {
+function deriveAnthropic(m: AnthropicRawModel): DerivedModel {
     const notes: string[] = [];
     const cap = m.capabilities;
 
@@ -385,13 +460,14 @@ function deriveAnthropic(m: Anthropic.ModelInfo): DerivedModel {
     return {
         id: m.id,
         name: m.display_name,
-        contextWindow: m.max_input_tokens,
-        maxOutputTokens: m.max_tokens,
+        contextWindow: m.max_input_tokens ?? null,
+        maxOutputTokens: m.max_tokens ?? null,
         thinking,
         ...(samplingParamsRemoved
             ? {}
             : { temperatureMax: 1, defaultTemperature: 1 }),
         tools: ANTHROPIC_TOOLS_LATEST,
+        created: m.created_at ? Date.parse(m.created_at) / 1000 : undefined,
         notes,
     };
 }
@@ -410,15 +486,46 @@ export function printAnthropicSummary(
     }
 }
 
-export function printAnthropicWarnings(models: DerivedModel[]): void {
-    const missing = models.filter((m) => !m.knowledgeCutoff).map((m) => m.id);
-    printIdList(
-        `${missing.length} model(s) missing knowledgeCutoff - add to OVERRIDES if desired:`,
-        missing
+export function anthropicWarnings(r: AnthropicPipelineResult): string[] {
+    const missing = r.models.filter((m) => !m.knowledgeCutoff).map((m) => m.id);
+    return [
+        ...r.toolVersionWarnings,
+        ...idListWarning(
+            `${missing.length} model(s) missing knowledgeCutoff - add to ANTHROPIC_OVERRIDES if desired:`,
+            missing
+        ),
+        ...idListWarning(
+            `${r.dead.length} model(s) failed the runtime probe - not published:`,
+            r.dead
+        ),
+        ...idListWarning(
+            'stale ANTHROPIC_OVERRIDES entry/entries - model not in current list, consider removing:',
+            staleOverrideIds(ANTHROPIC_OVERRIDES, r.models)
+        ),
+    ];
+}
+
+export async function modelTestAnthropic(model: string): Promise<void> {
+    await printStep(`Anthropic GET /v1/models/${model}`, () =>
+        httpJson({
+            url: `${ANTHROPIC_API}/models/${encodeURIComponent(model)}`,
+            label: 'Anthropic model',
+            headers: anthropicHeaders(),
+        })
     );
-    const stale = staleOverrideIds(ANTHROPIC_OVERRIDES, models);
-    printIdList(
-        `${stale.length} stale ANTHROPIC_OVERRIDES entry/entries - model not in current list, consider removing:`,
-        stale
+    await printStep(
+        `Anthropic POST /v1/messages (${model}, max_tokens=1)`,
+        () =>
+            httpJson({
+                url: `${ANTHROPIC_API}/messages`,
+                label: 'Anthropic messages',
+                method: 'POST',
+                headers: anthropicHeaders(),
+                body: {
+                    model,
+                    max_tokens: 1,
+                    messages: [{ role: 'user', content: 'a' }],
+                },
+            })
     );
 }

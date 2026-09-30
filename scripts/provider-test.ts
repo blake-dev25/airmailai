@@ -1,13 +1,3 @@
-// *** Isolation harness for the hand-rolled providers. Exercises a provider's
-// SSE -> AirmailAIChunk mapping for a chosen server tool (web_search /
-// web_fetch / code_execution), and the stateless text-fold replay round-trip
-// (all tools, all providers) - without touching background.ts.
-//
-//   bun scripts/provider-test.ts --provider anthropic --model claude-haiku-4-5
-//   bun scripts/provider-test.ts --provider openai    --tool web_fetch
-//   bun scripts/provider-test.ts --provider google    --tool code_execution --dump
-//
-// --dump prints every AirmailAIChunk as it streams
 import type {
     AirmailAIChunk,
     AirmailAIMessage,
@@ -16,10 +6,10 @@ import type {
     AirmailAIToolPart,
     ProviderStream,
 } from '@airmailai/shared';
-import {
-    PROVIDERS,
-    type ThinkingLevel,
-} from '../packages/airmailai_web/src/lib/models';
+import type { ThinkingLevel } from '../packages/airmailai_web/src/lib/models';
+import { loadLocalProviders } from './model-list/models-file';
+
+const PROVIDERS = loadLocalProviders();
 
 type ProviderName = 'openai' | 'anthropic' | 'google' | 'openrouter';
 type ToolName = 'web_search' | 'web_fetch' | 'code_execution';

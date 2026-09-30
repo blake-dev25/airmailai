@@ -1,23 +1,29 @@
-import { ANTHROPIC } from './anthropic';
-import { GOOGLE } from './google';
-import { OPENAI } from './openai';
+import { FIRST_PARTY_PROVIDER_IDS } from './modelsFile';
 import { OPENROUTER } from './openrouter';
 import { modelHasTier, visibleModelTier } from './tiers';
 import type {
+    FirstPartyProviderId,
     ModelOption,
-    ModelTier,
+    ModelTierFilter,
     ModelTools,
+    ModelsFile,
+    ProviderMeta,
     ProviderOption,
     VisibleModelTier,
 } from './types';
 
-export { buildOpenRouterProvider } from './openrouter';
+export { buildOpenRouterProvider, OPENROUTER } from './openrouter';
 export { MODEL_TIERS, modelHasTier, visibleModelTier } from './tiers';
+export { MODELS_FILE_PATH, parseModelsFile } from './modelsFile';
 export type {
+    FirstPartyProviderId,
     ModelOption,
     ModelParams,
+    ModelsFile,
     ModelTier,
     ModelTierAssignment,
+    ModelTierFilter,
+    ProviderMeta,
     ProviderOption,
     ThinkingLevel,
     VisibleModelTier,
@@ -35,36 +41,82 @@ const OPENAI_TOOLS: ModelTools = {
     searchFetchLinked: true,
 };
 
-function withDefaultTools(
-    provider: ProviderOption,
-    tools: ModelTools
-): ProviderOption {
-    return {
-        ...provider,
-        models: provider.models.map((m) => ({ tools, ...m })),
-    };
+interface FirstPartyProviderConfig {
+    name: string;
+    sandboxFileAttach: boolean;
+    defaultTools?: ModelTools;
 }
 
-export const PROVIDERS: ProviderOption[] = [
-    { ...ANTHROPIC, sandboxFileAttach: true },
-    { ...withDefaultTools(OPENAI, OPENAI_TOOLS), sandboxFileAttach: true },
-    { ...withDefaultTools(GOOGLE, GOOGLE_TOOLS), sandboxFileAttach: false },
-    OPENROUTER,
-].sort((a, b) => a.name.localeCompare(b.name));
+const FIRST_PARTY: Record<FirstPartyProviderId, FirstPartyProviderConfig> = {
+    anthropic: { name: 'Anthropic', sandboxFileAttach: true },
+    openai: {
+        name: 'OpenAI',
+        sandboxFileAttach: true,
+        defaultTools: OPENAI_TOOLS,
+    },
+    google: {
+        name: 'Google',
+        sandboxFileAttach: false,
+        defaultTools: GOOGLE_TOOLS,
+    },
+};
 
-const TIER_RANK: Record<VisibleModelTier, number> = {
+function compareProviderNames(a: ProviderMeta, b: ProviderMeta): number {
+    return a.name.localeCompare(b.name);
+}
+
+export const PROVIDER_META: readonly ProviderMeta[] = [
+    ...FIRST_PARTY_PROVIDER_IDS.map((id): ProviderMeta => ({
+        id,
+        name: FIRST_PARTY[id].name,
+        sandboxFileAttach: FIRST_PARTY[id].sandboxFileAttach,
+    })),
+    { id: OPENROUTER.id, name: OPENROUTER.name, marketplace: true },
+].sort(compareProviderNames);
+
+export function buildFirstPartyProviders(file: ModelsFile): ProviderOption[] {
+    return FIRST_PARTY_PROVIDER_IDS.map((id) => {
+        const config = FIRST_PARTY[id];
+        const models = config.defaultTools
+            ? file.providers[id].map((m) => ({
+                  tools: config.defaultTools,
+                  ...m,
+              }))
+            : file.providers[id];
+        return {
+            id,
+            name: config.name,
+            sandboxFileAttach: config.sandboxFileAttach,
+            models,
+        };
+    });
+}
+
+export function sortProviders(providers: ProviderOption[]): ProviderOption[] {
+    return [...providers].sort(compareProviderNames);
+}
+
+const FILTER_RANK: Record<VisibleModelTier, number> = {
+    new: 0,
+    latest: 1,
+    previous: 2,
+    legacy: 3,
+};
+
+const DEFAULT_RANK: Record<VisibleModelTier, number> = {
     latest: 0,
-    previous: 1,
-    legacy: 2,
+    new: 1,
+    previous: 2,
+    legacy: 3,
 };
 
 export function modelMatchesTier(
     modelId: string,
-    selected: ModelTier
+    selected: ModelTierFilter
 ): boolean {
     if (selected === 'test') return modelHasTier(modelId, selected);
     const modelTier = visibleModelTier(modelId);
-    return TIER_RANK[modelTier] <= TIER_RANK[selected];
+    return FILTER_RANK[modelTier] <= FILTER_RANK[selected];
 }
 
 export function defaultModelForProvider(
@@ -73,7 +125,7 @@ export function defaultModelForProvider(
     if (provider.marketplace) return provider.models[0];
     let best: { model: ModelOption; rank: number } | undefined;
     for (const m of provider.models) {
-        const rank = TIER_RANK[visibleModelTier(m.id)];
+        const rank = DEFAULT_RANK[visibleModelTier(m.id)];
         if (!best || rank < best.rank) best = { model: m, rank };
     }
     return best?.model;
@@ -81,7 +133,7 @@ export function defaultModelForProvider(
 
 export function filterProvidersByTier(
     providers: ProviderOption[],
-    selected: ModelTier
+    selected: ModelTierFilter
 ): ProviderOption[] {
     return providers
         .map((p) => {

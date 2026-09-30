@@ -4,8 +4,7 @@ import type {
     AirmailAIMessage,
     ProviderStream,
 } from '../../packages/shared/src/messages';
-import { PROVIDERS } from '../../packages/airmailai_web/src/lib/models';
-import { PROVIDER_MODELS, type ProviderKey } from './models';
+import { PROVIDER_MODELS, PROVIDERS, type ProviderKey } from './models';
 import {
     TTFT_MAX_TOKENS,
     TTFT_PROMPT,

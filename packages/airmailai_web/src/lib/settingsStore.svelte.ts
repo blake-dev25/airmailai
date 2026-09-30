@@ -10,8 +10,9 @@ import { untrack } from 'svelte';
 import {
     defaultModelForProvider,
     FONT_SIZES,
-    type ModelTier,
-    PROVIDERS,
+    type ModelTierFilter,
+    PROVIDER_META,
+    type ProviderOption,
     THEMES,
 } from './constants';
 import type { ModelOption } from './models';
@@ -50,9 +51,6 @@ function getInitialBrandingMode(): BrandingMode {
 
 const SAVE_DEBOUNCE_MS = 300;
 
-const defaultModel =
-    defaultModelForProvider(PROVIDERS[0]) ?? PROVIDERS[0].models[0];
-
 const isBool = (v: unknown) => typeof v === 'boolean';
 const isString = (v: unknown) =>
     typeof v === 'string' && v.length <= MAX_SETTING_STRING_CHARS;
@@ -83,7 +81,7 @@ const SETTING_VALIDATORS: {
     enableFileUploads: isBool,
     enableProviderFileStorage: isBool,
     providerId: (v) =>
-        typeof v === 'string' && PROVIDERS.some((p) => p.id === v),
+        typeof v === 'string' && PROVIDER_META.some((p) => p.id === v),
     modelId: (v) => typeof v === 'string' && v.length <= MAX_MODEL_ID_CHARS,
     temperature: isNumInRange(0, 2),
     maxTokens: isIntInRange(1, 1_000_000),
@@ -108,7 +106,7 @@ class SettingsStore implements UserSettings {
     chatWidth = $state(0);
     smoothTextMode = $state<'smooth' | 'raw'>('smooth');
     submitKeystroke = $state<'enter' | 'ctrl+enter'>('enter');
-    modelTier = $state<ModelTier>('latest');
+    modelTier = $state<ModelTierFilter>('latest');
     autoscrollMode = $state<'pin-user-message' | 'pin-bottom' | 'off'>(
         'pin-user-message'
     );
@@ -129,16 +127,12 @@ class SettingsStore implements UserSettings {
             : 'serif'
     );
     legalAcceptedVersion = $state('');
-    providerId = $state(PROVIDERS[0].id);
-    modelId = $state(defaultModel.id);
-    temperature = $state<number>(defaultModel.params.defaultTemperature ?? 1);
-    maxTokens = $state(defaultModel.params.defaultMaxTokens);
-    thinkingLevel = $state<string>(
-        defaultModel.params.thinking?.defaultLevel ?? 'none'
-    );
-    adaptiveThinking = $state<boolean>(
-        defaultModel.params.thinking?.adaptive !== undefined
-    );
+    providerId = $state(PROVIDER_META[0].id);
+    modelId = $state('');
+    temperature = $state<number>(1);
+    maxTokens = $state(8192);
+    thinkingLevel = $state<string>('none');
+    adaptiveThinking = $state(false);
     webSearch = $state(false);
     webFetch = $state(false);
     codeExecution = $state(false);
@@ -345,6 +339,30 @@ class SettingsStore implements UserSettings {
             this.enableCodeExecution && !!model?.tools?.codeExecution;
     }
 
+    selectModel(model: ModelOption): void {
+        this.modelId = model.id;
+        this.maxTokens = model.params.defaultMaxTokens;
+        if (model.params.defaultTemperature !== undefined)
+            this.temperature = model.params.defaultTemperature;
+        this.thinkingLevel = model.params.thinking?.defaultLevel ?? 'none';
+        this.adaptiveThinking = model.params.thinking?.adaptive !== undefined;
+        this.applyToolDefaults(model);
+    }
+
+    reconcileModelSelection(providers: ProviderOption[]): void {
+        if (this.customModel) return;
+        const provider = providers.find((p) => p.id === this.providerId);
+        if (!provider) return;
+        if (provider.models.some((m) => m.id === this.modelId)) return;
+        const model = defaultModelForProvider(provider);
+        if (!model) return;
+        log.info('model selection reconciled', {
+            from: this.modelId,
+            to: model.id,
+        });
+        this.selectModel(model);
+    }
+
     persistLegalVersion(version: string): void {
         this.legalAcceptedVersion = version;
         this.flushPendingSave();
@@ -356,14 +374,7 @@ class SettingsStore implements UserSettings {
             ? emptyCustomModelConfig(this.providerId)
             : null;
         this.modelId = enabled ? '' : (model?.id ?? '');
-        if (!enabled && model) {
-            this.temperature = model.params.defaultTemperature ?? 1;
-            this.maxTokens = model.params.defaultMaxTokens;
-            this.thinkingLevel = model.params.thinking?.defaultLevel ?? 'none';
-            this.adaptiveThinking =
-                model.params.thinking?.adaptive !== undefined;
-            this.applyToolDefaults(model);
-        }
+        if (!enabled && model) this.selectModel(model);
     }
 
     setFileUploadsEnabled(on: boolean): void {

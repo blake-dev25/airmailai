@@ -1,3 +1,4 @@
 # Prettier reads .gitignore by default, so only list paths git tracks but
 # Prettier shouldn't touch.
 *.md
+packages/airmailai_web/static/models.json

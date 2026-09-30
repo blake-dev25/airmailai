@@ -1,20 +1,28 @@
 export type {
     ModelOption,
     ModelParams,
+    ModelsFile,
     ModelTier,
     ModelTierAssignment,
+    ModelTierFilter,
+    ProviderMeta,
     ProviderOption,
     ThinkingLevel,
     VisibleModelTier,
 } from './models';
 export {
+    buildFirstPartyProviders,
     buildOpenRouterProvider,
     defaultModelForProvider,
     filterProvidersByTier,
     MODEL_TIERS,
+    MODELS_FILE_PATH,
     modelHasTier,
     modelMatchesTier,
-    PROVIDERS,
+    OPENROUTER,
+    parseModelsFile,
+    PROVIDER_META,
+    sortProviders,
     visibleModelTier,
 } from './models';
 

@@ -1,12 +1,11 @@
-import { resolve } from 'node:path';
 import { non200Expired } from './probe-cache';
-import { SNAPSHOT_DIR } from './shared';
+import type { Provider } from './shared';
+import type { StateStore } from './state-store';
 
-export const DOCS_CACHE_PATH = resolve(SNAPSHOT_DIR, 'docs-cache.json');
+export const DOCS_CACHE_KEY = 'docs-cache.json';
 
-type CacheProvider = 'anthropic' | 'openai' | 'google';
-const CACHE_PROVIDERS: CacheProvider[] = ['anthropic', 'openai', 'google'];
-type CacheSections = Record<CacheProvider, Record<string, unknown>>;
+const CACHE_PROVIDERS: Provider[] = ['anthropic', 'openai', 'google'];
+type CacheSections = Record<Provider, Record<string, unknown>>;
 
 interface DocsCacheOptions {
     refresh: boolean;
@@ -32,24 +31,27 @@ export interface DocsCacheSection<T> {
 
 export class DocsCache {
     private constructor(
+        private readonly store: StateStore,
         private readonly sections: CacheSections,
         private readonly options: DocsCacheOptions
     ) {}
 
-    static async load(options: DocsCacheOptions): Promise<DocsCache> {
+    static async load(
+        store: StateStore,
+        options: DocsCacheOptions
+    ): Promise<DocsCache> {
         const sections: CacheSections = {
             anthropic: {},
             openai: {},
             google: {},
         };
-        const file = Bun.file(DOCS_CACHE_PATH);
-        if (!(await file.exists())) {
-            console.log(
-                `no docs cache at ${DOCS_CACHE_PATH} - scraping everything`
-            );
-            return new DocsCache(sections, options);
+        const location = store.describe(DOCS_CACHE_KEY);
+        const text = await store.read(DOCS_CACHE_KEY);
+        if (text === null) {
+            console.log(`no docs cache at ${location} - scraping everything`);
+            return new DocsCache(store, sections, options);
         }
-        const parsed = JSON.parse(await file.text()) as Partial<CacheSections>;
+        const parsed = JSON.parse(text) as Partial<CacheSections>;
         let entries = 0;
         const malformed: string[] = [];
         for (const provider of CACHE_PROVIDERS) {
@@ -65,18 +67,18 @@ export class DocsCache {
         }
         if (malformed.length > 0) {
             throw new Error(
-                `${malformed.length} malformed docs cache entry/entries in ${DOCS_CACHE_PATH} - delete them to re-scrape:\n${malformed.map((k) => `   - ${k}`).join('\n')}`
+                `${malformed.length} malformed docs cache entry/entries in ${location} - delete them to re-scrape:\n${malformed.map((k) => `   - ${k}`).join('\n')}`
             );
         }
         console.log(
             options.refresh
                 ? `ignoring docs cache (${entries} entries) due to --refresh-docs`
-                : `loaded docs cache (${entries} entries) from ${DOCS_CACHE_PATH}`
+                : `loaded docs cache (${entries} entries) from ${location}`
         );
-        return new DocsCache(sections, options);
+        return new DocsCache(store, sections, options);
     }
 
-    section<T>(provider: CacheProvider): DocsCacheSection<T> {
+    section<T>(provider: Provider): DocsCacheSection<T> {
         const store = this.sections[provider];
         return {
             keys: () => Object.keys(store),
@@ -114,8 +116,8 @@ export class DocsCache {
     }
 
     async save(): Promise<void> {
-        await Bun.write(
-            DOCS_CACHE_PATH,
+        await this.store.write(
+            DOCS_CACHE_KEY,
             JSON.stringify(this.sections, null, 2)
         );
     }

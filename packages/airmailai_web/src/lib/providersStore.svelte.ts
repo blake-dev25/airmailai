@@ -1,8 +1,13 @@
 import type { OpenRouterModel } from '@airmailai/shared';
 import {
+    buildFirstPartyProviders,
     buildOpenRouterProvider,
-    PROVIDERS,
+    MODELS_FILE_PATH,
+    OPENROUTER,
+    parseModelsFile,
+    PROVIDER_META,
     type ProviderOption,
+    sortProviders,
 } from './constants';
 import { formatErr, reportAppError } from './errorStore.svelte';
 import {
@@ -15,7 +20,14 @@ import { settingsStore } from './settingsStore.svelte';
 import { log } from './log';
 
 class ProvidersStore {
-    providers = $state<ProviderOption[]>(PROVIDERS);
+    private firstParty = $state<ProviderOption[] | null>(null);
+    private openRouter = $state<ProviderOption>(OPENROUTER);
+    providers = $derived<ProviderOption[]>(
+        this.firstParty
+            ? sortProviders([...this.firstParty, this.openRouter])
+            : []
+    );
+    modelsLoadError = $state<string | null>(null);
     savedKeys = $state<Record<string, boolean> | null>(null);
     openRouterCatalogLoading = $state(false);
     openRouterCatalogError = $state<string | null>(null);
@@ -32,8 +44,31 @@ class ProvidersStore {
         this.savedKeys !== null && Object.values(this.savedKeys).some(Boolean)
     );
 
+    async hydrateModels(): Promise<void> {
+        this.modelsLoadError = null;
+        try {
+            const res = await fetch(MODELS_FILE_PATH, { cache: 'no-cache' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const file = parseModelsFile(await res.json());
+            this.firstParty = buildFirstPartyProviders(file);
+            log.info('models hydrated', {
+                generatedAt: file.generatedAt,
+                counts: Object.fromEntries(
+                    this.firstParty.map((p) => [p.id, p.models.length])
+                ),
+            });
+        } catch (err) {
+            this.modelsLoadError = formatErr(err);
+            reportAppError(
+                'model list load failed',
+                "Couldn't load the model list",
+                err
+            );
+        }
+    }
+
     async refreshSavedKeys(): Promise<void> {
-        this.savedKeys = await checkApiKeys(PROVIDERS.map((p) => p.id));
+        this.savedKeys = await checkApiKeys(PROVIDER_META.map((p) => p.id));
     }
 
     async hydrateOpenRouter(): Promise<void> {
@@ -66,19 +101,13 @@ class ProvidersStore {
     }
 
     private setOpenRouterModels(raw: OpenRouterModel[]): void {
-        const built = buildOpenRouterProvider(raw);
-        this.providers = this.providers.map((p) =>
-            p.id === 'openrouter' ? built : p
-        );
+        this.openRouter = buildOpenRouterProvider(raw);
         this.openRouterCatalogError = null;
         log.info('openrouter hydrated', `${raw.length} models`);
     }
 
     hasOpenRouterModels(): boolean {
-        return (
-            (this.providers.find((p) => p.id === 'openrouter')?.models.length ??
-                0) > 0
-        );
+        return this.openRouter.models.length > 0;
     }
 
     onApiKeySaved(providerId: string): void {
@@ -92,7 +121,7 @@ class ProvidersStore {
 
     markAllKeysCleared(): void {
         this.savedKeys = Object.fromEntries(
-            PROVIDERS.map((p) => [p.id, false])
+            PROVIDER_META.map((p) => [p.id, false])
         );
     }
 }

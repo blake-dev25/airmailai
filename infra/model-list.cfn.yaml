@@ -1,0 +1,188 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+    AirmailAI model list automation: an hourly watcher Lambda that diffs provider
+    model ids and an updater Lambda that rebuilds models.json in the website
+    bucket. Code is uploaded separately by scripts/deploy-model-list.ts.
+
+Parameters:
+    WwwBucketName:
+        Type: String
+        Description: Website bucket that serves models.json
+    CloudFrontDistributionId:
+        Type: String
+        Description: Distribution in front of the website bucket
+    StateBucketName:
+        Type: String
+        Description: Private bucket for caches, snapshots, and watcher state
+    SsmPrefix:
+        Type: String
+        Default: /airmailai/model-list/
+        Description: SSM Parameter Store path holding the API keys and Discord webhook
+
+Resources:
+    StateBucket:
+        Type: AWS::S3::Bucket
+        DeletionPolicy: Retain
+        UpdateReplacePolicy: Retain
+        Properties:
+            BucketName: !Ref StateBucketName
+            PublicAccessBlockConfiguration:
+                BlockPublicAcls: true
+                BlockPublicPolicy: true
+                IgnorePublicAcls: true
+                RestrictPublicBuckets: true
+            BucketEncryption:
+                ServerSideEncryptionConfiguration:
+                    - ServerSideEncryptionByDefault:
+                          SSEAlgorithm: AES256
+            LifecycleConfiguration:
+                Rules:
+                    - Id: expire-snapshots
+                      Status: Enabled
+                      Prefix: snapshots/
+                      ExpirationInDays: 30
+
+    LambdaRole:
+        Type: AWS::IAM::Role
+        Properties:
+            RoleName: airmailai-model-list-lambda
+            AssumeRolePolicyDocument:
+                Version: '2012-10-17'
+                Statement:
+                    - Effect: Allow
+                      Principal:
+                          Service: lambda.amazonaws.com
+                      Action: sts:AssumeRole
+            ManagedPolicyArns:
+                - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+            Policies:
+                - PolicyName: model-list-access
+                  PolicyDocument:
+                      Version: '2012-10-17'
+                      Statement:
+                          - Effect: Allow
+                            Action: s3:ListBucket
+                            Resource: !Sub arn:aws:s3:::${StateBucketName}
+                          - Effect: Allow
+                            Action:
+                                - s3:GetObject
+                                - s3:PutObject
+                            Resource: !Sub arn:aws:s3:::${StateBucketName}/*
+                          - Effect: Allow
+                            Action: s3:ListBucket
+                            Resource: !Sub arn:aws:s3:::${WwwBucketName}
+                            Condition:
+                                StringEquals:
+                                    s3:prefix: models.json
+                          - Effect: Allow
+                            Action:
+                                - s3:GetObject
+                                - s3:PutObject
+                            Resource: !Sub arn:aws:s3:::${WwwBucketName}/models.json
+                          - Effect: Allow
+                            Action: cloudfront:CreateInvalidation
+                            Resource: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistributionId}
+                          - Effect: Allow
+                            Action: ssm:GetParametersByPath
+                            Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}*
+                          - Effect: Allow
+                            Action: kms:Decrypt
+                            Resource: '*'
+                            Condition:
+                                StringEquals:
+                                    kms:ViaService: !Sub ssm.${AWS::Region}.amazonaws.com
+                          - Effect: Allow
+                            Action: lambda:InvokeFunction
+                            Resource: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:airmailai-model-list-updater
+
+    WatcherLogGroup:
+        Type: AWS::Logs::LogGroup
+        Properties:
+            LogGroupName: /aws/lambda/airmailai-model-list-watcher
+            RetentionInDays: 30
+
+    UpdaterLogGroup:
+        Type: AWS::Logs::LogGroup
+        Properties:
+            LogGroupName: /aws/lambda/airmailai-model-list-updater
+            RetentionInDays: 30
+
+    WatcherFunction:
+        Type: AWS::Lambda::Function
+        DependsOn: WatcherLogGroup
+        Properties:
+            FunctionName: airmailai-model-list-watcher
+            Description: Hourly diff of provider model ids; notifies Discord and triggers the updater on new models
+            Runtime: nodejs22.x
+            Architectures:
+                - arm64
+            Handler: index.watcherHandler
+            MemorySize: 256
+            Timeout: 120
+            Role: !GetAtt LambdaRole.Arn
+            Environment:
+                Variables:
+                    AIRMAILAI_WEB_S3_BUCKET: !Ref WwwBucketName
+                    AIRMAILAI_WEB_CLOUDFRONT_DISTRIBUTION_ID: !Ref CloudFrontDistributionId
+                    AIRMAILAI_MODEL_LIST_STATE_BUCKET: !Ref StateBucketName
+                    AIRMAILAI_MODEL_LIST_SSM_PREFIX: !Ref SsmPrefix
+                    AIRMAILAI_MODEL_LIST_UPDATER_FUNCTION: airmailai-model-list-updater
+            Code:
+                ZipFile: |
+                    exports.watcherHandler = async () => {
+                      throw new Error('placeholder code - run: bun run deploy:model-list');
+                    };
+                    exports.updaterHandler = exports.watcherHandler;
+
+    UpdaterFunction:
+        Type: AWS::Lambda::Function
+        DependsOn: UpdaterLogGroup
+        Properties:
+            FunctionName: airmailai-model-list-updater
+            Description: Rebuilds models.json from provider APIs and docs, preserving published models unless explicitly retired
+            Runtime: nodejs22.x
+            Architectures:
+                - arm64
+            Handler: index.updaterHandler
+            MemorySize: 1024
+            Timeout: 900
+            Role: !GetAtt LambdaRole.Arn
+            Environment:
+                Variables:
+                    AIRMAILAI_WEB_S3_BUCKET: !Ref WwwBucketName
+                    AIRMAILAI_WEB_CLOUDFRONT_DISTRIBUTION_ID: !Ref CloudFrontDistributionId
+                    AIRMAILAI_MODEL_LIST_STATE_BUCKET: !Ref StateBucketName
+                    AIRMAILAI_MODEL_LIST_SSM_PREFIX: !Ref SsmPrefix
+            Code:
+                ZipFile: |
+                    exports.updaterHandler = async () => {
+                      throw new Error('placeholder code - run: bun run deploy:model-list');
+                    };
+                    exports.watcherHandler = exports.updaterHandler;
+
+    HourlyRule:
+        Type: AWS::Events::Rule
+        Properties:
+            Name: airmailai-model-list-hourly
+            Description: Run the model list watcher five minutes past every hour
+            ScheduleExpression: cron(5 * * * ? *)
+            State: ENABLED
+            Targets:
+                - Arn: !GetAtt WatcherFunction.Arn
+                  Id: watcher
+
+    HourlyRulePermission:
+        Type: AWS::Lambda::Permission
+        Properties:
+            Action: lambda:InvokeFunction
+            FunctionName: !Ref WatcherFunction
+            Principal: events.amazonaws.com
+            SourceArn: !GetAtt HourlyRule.Arn
+
+Outputs:
+    WatcherFunctionName:
+        Value: !Ref WatcherFunction
+    UpdaterFunctionName:
+        Value: !Ref UpdaterFunction
+    StateBucket:
+        Value: !Ref StateBucket

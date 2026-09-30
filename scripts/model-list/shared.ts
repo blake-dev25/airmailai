@@ -1,11 +1,17 @@
-import { resolve } from 'node:path';
 import TurndownService from 'turndown';
+import { SAFE_MODEL_ID } from '../../packages/airmailai_web/src/lib/models/modelsFile';
 import type {
+    FirstPartyProviderId,
+    ModelOption,
+    ModelParams,
     ModelTools,
     ThinkingLevel,
 } from '../../packages/airmailai_web/src/lib/models/types';
+import { requireApiKey } from './env';
+import { HttpError, httpJson, httpRequest, sleep } from './http';
 
 export type { ThinkingLevel };
+export type Provider = FirstPartyProviderId;
 
 export interface DerivedThinking {
     levels: ThinkingLevel[];
@@ -25,6 +31,7 @@ export interface DerivedModel {
     defaultTemperature?: number;
     tools?: ModelTools;
     created?: number;
+    shutdownDate?: string;
     notes: string[];
 }
 
@@ -63,24 +70,12 @@ export interface OpenRouterIndex {
     byProvider: Map<string, Map<string, OpenRouterModelInfo>>;
 }
 
-export interface Snapshot {
-    provider: string;
-    providerName: string;
-    generatedAt: string;
-    models: DerivedModel[];
-}
-
 export type ModelProbeStatus = 'ok' | 'grandfathered' | 'dead';
 export interface ModelProbeResult {
     status: ModelProbeStatus;
     code: string;
 }
 
-export const MODELS_DIR = resolve(
-    import.meta.dir,
-    '../../packages/airmailai_web/src/lib/models'
-);
-export const SNAPSHOT_DIR = resolve(import.meta.dir, '../.tmp');
 export const OPENROUTER_URL = 'https://openrouter.ai/api/v1/models';
 export const WEBPAGE_SCRAPE_DELAY_MS = 2000;
 export const MODEL_PROBE_DELAY_MS = 2000;
@@ -175,15 +170,10 @@ export function printIdList(header: string, ids: string[]): void {
     for (const id of ids) console.log(`   - ${id}`);
 }
 
-export function tsString(value: string): string {
-    const inner = JSON.stringify(value)
-        .slice(1, -1)
-        .replace(/\\"/g, '"')
-        .replace(/'/g, "\\'");
-    return `'${inner}'`;
+export function idListWarning(header: string, ids: string[]): string[] {
+    if (ids.length === 0) return [];
+    return [`${header}\n${ids.map((id) => `   - ${id}`).join('\n')}`];
 }
-
-const SAFE_MODEL_ID = /^[A-Za-z0-9._:/~-]+$/;
 
 export function assertSafeModelId(id: string): void {
     if (!SAFE_MODEL_ID.test(id)) {
@@ -197,8 +187,8 @@ function versionSegments(name: string): number[] {
 }
 
 export function compareModelsByVersion(
-    a: DerivedModel,
-    b: DerivedModel
+    a: { name: string },
+    b: { name: string }
 ): number {
     const av = versionSegments(a.name);
     const bv = versionSegments(b.name);
@@ -210,157 +200,40 @@ export function compareModelsByVersion(
     return a.name.localeCompare(b.name);
 }
 
-export function emitProviderFile(
-    providerId: string,
-    providerName: string,
-    models: DerivedModel[]
-): string {
-    const header = `import type { ProviderOption } from './types';
-
-// *** NOTE FOR LLMS: NEVER MANUALLY MODIFY IDS/NAMES, THEY ARE CORRECT
-// This file is automatically written over by scripts/update-model-list.ts, edits will not be saved
-export const ${providerId.toUpperCase()}: ProviderOption = {
-    id: ${tsString(providerId)},
-    name: ${tsString(providerName)},
-    models: [
-`;
-    const body = [...models]
-        .sort(compareModelsByVersion)
-        .map(emitModelEntry)
-        .join('');
-    const footer = `    ],
-};
-`;
-    return header + body + footer;
-}
-
-function emitModelEntry(m: DerivedModel): string {
+export function toModelOption(m: DerivedModel): ModelOption {
     assertSafeModelId(m.id);
     const maxOutputTokens = m.maxOutputTokens ?? 0;
-    const defaultMaxTokens =
-        maxOutputTokens > 0 ? Math.min(8192, maxOutputTokens) : 8192;
-    const lines: string[] = [];
-    lines.push('        {');
-    lines.push(`            id: ${tsString(m.id)},`);
-    lines.push(`            name: ${tsString(m.name)},`);
-    lines.push('            params: {');
-    lines.push(`                contextWindow: ${m.contextWindow ?? 0},`);
-    lines.push(`                maxOutputTokens: ${maxOutputTokens},`);
-    lines.push(`                defaultMaxTokens: ${defaultMaxTokens},`);
-    if (m.temperatureMax !== undefined) {
-        lines.push(`                temperatureMax: ${m.temperatureMax},`);
-        lines.push(
-            `                defaultTemperature: ${m.defaultTemperature ?? 1},`
-        );
-    }
-    if (m.knowledgeCutoff) {
-        lines.push(
-            `                knowledgeCutoff: ${tsString(m.knowledgeCutoff)},`
-        );
-    }
-    if (m.thinking) {
-        lines.push('                thinking: {');
-        const lv = m.thinking.levels.map(tsString).join(', ');
-        lines.push(`                    levels: [${lv}],`);
-        lines.push(
-            `                    defaultLevel: ${tsString(m.thinking.defaultLevel)},`
-        );
-        if (m.thinking.adaptive) {
-            lines.push(
-                `                    adaptive: ${tsString(m.thinking.adaptive)},`
-            );
-        }
-        lines.push('                },');
-    }
-    lines.push('            },');
-    if (m.tools) {
-        const formatToolValue = (v: boolean | string): string =>
-            typeof v === 'string' ? tsString(v) : String(v);
-        lines.push('            tools: {');
-        if (m.tools.webSearch !== undefined) {
-            lines.push(
-                `                webSearch: ${formatToolValue(m.tools.webSearch)},`
-            );
-        }
-        if (m.tools.webFetch !== undefined) {
-            lines.push(
-                `                webFetch: ${formatToolValue(m.tools.webFetch)},`
-            );
-        }
-        if (m.tools.codeExecution !== undefined) {
-            lines.push(
-                `                codeExecution: ${formatToolValue(m.tools.codeExecution)},`
-            );
-        }
-        if (m.tools.searchFetchLinked) {
-            lines.push(`                searchFetchLinked: true,`);
-        }
-        lines.push('            },');
-    }
-    lines.push('        },');
-    return lines.join('\n') + '\n';
-}
-
-export async function emitAndMaybeWrite(
-    filename: string,
-    content: string,
-    opts: { write: boolean; verbose: boolean }
-): Promise<void> {
-    if (opts.verbose) {
-        console.log(`\n--- Generated ${filename} ---\n`);
-        console.log(content);
-    }
-    if (opts.write) {
-        const path = resolve(MODELS_DIR, filename);
-        await Bun.write(path, content);
-        console.log(`\n✓ wrote ${content.length} bytes to ${path}`);
-    }
-}
-
-function snapshotTimestamp(): string {
-    return new Date().toISOString().slice(0, 19).replace(/:/g, '-');
-}
-
-export async function writeSnapshot(
-    provider: string,
-    providerName: string,
-    models: DerivedModel[]
-): Promise<void> {
-    const filename = `run_${provider}_${snapshotTimestamp()}.json`;
-    const path = resolve(SNAPSHOT_DIR, filename);
-    const payload: Snapshot = {
-        provider,
-        providerName,
-        generatedAt: new Date().toISOString(),
-        models,
+    const params: ModelParams = {
+        contextWindow: m.contextWindow ?? 0,
+        maxOutputTokens,
+        defaultMaxTokens:
+            maxOutputTokens > 0 ? Math.min(8192, maxOutputTokens) : 8192,
     };
-    await Bun.write(path, JSON.stringify(payload, null, 2));
-    console.log(`✓ wrote snapshot: ${path}`);
-}
-
-export async function loadSnapshot(path: string): Promise<Snapshot> {
-    const text = await Bun.file(path).text();
-    const data = JSON.parse(text) as Partial<Snapshot>;
-    if (
-        data.provider !== 'anthropic' &&
-        data.provider !== 'openai' &&
-        data.provider !== 'google'
-    ) {
-        throw new Error(
-            `${path}: unknown or missing provider "${data.provider}"`
-        );
+    if (m.temperatureMax !== undefined) {
+        params.temperatureMax = m.temperatureMax;
+        params.defaultTemperature = m.defaultTemperature ?? 1;
     }
-    if (!Array.isArray(data.models)) {
-        throw new Error(`${path}: missing models array`);
+    if (m.knowledgeCutoff) params.knowledgeCutoff = m.knowledgeCutoff;
+    if (m.thinking) {
+        params.thinking = {
+            levels: [...m.thinking.levels],
+            defaultLevel: m.thinking.defaultLevel,
+            ...(m.thinking.adaptive ? { adaptive: m.thinking.adaptive } : {}),
+        };
     }
-    if (typeof data.providerName !== 'string') {
-        throw new Error(`${path}: missing providerName`);
+    const option: ModelOption = { id: m.id, name: m.name, params };
+    if (m.tools) {
+        const tools: ModelTools = {};
+        if (m.tools.webSearch !== undefined)
+            tools.webSearch = m.tools.webSearch;
+        if (m.tools.webFetch !== undefined) tools.webFetch = m.tools.webFetch;
+        if (m.tools.codeExecution !== undefined) {
+            tools.codeExecution = m.tools.codeExecution;
+        }
+        if (m.tools.searchFetchLinked) tools.searchFetchLinked = true;
+        option.tools = tools;
     }
-    return data as Snapshot;
-}
-
-export function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+    return option;
 }
 
 export async function pollWithDelay<T, R>(
@@ -388,19 +261,26 @@ export function printPollingCacheSummary(
     );
 }
 
-export function probeErrorCode(e: unknown): string {
-    const raw =
-        e && typeof e === 'object'
-            ? (e as { status?: unknown; code?: unknown; message?: unknown })
-            : {};
-    if (typeof raw.status === 'number' || typeof raw.status === 'string') {
-        return String(raw.status);
+export function probeFailureCode(e: unknown): string {
+    return e instanceof HttpError ? String(e.status) : 'error';
+}
+
+export async function printStep(
+    label: string,
+    fn: () => Promise<unknown>
+): Promise<void> {
+    console.log(`\n--- ${label} ---`);
+    try {
+        const result = await fn();
+        console.log(JSON.stringify(result, null, 2));
+    } catch (e) {
+        if (e instanceof HttpError) {
+            console.log(`HTTP ${e.status}`);
+            console.log(e.body);
+        } else {
+            console.log(String(e));
+        }
     }
-    if (typeof raw.code === 'number' || typeof raw.code === 'string') {
-        return String(raw.code);
-    }
-    const msg = typeof raw.message === 'string' ? raw.message : String(e);
-    return msg.match(/\b(\d{3})\b/)?.[1] ?? 'error';
 }
 
 const turndown = new TurndownService({
@@ -410,21 +290,29 @@ const turndown = new TurndownService({
 turndown.remove(['style', 'script', 'noscript', 'iframe']);
 turndown.remove((node) => node.nodeName.toLowerCase() === 'svg');
 
-export async function scrapeDocsRaw(
-    url: string
-): Promise<{ url: string; status: number; markdown: string | null }> {
-    const res = await fetch(url);
-    if (!res.ok) return { url, status: res.status, markdown: null };
-    const html = await res.text();
-    return { url, status: res.status, markdown: turndown.turndown(html) };
+export interface ScrapeResult {
+    url: string;
+    status: number;
+    markdown: string | null;
+}
+
+export async function scrapeDocsRaw(url: string): Promise<ScrapeResult> {
+    const { status, text } = await httpRequest({ url, label: url });
+    if (status < 200 || status >= 300) return { url, status, markdown: null };
+    return { url, status, markdown: turndown.turndown(text) };
+}
+
+export async function scrapeMarkdownRaw(url: string): Promise<ScrapeResult> {
+    const { status, text } = await httpRequest({ url, label: url });
+    if (status < 200 || status >= 300) return { url, status, markdown: null };
+    return { url, status, markdown: text };
 }
 
 export async function runScrapeTest<T>(
     id: string,
-    fetcher: (
-        id: string
-    ) => Promise<{ url: string; status: number; markdown: string | null }>,
-    parser: (id: string, md: string) => T
+    fetcher: (id: string) => Promise<ScrapeResult>,
+    parser: (id: string, md: string) => T,
+    showMarkdown: boolean
 ): Promise<void> {
     const { url, status, markdown } = await fetcher(id);
     console.log(`URL:    ${url}`);
@@ -437,7 +325,7 @@ export async function runScrapeTest<T>(
     const parsed = parser(id, markdown);
     console.log('\n--- parsed ---');
     console.log(JSON.stringify(parsed, null, 2));
-    if (process.argv.includes('--show-md')) {
+    if (showMarkdown) {
         console.log('\n--- markdown ---');
         console.log(markdown);
     }
@@ -445,14 +333,13 @@ export async function runScrapeTest<T>(
 
 export async function fetchOpenRouterIndex(): Promise<OpenRouterIndex> {
     console.log('starting OpenRouter polling');
-    const key = process.env.OPENROUTER_API_KEY;
-    if (!key) throw new Error('OPENROUTER_API_KEY missing from .env');
-    const res = await fetch(OPENROUTER_URL, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${key}` },
+    const json = await httpJson<{ data?: OpenRouterRawModel[] }>({
+        url: OPENROUTER_URL,
+        label: 'OpenRouter /models',
+        headers: {
+            Authorization: `Bearer ${requireApiKey('OPENROUTER_API_KEY')}`,
+        },
     });
-    if (!res.ok) throw new Error(`OpenRouter /models HTTP ${res.status}`);
-    const json = (await res.json()) as { data?: OpenRouterRawModel[] };
     const byProvider = new Map<string, Map<string, OpenRouterModelInfo>>();
 
     for (const raw of json.data ?? []) {

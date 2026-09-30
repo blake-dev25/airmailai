@@ -1,22 +1,3 @@
-// *** Generates the third-party license notices from the runtime dependencies
-// actually bundled into the shipped web app + extension, writing identical
-// copies to the repo root (THIRD_PARTY_LICENSES), the website
-// (static/legal/third-party-licenses.txt), and the extension package
-// (public/third-party-licenses.txt). Walks
-// the `dependencies` (not devDependencies) of airmailai_web + airmailai_ext,
-// drops the workspace package (@airmailai/shared), reads each
-// installed package's license + copyright from its package.json + LICENSE
-// file, and emits one attribution block per package followed by the full text
-// of every distinct license referenced.
-//
-// For Apache-2.0 packages that ship a NOTICE file, its contents are reproduced
-// in the package's block (required by Apache-2.0 Section 4(d)). For packages
-// offered under an SPDX "X OR Y" choice, we elect a single license (see
-// LICENSE_ELECTIONS) so the attribution states the terms we actually rely on.
-//
-//   bun scripts/gen-third-party-licenses.ts            # dry run (prints)
-//   bun scripts/gen-third-party-licenses.ts --write    # write the file
-
 import { resolve } from 'node:path';
 
 const ROOT = resolve(import.meta.dir, '..');

@@ -80,7 +80,7 @@ console.log('\n> S3 cp /security.txt (text/plain)...');
 await $`aws s3 cp ${dist}/security.txt s3://${BUCKET}/security.txt --cache-control ${SHORT_CACHE} --content-type "text/plain; charset=utf-8" --no-progress`;
 
 console.log('\n> S3 sync HTML/root (short cache, --delete)...');
-await $`aws s3 sync ${dist}/ s3://${BUCKET}/ --exclude "assets/*" --exclude "legal/*" --exclude "changelog.md" --exclude "security.txt" --exclude "deploy-metadata/*" --cache-control ${SHORT_CACHE} --delete --no-progress`;
+await $`aws s3 sync ${dist}/ s3://${BUCKET}/ --exclude "assets/*" --exclude "legal/*" --exclude "changelog.md" --exclude "security.txt" --exclude "deploy-metadata/*" --exclude "models.json" --cache-control ${SHORT_CACHE} --delete --no-progress`;
 
 console.log('\n> CloudFront invalidation...');
 const invalidation =

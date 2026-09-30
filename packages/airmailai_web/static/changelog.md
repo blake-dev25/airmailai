@@ -1,3 +1,6 @@
+**26.9.30.1** - Website
+- Added automatic model list updates
+
 **26.9.29.1** - Website
 - Added GPT-6.1-Sol, bugfixes
 

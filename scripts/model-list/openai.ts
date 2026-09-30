@@ -1,4 +1,5 @@
-import OpenAI from 'openai';
+import { requireApiKey } from './env';
+import { HttpError, httpJson } from './http';
 import {
     type DerivedModel,
     type DerivedThinking,
@@ -11,11 +12,12 @@ import {
     fallbackReasoningThinking,
     findOpenRouter,
     formatKnowledgeCutoff,
+    idListWarning,
     pollWithDelay,
-    printIdList,
     printModelRow,
     printPollingCacheSummary,
-    probeErrorCode,
+    printStep,
+    probeFailureCode,
     scrapeDocsRaw,
     sortLevels,
     stripProviderName,
@@ -25,21 +27,48 @@ import { OPENAI_OVERRIDES, staleOverrideIds } from './overrides';
 import { type DocsCache, splitCached } from './docs-cache';
 import { type ProbeCache, splitCachedProbes } from './probe-cache';
 
+const OPENAI_API = 'https://api.openai.com/v1';
+const OPENAI_MODELS_INDEX_URL = 'https://developers.openai.com/api/docs/models';
+
+interface OpenAIRawModel {
+    id: string;
+    created: number;
+    owned_by: string;
+    shutdown_date?: string | null;
+}
+
 interface OpenAIRaw {
     id: string;
     created: number;
     ownedBy: string;
+    shutdownDate?: string;
+}
+
+function openaiHeaders(): Record<string, string> {
+    return { Authorization: `Bearer ${requireApiKey('OPENAI_API_KEY')}` };
+}
+
+async function listOpenAIModels(): Promise<OpenAIRawModel[]> {
+    const res = await httpJson<{ data?: OpenAIRawModel[] }>({
+        url: `${OPENAI_API}/models`,
+        label: 'OpenAI /v1/models',
+        headers: openaiHeaders(),
+    });
+    return res.data ?? [];
+}
+
+export async function fetchOpenAIModelIds(): Promise<string[]> {
+    return (await listOpenAIModels()).map((m) => m.id).sort();
 }
 
 async function fetchOpenAI(): Promise<OpenAIRaw[]> {
     console.log('starting OpenAI polling');
-    const key = process.env.OPENAI_API_KEY;
-    if (!key) throw new Error('OPENAI_API_KEY missing from .env');
-    const client = new OpenAI({ apiKey: key });
-    const out: OpenAIRaw[] = [];
-    for await (const m of client.models.list()) {
-        out.push({ id: m.id, created: m.created, ownedBy: m.owned_by });
-    }
+    const out: OpenAIRaw[] = (await listOpenAIModels()).map((m) => ({
+        id: m.id,
+        created: m.created,
+        ownedBy: m.owned_by,
+        ...(m.shutdown_date ? { shutdownDate: m.shutdown_date } : {}),
+    }));
     out.sort((a, b) => b.created - a.created);
     return out;
 }
@@ -128,8 +157,6 @@ export async function scrapeOpenAIDocsRaw(id: string) {
     );
 }
 
-const OPENAI_MODELS_INDEX_URL = 'https://developers.openai.com/api/docs/models';
-
 const LEVEL_TOKENS_LONGEST_FIRST: ThinkingLevel[] = [
     'minimal',
     'medium',
@@ -192,13 +219,13 @@ async function applyOpenAIIndexLevels(models: DerivedModel[]): Promise<void> {
     console.log('scraping OpenAI models index for reasoning levels');
     const { status, markdown } = await scrapeDocsRaw(OPENAI_MODELS_INDEX_URL);
     if (!markdown) {
-        console.log(`⚠ models index scrape failed (HTTP ${status})`);
+        console.log(`WARN models index scrape failed (HTTP ${status})`);
         return;
     }
     const levelsById = parseOpenAIModelsIndex(markdown);
     if (levelsById.size === 0) {
         console.log(
-            '⚠ models index parsed to 0 reasoning entries - page layout may have changed'
+            'WARN models index parsed to 0 reasoning entries - page layout may have changed'
         );
         return;
     }
@@ -380,25 +407,24 @@ async function applyOpenAIDocFallback(
     }
 }
 
-async function probeOpenAIModel(
-    client: OpenAI,
-    id: string
-): Promise<ModelProbeResult> {
+async function probeOpenAIModel(id: string): Promise<ModelProbeResult> {
     try {
-        await client.responses.create({
-            model: id,
-            input: 'a',
-            max_output_tokens: 16,
+        await httpJson({
+            url: `${OPENAI_API}/responses`,
+            label: `OpenAI probe ${id}`,
+            method: 'POST',
+            headers: openaiHeaders(),
+            body: { model: id, input: 'a', max_output_tokens: 16 },
         });
         return { status: 'ok', code: '200' };
     } catch (e) {
-        const msg = (e as Error).message ?? String(e);
-        const code = probeErrorCode(e);
+        const code = probeFailureCode(e);
         if (
-            code === '404' ||
-            /model not found|not found .*model|unsupported|not supported/i.test(
-                msg
-            )
+            e instanceof HttpError &&
+            (e.status === 404 ||
+                /model not found|not found .*model|unsupported|not supported/i.test(
+                    e.body
+                ))
         ) {
             return { status: 'dead', code };
         }
@@ -423,15 +449,12 @@ async function probeOpenAIModels(
         misses.length,
         MODEL_PROBE_DELAY_MS
     );
-    const key = process.env.OPENAI_API_KEY;
-    if (!key) throw new Error('OPENAI_API_KEY missing from .env');
-    const client = new OpenAI({ apiKey: key });
 
     const fresh = await pollWithDelay(
         misses,
         MODEL_PROBE_DELAY_MS,
         async (m) => {
-            const probe = await probeOpenAIModel(client, m.id);
+            const probe = await probeOpenAIModel(m.id);
             section.set(m.id, probe);
             console.log(`tested ${m.id}, ${probe.code}`);
             return { model: m, probe };
@@ -464,6 +487,7 @@ export interface OpenAIPipelineResult {
     skipped: Array<{ id: string; reason: string }>;
     needsLevels: string[];
     missingCutoff: string[];
+    scheduledShutdown: Array<{ id: string; date: string }>;
 }
 
 function deriveOpenAI(
@@ -518,6 +542,7 @@ function deriveOpenAI(
             : undefined,
         tools: o?.tools,
         created: raw.created,
+        shutdownDate: raw.shutdownDate,
         notes,
     };
 }
@@ -573,7 +598,16 @@ export async function pipelineOpenAI(
     const missingCutoff = probedModels
         .filter((m) => !m.knowledgeCutoff)
         .map((m) => m.id);
-    return { models: probedModels, skipped, needsLevels, missingCutoff };
+    const scheduledShutdown = probedModels
+        .filter((m) => m.shutdownDate)
+        .map((m) => ({ id: m.id, date: m.shutdownDate! }));
+    return {
+        models: probedModels,
+        skipped,
+        needsLevels,
+        missingCutoff,
+        scheduledShutdown,
+    };
 }
 
 export function printOpenAIPipeline(r: OpenAIPipelineResult): void {
@@ -593,18 +627,44 @@ export function printOpenAIPipeline(r: OpenAIPipelineResult): void {
     }
 }
 
-export function printOpenAIWarnings(r: OpenAIPipelineResult): void {
-    printIdList(
-        `${r.needsLevels.length} reasoning model(s) using generic fallback thinking levels - add to OPENAI_OVERRIDES if desired:`,
-        r.needsLevels
+export function openaiWarnings(r: OpenAIPipelineResult): string[] {
+    return [
+        ...idListWarning(
+            `${r.needsLevels.length} reasoning model(s) using generic fallback thinking levels - add to OPENAI_OVERRIDES if desired:`,
+            r.needsLevels
+        ),
+        ...idListWarning(
+            `${r.missingCutoff.length} model(s) missing knowledgeCutoff - add to OPENAI_OVERRIDES if desired:`,
+            r.missingCutoff
+        ),
+        ...idListWarning(
+            `${r.scheduledShutdown.length} model(s) have an OpenAI shutdown date - consider retiring from models.json:`,
+            r.scheduledShutdown.map((s) => `${s.id} (${s.date})`)
+        ),
+        ...idListWarning(
+            'stale OPENAI_OVERRIDES entry/entries - model not in current list, consider removing:',
+            staleOverrideIds(OPENAI_OVERRIDES, r.models)
+        ),
+    ];
+}
+
+export async function modelTestOpenAI(model: string): Promise<void> {
+    await printStep(`OpenAI GET /v1/models/${model}`, () =>
+        httpJson({
+            url: `${OPENAI_API}/models/${encodeURIComponent(model)}`,
+            label: 'OpenAI model',
+            headers: openaiHeaders(),
+        })
     );
-    printIdList(
-        `${r.missingCutoff.length} model(s) missing knowledgeCutoff - add to OPENAI_OVERRIDES if desired:`,
-        r.missingCutoff
-    );
-    const stale = staleOverrideIds(OPENAI_OVERRIDES, r.models);
-    printIdList(
-        `${stale.length} stale OPENAI_OVERRIDES entry/entries - model not in current list, consider removing:`,
-        stale
+    await printStep(
+        `OpenAI POST /v1/responses (${model}, max_output_tokens=16)`,
+        () =>
+            httpJson({
+                url: `${OPENAI_API}/responses`,
+                label: 'OpenAI responses',
+                method: 'POST',
+                headers: openaiHeaders(),
+                body: { model, input: 'a', max_output_tokens: 16 },
+            })
     );
 }

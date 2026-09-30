@@ -1,10 +1,45 @@
-# End-to-end tests (Playwright)
+# Tests
+
+Run all commands from the repository root. Install dependencies with `bun install`.
+
+## Unit tests (Bun)
+
+Tests in `tests/unit/` use Bun's built-in test runner. They run locally without
+a browser, built extension, API keys, or AWS credentials. External provider,
+AWS, and Discord requests are mocked, so these tests do not spend API tokens
+or publish changes.
+
+```bash
+bun test tests/unit
+bun test ./tests/unit/custom-model.test.ts
+bun test --watch tests/unit
+```
+
+Use `bun test tests/unit` for unit tests; `bun run test` runs Playwright E2E
+tests through the package script.
+
+Coverage:
+
+- [custom-model.test.ts](unit/custom-model.test.ts): Google model ID validation,
+  custom configuration validation and storage limits, chat import/export, and
+  provider tool configuration and request construction.
+- [model-list.test.ts](unit/model-list.test.ts): watcher acknowledgements,
+  model catalog merging and retirement, dry runs and unchanged publications,
+  Lambda partial failures, and Discord report limits.
+- [model-list-state.test.ts](unit/model-list-state.test.ts): conditional S3
+  updates, concurrent acknowledgements, error handling, and local file locking.
+  Filesystem tests create temporary files under `.tmp/` and clean them up.
+
+Run `bun run check:tests` to type-check the test files. Type-checking does not
+execute the tests.
+
+## End-to-end tests (Playwright)
 
 Drives the real web app in Chrome with the AirmailAI extension loaded, against
 real provider APIs. The harness launches Chrome with the unpacked extension
 and seeds a fresh, isolated profile each run.
 
-## Setup
+### Setup
 
 1. `bun install`
 2. Copy `.env.example` to `.env` (repo root) and fill in the four
@@ -16,7 +51,7 @@ Uses Playwright's bundled Chromium, not system Chrome: stable Chrome (~137+)
 blocks the `--load-extension` flag this harness depends on, while bundled
 Chromium still honors it.
 
-## Run
+### Run
 
 Always go through the project-local binary (`bun run`), not `bunx playwright` -
 `bunx` can resolve a mismatched runner instance and fail with "did not expect
@@ -26,10 +61,9 @@ test() to be called here".
 bun run test               # all e2e specs
 bun run test smoke         # one file
 bun run test --ui          # interactive (time-travel DOM snapshots)
-bun test tests/unit        # unit test
 ```
 
-## Notes
+### Notes
 
 - **Cost:** specs hit real providers with cheap models.
 - **Isolation:** each run uses an ephemeral browser profile, seeded with keys +

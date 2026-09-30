@@ -5,7 +5,7 @@ import { chatStore } from './chatStore.svelte';
 import {
     defaultModelForProvider,
     filterProvidersByTier,
-    type ModelTier,
+    type ModelTierFilter,
 } from './constants';
 import { reportAppError } from './errorStore.svelte';
 import { getExtensionVersion, waitForExtension } from './extension';
@@ -24,7 +24,7 @@ class AppLifecycle {
         'no-extension'
     );
 
-    private lastSnappedTier: ModelTier | null = null;
+    private lastSnappedTier: ModelTierFilter | null = null;
     private stopBridge: (() => void) | null = null;
     private markReady: () => void = () => {};
     readonly ready = new Promise<void>((resolve) => {
@@ -58,6 +58,7 @@ class AppLifecycle {
                     if (!provider) {
                         const fallback =
                             filtered[0] ?? providersStore.providers[0];
+                        if (!fallback) return;
                         const model = defaultModelForProvider(fallback);
                         if (!model) return;
                         settingsStore.providerId = fallback.id;
@@ -92,6 +93,7 @@ class AppLifecycle {
             time: new Date().toISOString(),
         });
 
+        const modelsReady = providersStore.hydrateModels();
         const detected = await waitForExtension();
         if (!detected) {
             const browser = detectBrowser();
@@ -124,8 +126,6 @@ class AppLifecycle {
             await settingsStore.load();
             await chatStore.loadChats();
 
-            settingsStore.applyToolDefaults(providersStore.selectedModel);
-
             if (settingsStore.legalAcceptedVersion !== __LEGAL_VERSION__) {
                 this.showLegalGate = true;
                 log.info('legal gate', {
@@ -135,6 +135,9 @@ class AppLifecycle {
             }
         }
 
+        await modelsReady;
+        settingsStore.reconcileModelSelection(providersStore.providers);
+        settingsStore.applyToolDefaults(providersStore.selectedModel);
         this.initialized = true;
 
         if (detected) this.stopBridge = startBroadcastBridge();

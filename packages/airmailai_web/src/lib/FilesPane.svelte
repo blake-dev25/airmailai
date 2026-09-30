@@ -3,7 +3,7 @@
     import { onMount } from 'svelte';
     import { appLifecycle } from './appLifecycle.svelte';
     import { chatStore } from './chatStore.svelte';
-    import { PROVIDERS } from './constants';
+    import { PROVIDER_META } from './constants';
     import { reportAppError } from './errorStore.svelte';
     import {
         deleteStoredFile,
@@ -82,7 +82,7 @@
         } finally {
             keysChecked = true;
         }
-        for (const provider of PROVIDERS) {
+        for (const provider of PROVIDER_META) {
             if (!FILES_API_PROVIDERS.has(provider.id)) continue;
             if (!providersStore.savedKeys?.[provider.id]) continue;
             void loadProviderFiles(provider.id);
@@ -289,7 +289,7 @@
                 {/if}
             </section>
 
-            {#each PROVIDERS as provider (provider.id)}
+            {#each PROVIDER_META as provider (provider.id)}
                 {@const files = providerFiles[provider.id] ?? []}
                 {@const keySaved = !!providersStore.savedKeys?.[provider.id]}
                 {@const ready =

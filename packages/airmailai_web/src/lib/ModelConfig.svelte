@@ -6,6 +6,7 @@
         defaultModelForProvider,
         filterProvidersByTier,
         type ModelOption,
+        type ProviderOption,
         type VisibleModelTier,
         visibleModelTier,
     } from './constants';
@@ -17,8 +18,14 @@
     import { settingsStore } from './settingsStore.svelte';
     import Stripes from './Stripes.svelte';
 
-    const TIER_ORDER: VisibleModelTier[] = ['latest', 'previous', 'legacy'];
+    const TIER_ORDER: VisibleModelTier[] = [
+        'new',
+        'latest',
+        'previous',
+        'legacy',
+    ];
     const TIER_LABELS: Record<VisibleModelTier, string> = {
+        new: 'New',
         latest: 'Latest',
         previous: 'Previous',
         legacy: 'Legacy',
@@ -197,13 +204,13 @@
         return String(n);
     }
 
-    let currentProvider = $derived(
+    let currentProvider = $derived<ProviderOption | undefined>(
         providersStore.providers.find(
             (p) => p.id === settingsStore.providerId
         ) ?? providersStore.providers[0]
     );
     let currentModel = $derived<ModelOption | undefined>(
-        settingsStore.customModel
+        settingsStore.customModel || !currentProvider
             ? undefined
             : (currentProvider.models.find(
                   (m) => m.id === settingsStore.modelId
@@ -220,8 +227,15 @@
               )
             : 0
     );
+    let providerDropdownEmptyLabel = $derived(
+        providersStore.modelsLoadError
+            ? "Couldn't load providers"
+            : 'Loading providers...'
+    );
     let modelPickerEmptyLabel = $derived.by(() => {
-        if (currentProvider.id !== 'openrouter') return 'Loading models...';
+        if (providersStore.modelsLoadError)
+            return `Couldn't load the model list: ${providersStore.modelsLoadError}. Refresh to try again.`;
+        if (currentProvider?.id !== 'openrouter') return 'Loading models...';
         if (providersStore.openRouterCatalogLoading)
             return 'Downloading the OpenRouter model catalog...';
         if (providersStore.openRouterCatalogError)
@@ -250,31 +264,12 @@
         );
         const source = filtered ?? fallback;
         const first = source ? defaultModelForProvider(source) : undefined;
-        if (first) {
-            settingsStore.modelId = first.id;
-            settingsStore.maxTokens = first.params.defaultMaxTokens;
-            if (first.params.defaultTemperature !== undefined)
-                settingsStore.temperature = first.params.defaultTemperature;
-            settingsStore.thinkingLevel =
-                first.params.thinking?.defaultLevel ?? 'none';
-            settingsStore.adaptiveThinking =
-                first.params.thinking?.adaptive !== undefined;
-            settingsStore.applyToolDefaults(first);
-        }
+        if (first) settingsStore.selectModel(first);
     }
 
     function onModelChange(id: string) {
-        const model = currentProvider.models.find((m) => m.id === id);
-        if (model) {
-            settingsStore.maxTokens = model.params.defaultMaxTokens;
-            if (model.params.defaultTemperature !== undefined)
-                settingsStore.temperature = model.params.defaultTemperature;
-            settingsStore.thinkingLevel =
-                model.params.thinking?.defaultLevel ?? 'none';
-            settingsStore.adaptiveThinking =
-                model.params.thinking?.adaptive !== undefined;
-            settingsStore.applyToolDefaults(model);
-        }
+        const model = currentProvider?.models.find((m) => m.id === id);
+        if (model) settingsStore.selectModel(model);
     }
 
     let contextUsed = $derived(
@@ -390,7 +385,7 @@
                 value={settingsStore.providerId}
                 onchange={onProviderChange}
                 disabled={!appLifecycle.initialized}
-                emptyLabel="Loading providers..."
+                emptyLabel={providerDropdownEmptyLabel}
                 fullWidth
             />
         </div>

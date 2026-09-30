@@ -1,23 +1,17 @@
-import { resolve } from 'node:path';
-import {
-    type ModelProbeResult,
-    type ModelProbeStatus,
-    SNAPSHOT_DIR,
-} from './shared';
+import type { ModelProbeResult, ModelProbeStatus, Provider } from './shared';
+import type { StateStore } from './state-store';
 
-export const PROBE_CACHE_PATH = resolve(SNAPSHOT_DIR, 'probe-cache.json');
+export const PROBE_CACHE_KEY = 'probe-cache.json';
 export const NON_200_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 const PROBE_STATUSES: ModelProbeStatus[] = ['ok', 'grandfathered', 'dead'];
-
-type CacheProvider = 'anthropic' | 'openai' | 'google';
-const CACHE_PROVIDERS: CacheProvider[] = ['anthropic', 'openai', 'google'];
+const CACHE_PROVIDERS: Provider[] = ['anthropic', 'openai', 'google'];
 
 interface StoredProbe extends ModelProbeResult {
     probedAt: number;
 }
 
-type CacheSections = Record<CacheProvider, Record<string, StoredProbe>>;
+type CacheSections = Record<Provider, Record<string, StoredProbe>>;
 
 interface ProbeCacheOptions {
     refresh: boolean;
@@ -35,25 +29,28 @@ export function non200Expired(cachedAt: number, now: number): boolean {
 
 export class ProbeCache {
     private constructor(
+        private readonly store: StateStore,
         private readonly sections: CacheSections,
         private readonly options: ProbeCacheOptions
     ) {}
 
-    static async load(options: ProbeCacheOptions): Promise<ProbeCache> {
+    static async load(
+        store: StateStore,
+        options: ProbeCacheOptions
+    ): Promise<ProbeCache> {
         const sections: CacheSections = {
             anthropic: {},
             openai: {},
             google: {},
         };
-        const file = Bun.file(PROBE_CACHE_PATH);
-        if (!(await file.exists())) {
-            console.log(
-                `no probe cache at ${PROBE_CACHE_PATH} - probing everything`
-            );
-            return new ProbeCache(sections, options);
+        const location = store.describe(PROBE_CACHE_KEY);
+        const text = await store.read(PROBE_CACHE_KEY);
+        if (text === null) {
+            console.log(`no probe cache at ${location} - probing everything`);
+            return new ProbeCache(store, sections, options);
         }
-        const parsed = JSON.parse(await file.text()) as Partial<
-            Record<CacheProvider, Record<string, unknown>>
+        const parsed = JSON.parse(text) as Partial<
+            Record<Provider, Record<string, unknown>>
         >;
         let entries = 0;
         const malformed: string[] = [];
@@ -68,18 +65,18 @@ export class ProbeCache {
         }
         if (malformed.length > 0) {
             throw new Error(
-                `${malformed.length} malformed probe cache entry/entries in ${PROBE_CACHE_PATH} - delete them to re-probe:\n${malformed.map((k) => `   - ${k}`).join('\n')}`
+                `${malformed.length} malformed probe cache entry/entries in ${location} - delete them to re-probe:\n${malformed.map((k) => `   - ${k}`).join('\n')}`
             );
         }
         console.log(
             options.refresh
                 ? `ignoring probe cache (${entries} entries) due to --refresh-probes`
-                : `loaded probe cache (${entries} entries) from ${PROBE_CACHE_PATH}`
+                : `loaded probe cache (${entries} entries) from ${location}`
         );
-        return new ProbeCache(sections, options);
+        return new ProbeCache(store, sections, options);
     }
 
-    section(provider: CacheProvider): ProbeCacheSection {
+    section(provider: Provider): ProbeCacheSection {
         const store = this.sections[provider];
         return {
             get: (key) => {
@@ -102,8 +99,8 @@ export class ProbeCache {
     }
 
     async save(): Promise<void> {
-        await Bun.write(
-            PROBE_CACHE_PATH,
+        await this.store.write(
+            PROBE_CACHE_KEY,
             JSON.stringify(this.sections, null, 2)
         );
     }

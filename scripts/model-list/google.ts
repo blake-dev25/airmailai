@@ -1,4 +1,5 @@
-import { GoogleGenAI, type Model as GoogleModel } from '@google/genai';
+import { requireApiKey } from './env';
+import { HttpError, httpJson, sleep } from './http';
 import {
     type DerivedModel,
     type DerivedThinking,
@@ -10,13 +11,13 @@ import {
     fallbackReasoningThinking,
     findOpenRouter,
     formatKnowledgeCutoff,
+    idListWarning,
     pollWithDelay,
-    printIdList,
     printModelRow,
     printPollingCacheSummary,
-    probeErrorCode,
+    printStep,
+    probeFailureCode,
     scrapeDocsRaw,
-    sleep,
     sortLevels,
     stripProviderName,
     supportsOpenRouterParam,
@@ -25,37 +26,85 @@ import { GOOGLE_OVERRIDES, staleOverrideIds } from './overrides';
 import { type DocsCache, splitCached } from './docs-cache';
 import { type ProbeCache, splitCachedProbes } from './probe-cache';
 
-async function probeGoogleModel(
-    client: GoogleGenAI,
-    id: string
-): Promise<ModelProbeResult> {
+const GOOGLE_API = 'https://generativelanguage.googleapis.com/v1beta';
+const GOOGLE_THINKING_DOCS_URL =
+    'https://ai.google.dev/gemini-api/docs/thinking';
+
+interface GoogleRawModel {
+    name: string;
+    displayName?: string;
+    description?: string;
+    inputTokenLimit?: number;
+    outputTokenLimit?: number;
+    supportedGenerationMethods?: string[];
+    maxTemperature?: number;
+    thinking?: boolean;
+}
+
+interface GoogleModelsPage {
+    models?: GoogleRawModel[];
+    nextPageToken?: string;
+}
+
+function googleHeaders(): Record<string, string> {
+    return { 'x-goog-api-key': requireApiKey('GOOGLE_API_KEY') };
+}
+
+async function listGoogleModels(): Promise<GoogleRawModel[]> {
+    const out: GoogleRawModel[] = [];
+    let pageToken: string | undefined;
+    do {
+        const url = new URL(`${GOOGLE_API}/models`);
+        url.searchParams.set('pageSize', '1000');
+        if (pageToken) url.searchParams.set('pageToken', pageToken);
+        const page = await httpJson<GoogleModelsPage>({
+            url: url.toString(),
+            label: 'Google /v1beta/models',
+            headers: googleHeaders(),
+        });
+        out.push(...(page.models ?? []));
+        pageToken = page.nextPageToken;
+    } while (pageToken);
+    return out;
+}
+
+export async function fetchGoogleModelIds(): Promise<string[]> {
+    return (await listGoogleModels()).map(googleModelId).sort();
+}
+
+async function probeGoogleModel(id: string): Promise<ModelProbeResult> {
     try {
-        await client.models.generateContent({
-            model: id,
-            contents: 'a',
-            config: { maxOutputTokens: 1 },
+        await httpJson({
+            url: `${GOOGLE_API}/models/${encodeURIComponent(id)}:generateContent`,
+            label: `Google probe ${id}`,
+            method: 'POST',
+            headers: googleHeaders(),
+            body: {
+                contents: [{ parts: [{ text: 'a' }] }],
+                generationConfig: { maxOutputTokens: 1 },
+            },
         });
         return { status: 'ok', code: '200' };
     } catch (e) {
-        const msg = (e as Error).message ?? String(e);
-        const code = probeErrorCode(e);
-        if (/no longer available to new users/i.test(msg)) {
-            return { status: 'grandfathered', code };
-        }
-        if (/\b404\b|NOT_FOUND/.test(msg)) {
-            return { status: 'dead', code };
+        const code = probeFailureCode(e);
+        if (e instanceof HttpError) {
+            if (/no longer available to new users/i.test(e.body)) {
+                return { status: 'grandfathered', code };
+            }
+            if (e.status === 404 || /NOT_FOUND/.test(e.body)) {
+                return { status: 'dead', code };
+            }
         }
         return { status: 'ok', code };
     }
 }
 
-function googleModelId(m: GoogleModel): string {
-    return m.name?.replace(/^models\//, '') ?? '';
+function googleModelId(m: GoogleRawModel): string {
+    return m.name.replace(/^models\//, '');
 }
 
-function isGoogleChatCandidate(m: GoogleModel): boolean {
-    const actions = (m as unknown as Record<string, unknown>).supportedActions;
-    return Array.isArray(actions) && actions.includes('generateContent');
+function isGoogleChatCandidate(m: GoogleRawModel): boolean {
+    return m.supportedGenerationMethods?.includes('generateContent') ?? false;
 }
 
 export async function scrapeGoogleDocsRaw(id: string) {
@@ -67,7 +116,6 @@ interface ScrapedGoogle {
     hasTextInput: boolean;
     hasTextOutput: boolean;
     hasMediaOutput: boolean;
-    thinkingSupported: boolean;
     knowledgeCutoff: string | null;
     modelCardUrl: string | null;
 }
@@ -105,8 +153,6 @@ export function parseGoogleDoc(id: string, md: string): ScrapedGoogle {
     const hasTextInput = /\btext\b/i.test(inputRow);
     const hasTextOutput = /\btext\b/i.test(outputRow);
     const hasMediaOutput = /\b(?:audio|video)\b/i.test(outputRow);
-    const thinkingSupported =
-        /\*\*(?:Thinking|\[Thinking\]\([^)]*\))\*\*\s+Supported\b/.test(md);
     const koMatch = md.match(/Knowledge cutoff\s+([A-Z][a-z]+ \d{4})/);
     const knowledgeCutoff = koMatch ? abbreviateMonth(koMatch[1]) : null;
     const modelCardUrl =
@@ -118,7 +164,6 @@ export function parseGoogleDoc(id: string, md: string): ScrapedGoogle {
         hasTextInput,
         hasTextOutput,
         hasMediaOutput,
-        thinkingSupported,
         knowledgeCutoff,
         modelCardUrl,
     };
@@ -128,9 +173,6 @@ export function parseGoogleModelCard(md: string): string | null {
     const m = md.match(/knowledge cutoff date for .*? is ([A-Z][a-z]+ \d{4})/i);
     return m ? abbreviateMonth(m[1]) : null;
 }
-
-const GOOGLE_THINKING_DOCS_URL =
-    'https://ai.google.dev/gemini-api/docs/thinking';
 
 const GOOGLE_LEVELS = new Set<string>([
     'none',
@@ -192,26 +234,28 @@ async function fetchGoogleThinkingTable(): Promise<
             GOOGLE_THINKING_DOCS_URL
         );
         if (!markdown) {
-            console.log(`⚠ thinking docs scrape failed (HTTP ${status})`);
+            console.log(`WARN thinking docs scrape failed (HTTP ${status})`);
             return new Map();
         }
         const table = parseGoogleThinkingLevels(markdown);
         if (table.size === 0) {
             console.log(
-                '⚠ thinking docs parsed to 0 rows - page layout may have changed'
+                'WARN thinking docs parsed to 0 rows - page layout may have changed'
             );
         } else {
             console.log(`got ${table.size} thinking level rows from docs`);
         }
         return table;
     } catch (e) {
-        console.log(`⚠ thinking docs scrape failed: ${(e as Error).message}`);
+        console.log(
+            `WARN thinking docs scrape failed: ${(e as Error).message}`
+        );
         return new Map();
     }
 }
 
 function deriveGoogle(
-    m: GoogleModel,
+    m: GoogleRawModel,
     openrouter: OpenRouterIndex,
     scraped: ScrapedGoogle,
     thinkingTable: Map<string, DerivedThinking>
@@ -220,7 +264,6 @@ function deriveGoogle(
     const o = GOOGLE_OVERRIDES[id];
     const info = findOpenRouter(openrouter, 'google', id, o?.openRouterId);
     const notes: string[] = [];
-    const raw = m as unknown as Record<string, unknown>;
 
     let thinking: DerivedThinking | undefined;
     const fromDocs = thinkingTable.get(id);
@@ -233,7 +276,7 @@ function deriveGoogle(
     } else if (fromDocs) {
         thinking = fromDocs;
     } else if (
-        scraped.thinkingSupported ||
+        m.thinking === true ||
         supportsOpenRouterParam(info, 'reasoning')
     ) {
         thinking = fallbackReasoningThinking();
@@ -249,8 +292,8 @@ function deriveGoogle(
 
     const temperatureMax =
         o?.temperatureMax ??
-        (typeof raw.maxTemperature === 'number'
-            ? raw.maxTemperature
+        (typeof m.maxTemperature === 'number'
+            ? m.maxTemperature
             : supportsOpenRouterParam(info, 'temperature')
               ? 2
               : undefined);
@@ -288,7 +331,6 @@ function deriveGoogle(
 }
 
 export interface GooglePipelineResult {
-    raw: GoogleModel[];
     models: DerivedModel[];
     skipped: Array<{ id: string; reason: string }>;
     needsLevels: string[];
@@ -302,12 +344,7 @@ export async function pipelineGoogle(
     probeCache: ProbeCache
 ): Promise<GooglePipelineResult> {
     console.log('starting Google polling');
-    const key = process.env.GOOGLE_API_KEY;
-    if (!key) throw new Error('GOOGLE_API_KEY missing from .env');
-    const client = new GoogleGenAI({ apiKey: key });
-
-    const raw: GoogleModel[] = [];
-    for await (const m of await client.models.list()) raw.push(m);
+    const raw = await listGoogleModels();
 
     const thinkingTable = await fetchGoogleThinkingTable();
     const skipped: Array<{ id: string; reason: string }> = [];
@@ -317,7 +354,7 @@ export async function pipelineGoogle(
         if (!isGoogleChatCandidate(m)) {
             skipped.push({
                 id,
-                reason: 'no generateContent in supportedActions',
+                reason: 'no generateContent in supportedGenerationMethods',
             });
             return false;
         }
@@ -422,16 +459,10 @@ export async function pipelineGoogle(
         probeMisses,
         MODEL_PROBE_DELAY_MS,
         async (m) => {
-            const probe = await probeGoogleModel(client, m.id);
+            const probe = await probeGoogleModel(m.id);
             probeSection.set(m.id, probe);
-            const result = {
-                model: m,
-                id: m.id,
-                status: probe.status,
-                code: probe.code,
-            };
-            console.log(`tested ${result.id}, ${result.code}`);
-            return result;
+            console.log(`tested ${m.id}, ${probe.code}`);
+            return { model: m, probe };
         }
     );
     await probeCache.save();
@@ -440,8 +471,8 @@ export async function pipelineGoogle(
     for (const { item, probe } of probeHits) {
         probesById.set(item.id, probe);
     }
-    for (const { model, status, code } of freshProbes) {
-        probesById.set(model.id, { status, code });
+    for (const { model, probe } of freshProbes) {
+        probesById.set(model.id, probe);
     }
 
     const grandfathered: string[] = [];
@@ -450,12 +481,11 @@ export async function pipelineGoogle(
         const id = model.id;
         const probe = probesById.get(id);
         if (!probe) throw new Error(`Missing Google probe for ${id}`);
-        const { status } = probe;
-        if (status === 'dead') {
+        if (probe.status === 'dead') {
             skipped.push({ id, reason: 'probe 404 (no longer available)' });
             continue;
         }
-        if (status === 'grandfathered') grandfathered.push(id);
+        if (probe.status === 'grandfathered') grandfathered.push(id);
         models.push(model);
     }
 
@@ -465,7 +495,7 @@ export async function pipelineGoogle(
     const missingCutoff = models
         .filter((m) => !m.knowledgeCutoff)
         .map((m) => m.id);
-    return { raw, models, skipped, needsLevels, missingCutoff, grandfathered };
+    return { models, skipped, needsLevels, missingCutoff, grandfathered };
 }
 
 export function printGooglePipeline(r: GooglePipelineResult): void {
@@ -485,22 +515,47 @@ export function printGooglePipeline(r: GooglePipelineResult): void {
     }
 }
 
-export function printGoogleWarnings(r: GooglePipelineResult): void {
-    printIdList(
-        `${r.grandfathered.length} grandfathered model(s) - kept (probe 404 with "to new users"):`,
-        r.grandfathered
+export function googleWarnings(r: GooglePipelineResult): string[] {
+    return [
+        ...idListWarning(
+            `${r.grandfathered.length} grandfathered model(s) - kept (probe 404 with "to new users"):`,
+            r.grandfathered
+        ),
+        ...idListWarning(
+            `${r.needsLevels.length} thinking model(s) missing levels - add to GOOGLE_OVERRIDES if desired:`,
+            r.needsLevels
+        ),
+        ...idListWarning(
+            `${r.missingCutoff.length} model(s) missing knowledgeCutoff - add to GOOGLE_OVERRIDES if desired:`,
+            r.missingCutoff
+        ),
+        ...idListWarning(
+            'stale GOOGLE_OVERRIDES entry/entries - model not in current list, consider removing:',
+            staleOverrideIds(GOOGLE_OVERRIDES, r.models)
+        ),
+    ];
+}
+
+export async function modelTestGoogle(model: string): Promise<void> {
+    await printStep(`Google GET /v1beta/models/${model}`, () =>
+        httpJson({
+            url: `${GOOGLE_API}/models/${encodeURIComponent(model)}`,
+            label: 'Google model',
+            headers: googleHeaders(),
+        })
     );
-    printIdList(
-        `${r.needsLevels.length} thinking model(s) missing levels - add to GOOGLE_OVERRIDES if desired:`,
-        r.needsLevels
-    );
-    printIdList(
-        `${r.missingCutoff.length} model(s) missing knowledgeCutoff - add to GOOGLE_OVERRIDES if desired:`,
-        r.missingCutoff
-    );
-    const stale = staleOverrideIds(GOOGLE_OVERRIDES, r.models);
-    printIdList(
-        `${stale.length} stale GOOGLE_OVERRIDES entry/entries - model not in current list, consider removing:`,
-        stale
+    await printStep(
+        `Google POST :generateContent (${model}, maxOutputTokens=1)`,
+        () =>
+            httpJson({
+                url: `${GOOGLE_API}/models/${encodeURIComponent(model)}:generateContent`,
+                label: 'Google generateContent',
+                method: 'POST',
+                headers: googleHeaders(),
+                body: {
+                    contents: [{ parts: [{ text: 'a' }] }],
+                    generationConfig: { maxOutputTokens: 1 },
+                },
+            })
     );
 }

@@ -1,8 +1,18 @@
 import type {
     ModelTools,
+    FirstPartyProviderId,
     ThinkingLevel,
 } from '../../packages/airmailai_web/src/lib/models/types';
 import { type DerivedModel, sortLevels } from './shared';
+
+export const RETIRED_MODEL_IDS: Record<
+    FirstPartyProviderId,
+    readonly string[]
+> = {
+    anthropic: [],
+    openai: [],
+    google: [],
+};
 
 interface ThinkingOverride {
     levels: ThinkingLevel[];
@@ -140,8 +150,8 @@ export const OPENAI_OVERRIDES: Record<string, ModelOverride> = {
     'o4-mini': { thinking: O_SERIES_THINKING },
 };
 
-// *** Google's API gives token limits and temperature. Thinking levels come
-// from the model table scraped off
+// *** Google's API gives token limits, temperature, and a thinking flag.
+// Thinking levels come from the model table scraped off
 // https://ai.google.dev/gemini-api/docs/thinking; overrides remain only where
 // that table falls short:
 // - 2.5 models take thinkingBudget; 0 disables (except Pro, which can't

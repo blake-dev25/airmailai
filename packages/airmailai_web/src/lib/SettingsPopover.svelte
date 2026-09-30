@@ -4,7 +4,7 @@
     import {
         defaultModelForProvider,
         EXTENSION_STORE_URL,
-        PROVIDERS,
+        PROVIDER_META,
         THEMES,
     } from './constants';
     import { formatErr, reportAppError } from './errorStore.svelte';
@@ -320,7 +320,7 @@
     }
 
     let keyInputs = $state<Record<string, string>>(
-        Object.fromEntries(PROVIDERS.map((p) => [p.id, '']))
+        Object.fromEntries(PROVIDER_META.map((p) => [p.id, '']))
     );
 
     $effect(() => {
@@ -518,8 +518,8 @@
                         </tr>
                     </thead>
                     <tbody>
-                        {#each PROVIDERS as provider, i (provider.id)}
-                            {@const isLast = i === PROVIDERS.length - 1}
+                        {#each PROVIDER_META as provider, i (provider.id)}
+                            {@const isLast = i === PROVIDER_META.length - 1}
                             <tr>
                                 <td
                                     class={[

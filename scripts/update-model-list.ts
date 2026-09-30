@@ -1,527 +1,149 @@
-// *** Fetches each first-party provider's official model list and emits the
-// matching packages/airmailai_web/src/lib/models/<provider>.ts file.
-//
-// OpenRouter is metadata enrichment only. It never decides first-party
-// availability; provider APIs do that, with targeted official-doc scraping
-// filling gaps where APIs/OpenRouter do not expose the fields AirmailAI needs.
-//
-// Run dry (prints, writes JSON snapshots to scripts/.tmp/ but does not touch
-// packages/airmailai_web/src/lib/models/):
-//     bun scripts/update-model-list.ts
-// Run with writes (also still writes snapshots):
-//     bun scripts/update-model-list.ts --write
-// Re-emit provider files from saved snapshots, skipping all API/scrape/probe
-// work. Accepts one or more snapshot paths; only the matching provider
-// sections of tiers.ts are touched:
-//     bun scripts/update-model-list.ts --write-from-file scripts/.tmp/run_anthropic_<ts>.json [more...]
-// Parsed docs pages are cached in scripts/.tmp/docs-cache.json so only models
-// missing from the cache get scraped. Force a full re-scrape with:
-//     bun scripts/update-model-list.ts --refresh-docs
-//
-// Bun auto-loads .env at the repo root.
-
-import { resolve } from 'node:path';
-import Anthropic from '@anthropic-ai/sdk';
-import { GoogleGenAI } from '@google/genai';
-import OpenAI from 'openai';
 import {
-    fetchAnthropic,
+    modelTestAnthropic,
     parseAnthropicModelPage,
-    printAnthropicSummary,
-    printAnthropicWarnings,
     scrapeAnthropicModelPageRaw,
-} from './update-model-list/anthropic';
+} from './model-list/anthropic';
+import { notify, updateEmbeds } from './model-list/discord';
 import {
-    type OpenAIPipelineResult,
-    parseOpenAIDoc,
-    pipelineOpenAI,
-    printOpenAIPipeline,
-    printOpenAIWarnings,
-    scrapeOpenAIDocsRaw,
-} from './update-model-list/openai';
+    LOCAL_MODELS_FILE,
+    LOCAL_STATE_DIR,
+    resolveAwsConfig,
+} from './model-list/env';
 import {
-    type GooglePipelineResult,
+    modelTestGoogle,
     parseGoogleDoc,
-    pipelineGoogle,
-    printGooglePipeline,
-    printGoogleWarnings,
     scrapeGoogleDocsRaw,
-} from './update-model-list/google';
+} from './model-list/google';
 import {
-    type DerivedModel,
-    type Snapshot,
-    MODELS_DIR,
-    emitAndMaybeWrite,
-    emitProviderFile,
-    fetchOpenRouterIndex,
-    loadSnapshot,
-    printIdList,
-    runScrapeTest,
-    writeSnapshot,
-} from './update-model-list/shared';
+    localModelsFileTarget,
+    s3ModelsFileTarget,
+} from './model-list/models-file';
 import {
-    ANTHROPIC_OVERRIDES,
-    ANTHROPIC_TOOLS_LATEST,
-    GOOGLE_OVERRIDES,
-    OPENAI_OVERRIDES,
-    type ModelOverride,
-    applyOverride,
-    staleOverrideIds,
-} from './update-model-list/overrides';
-import { updateTiersFile } from './update-model-list/tiers';
-import { DocsCache } from './update-model-list/docs-cache';
-import { ProbeCache } from './update-model-list/probe-cache';
+    modelTestOpenAI,
+    parseOpenAIDoc,
+    scrapeOpenAIDocsRaw,
+} from './model-list/openai';
+import { type Provider, runScrapeTest } from './model-list/shared';
+import { FsStateStore, S3StateStore } from './model-list/state-store';
+import {
+    ALL_PROVIDERS,
+    assertUpdateSucceeded,
+    isProvider,
+    runUpdate,
+} from './model-list/update';
 
-function overridesForProvider(provider: string): Record<string, ModelOverride> {
-    if (provider === 'anthropic') return ANTHROPIC_OVERRIDES;
-    if (provider === 'openai') return OPENAI_OVERRIDES;
-    if (provider === 'google') return GOOGLE_OVERRIDES;
-    return {};
-}
+const args = process.argv.slice(2);
+const has = (flag: string): boolean => args.includes(flag);
+const valueAfter = (flag: string, offset = 1): string | undefined => {
+    const idx = args.indexOf(flag);
+    return idx >= 0 ? args[idx + offset] : undefined;
+};
 
-function reapplyOverrides(provider: string, models: DerivedModel[]): void {
-    const overrides = overridesForProvider(provider);
-    const byAliasOrId = new Map<string, ModelOverride>();
-    for (const [key, entry] of Object.entries(overrides)) {
-        byAliasOrId.set(key, entry);
-        if (entry.idAlias) byAliasOrId.set(entry.idAlias, entry);
-    }
-    for (const m of models) {
-        if (provider === 'anthropic') m.tools = ANTHROPIC_TOOLS_LATEST;
-        const o = byAliasOrId.get(m.id);
-        if (o) applyOverride(m, o);
-    }
-}
+const WRITE = has('--write');
+const VERBOSE = has('--verbose');
+const LOCAL = has('--local');
+const REFRESH_DOCS = has('--refresh-docs');
+const REFRESH_PROBES = has('--refresh-probes');
+const RETRY_NON_200 = has('--retry-non-200');
+const SHOW_MD = has('--show-md');
 
-const WRITE = process.argv.includes('--write');
-const VERBOSE = process.argv.includes('--verbose');
-const REFRESH_DOCS = process.argv.includes('--refresh-docs');
-const REFRESH_PROBES = process.argv.includes('--refresh-probes');
-const RETRY_NON_200 = process.argv.includes('--retry-non-200');
-const MODEL_TEST_IDX = process.argv.indexOf('--model-test');
-const MODEL_TEST_PROVIDER =
-    MODEL_TEST_IDX >= 0 ? process.argv[MODEL_TEST_IDX + 1] : undefined;
-const MODEL_TEST_ID =
-    MODEL_TEST_IDX >= 0 ? process.argv[MODEL_TEST_IDX + 2] : undefined;
-const SCRAPE_TEST_IDX = process.argv.indexOf('--scrape-test');
-const SCRAPE_TEST_ID =
-    SCRAPE_TEST_IDX >= 0 ? process.argv[SCRAPE_TEST_IDX + 1] : undefined;
-const GOOGLE_SCRAPE_TEST_IDX = process.argv.indexOf('--google-scrape-test');
-const GOOGLE_SCRAPE_TEST_ID =
-    GOOGLE_SCRAPE_TEST_IDX >= 0
-        ? process.argv[GOOGLE_SCRAPE_TEST_IDX + 1]
-        : undefined;
-const ANTHROPIC_SCRAPE_TEST_IDX = process.argv.indexOf(
-    '--anthropic-scrape-test'
+const providerFlags = ALL_PROVIDERS.filter((p) => has(`--${p}`));
+const PROVIDERS = new Set<Provider>(
+    providerFlags.length > 0 ? providerFlags : ALL_PROVIDERS
 );
-const ANTHROPIC_SCRAPE_TEST_SLUG =
-    ANTHROPIC_SCRAPE_TEST_IDX >= 0
-        ? process.argv[ANTHROPIC_SCRAPE_TEST_IDX + 1]
-        : undefined;
-
-const PROVIDER_FLAGS = new Set(
-    process.argv.filter((a) =>
-        ['--anthropic', '--openai', '--google'].includes(a)
-    )
-);
-const RUN_ALL = PROVIDER_FLAGS.size === 0;
-const RUN_ANTHROPIC = RUN_ALL || PROVIDER_FLAGS.has('--anthropic');
-const RUN_OPENAI = RUN_ALL || PROVIDER_FLAGS.has('--openai');
-const RUN_GOOGLE = RUN_ALL || PROVIDER_FLAGS.has('--google');
-const NEEDS_OPENROUTER = RUN_OPENAI || RUN_GOOGLE;
-
-const WRITE_FROM_FILE_IDX = process.argv.indexOf('--write-from-file');
-const WRITE_FROM_FILE_PATHS: string[] = [];
-if (WRITE_FROM_FILE_IDX >= 0) {
-    for (let i = WRITE_FROM_FILE_IDX + 1; i < process.argv.length; i++) {
-        const arg = process.argv[i];
-        if (arg.startsWith('--')) break;
-        WRITE_FROM_FILE_PATHS.push(arg);
-    }
-}
-
-async function writeFromFiles(paths: string[]): Promise<void> {
-    const loaded: Snapshot[] = [];
-    const seenProviders = new Set<string>();
-    for (const p of paths) {
-        const snap = await loadSnapshot(p);
-        if (seenProviders.has(snap.provider)) {
-            throw new Error(
-                `Multiple snapshots loaded for provider "${snap.provider}"`
-            );
-        }
-        seenProviders.add(snap.provider);
-        console.log(
-            `loaded ${snap.provider} snapshot from ${p} (${snap.models.length} models, generated ${snap.generatedAt})`
-        );
-        loaded.push(snap);
-    }
-
-    for (const { provider, providerName, models } of loaded) {
-        reapplyOverrides(provider, models);
-        const stale = staleOverrideIds(overridesForProvider(provider), models);
-        printIdList(
-            `${stale.length} stale ${provider} override entry/entries - model not in current list, consider removing:`,
-            stale
-        );
-        const content = emitProviderFile(provider, providerName, models);
-        const path = resolve(MODELS_DIR, `${provider}.ts`);
-        await Bun.write(path, content);
-        console.log(`✓ wrote ${content.length} bytes to ${path}`);
-    }
-
-    const tiersPath = resolve(MODELS_DIR, 'tiers.ts');
-    const originalTiersText = await Bun.file(tiersPath).text();
-    let tiersText = originalTiersText;
-    const newTiersIds: string[] = [];
-    const staleByProvider: Array<{
-        provider: string;
-        entries: Array<{ id: string; tier: string }>;
-    }> = [];
-
-    for (const { provider, models } of loaded) {
-        const r = updateTiersFile(
-            tiersText,
-            `// *** ${provider}`,
-            models.map((m) => m.id)
-        );
-        tiersText = r.text;
-        newTiersIds.push(...r.newIds);
-        if (r.staleEntries.length > 0) {
-            staleByProvider.push({ provider, entries: r.staleEntries });
-        }
-    }
-
-    if (newTiersIds.length > 0) {
-        console.log(
-            `\nAdding ${newTiersIds.length} new id(s) to tiers.ts as 'legacy':`
-        );
-        for (const id of newTiersIds) console.log(`   - ${id}`);
-    }
-
-    const totalStale = staleByProvider.reduce(
-        (n, p) => n + p.entries.length,
-        0
-    );
-    if (totalStale > 0) {
-        console.log(
-            `\n⚠ ${totalStale} stale tier entry/entries - model not in current provider file, consider removing from tiers.ts:`
-        );
-        for (const { provider, entries } of staleByProvider) {
-            for (const e of entries) {
-                console.log(`   - [${provider}] ${e.id} (${e.tier})`);
-            }
-        }
-    }
-
-    if (tiersText !== originalTiersText) {
-        await Bun.write(tiersPath, tiersText);
-        console.log(`✓ wrote ${tiersPath}`);
-    } else {
-        console.log('tiers.ts unchanged');
-    }
-}
-
-type ModelTestProvider = 'anthropic' | 'openai' | 'google';
-
-function isModelTestProvider(
-    value: string | undefined
-): value is ModelTestProvider {
-    return value === 'anthropic' || value === 'openai' || value === 'google';
-}
-
-function errorShape(e: unknown): Record<string, unknown> {
-    const raw =
-        e && typeof e === 'object'
-            ? (e as Record<string, unknown>)
-            : { message: String(e) };
-    return {
-        name: raw.name,
-        message: raw.message,
-        status: raw.status,
-        code: raw.code,
-        type: raw.type,
-        error: raw.error,
-    };
-}
-
-async function printStep(
-    label: string,
-    fn: () => Promise<unknown>
-): Promise<void> {
-    console.log(`\n--- ${label} ---`);
-    try {
-        const result = await fn();
-        console.log(JSON.stringify(result, null, 2));
-    } catch (e) {
-        console.log(JSON.stringify(errorShape(e), null, 2));
-    }
-}
-
-async function modelTest(
-    provider: ModelTestProvider,
-    model: string
-): Promise<void> {
-    if (provider === 'anthropic') {
-        const key = process.env.ANTHROPIC_API_KEY;
-        if (!key) throw new Error('ANTHROPIC_API_KEY missing from .env');
-        const client = new Anthropic({ apiKey: key });
-        await printStep(`Anthropic models.retrieve("${model}")`, () =>
-            client.models.retrieve(model)
-        );
-        await printStep(
-            `Anthropic messages.create("${model}", max_tokens=1)`,
-            () =>
-                client.messages.create({
-                    model,
-                    max_tokens: 1,
-                    messages: [{ role: 'user', content: 'a' }],
-                })
-        );
-        return;
-    }
-
-    if (provider === 'openai') {
-        const key = process.env.OPENAI_API_KEY;
-        if (!key) throw new Error('OPENAI_API_KEY missing from .env');
-        const client = new OpenAI({ apiKey: key });
-        await printStep(`OpenAI models.retrieve("${model}")`, () =>
-            client.models.retrieve(model)
-        );
-        await printStep(
-            `OpenAI responses.create("${model}", max_output_tokens=16)`,
-            () =>
-                client.responses.create({
-                    model,
-                    input: 'a',
-                    max_output_tokens: 16,
-                })
-        );
-        return;
-    }
-
-    const key = process.env.GOOGLE_API_KEY;
-    if (!key) throw new Error('GOOGLE_API_KEY missing from .env');
-    const client = new GoogleGenAI({ apiKey: key });
-    await printStep(`Google models.get("${model}")`, () =>
-        client.models.get({ model })
-    );
-    await printStep(
-        `Google generateContent("${model}", maxOutputTokens=1)`,
-        () =>
-            client.models.generateContent({
-                model,
-                contents: 'a',
-                config: { maxOutputTokens: 1 },
-            })
-    );
-}
 
 async function main(): Promise<void> {
-    if (MODEL_TEST_IDX >= 0) {
-        if (!isModelTestProvider(MODEL_TEST_PROVIDER) || !MODEL_TEST_ID) {
+    if (has('--model-test')) {
+        const provider = valueAfter('--model-test');
+        const model = valueAfter('--model-test', 2);
+        if (!isProvider(provider) || !model) {
             throw new Error(
                 'Usage: bun scripts/update-model-list.ts --model-test <anthropic|openai|google> <model-id>'
             );
         }
-        await modelTest(MODEL_TEST_PROVIDER, MODEL_TEST_ID);
+        if (provider === 'anthropic') await modelTestAnthropic(model);
+        else if (provider === 'openai') await modelTestOpenAI(model);
+        else await modelTestGoogle(model);
         return;
     }
-    if (SCRAPE_TEST_ID) {
+    const openaiScrape = valueAfter('--scrape-test');
+    if (openaiScrape) {
         await runScrapeTest(
-            SCRAPE_TEST_ID,
+            openaiScrape,
             scrapeOpenAIDocsRaw,
-            parseOpenAIDoc
+            parseOpenAIDoc,
+            SHOW_MD
         );
         return;
     }
-    if (GOOGLE_SCRAPE_TEST_ID) {
+    const googleScrape = valueAfter('--google-scrape-test');
+    if (googleScrape) {
         await runScrapeTest(
-            GOOGLE_SCRAPE_TEST_ID,
+            googleScrape,
             scrapeGoogleDocsRaw,
-            parseGoogleDoc
+            parseGoogleDoc,
+            SHOW_MD
         );
         return;
     }
-    if (ANTHROPIC_SCRAPE_TEST_SLUG) {
+    const anthropicScrape = valueAfter('--anthropic-scrape-test');
+    if (anthropicScrape) {
         await runScrapeTest(
-            ANTHROPIC_SCRAPE_TEST_SLUG,
+            anthropicScrape,
             scrapeAnthropicModelPageRaw,
-            (_slug, md) => parseAnthropicModelPage(md)
+            (_slug, md) => parseAnthropicModelPage(md),
+            SHOW_MD
         );
         return;
     }
-    if (WRITE_FROM_FILE_IDX >= 0) {
-        if (WRITE_FROM_FILE_PATHS.length === 0) {
-            throw new Error('--write-from-file requires at least one path');
-        }
-        if (PROVIDER_FLAGS.size > 0) {
-            throw new Error(
-                '--write-from-file cannot be combined with --anthropic/--openai/--google'
-            );
-        }
-        if (WRITE) {
-            throw new Error(
-                '--write-from-file already writes; do not pass --write'
-            );
-        }
-        await writeFromFiles(WRITE_FROM_FILE_PATHS);
-        return;
-    }
 
-    const cacheOptions = { retryNon200: RETRY_NON_200 };
-    const docsCache = await DocsCache.load({
-        ...cacheOptions,
-        refresh: REFRESH_DOCS,
-    });
-    const probeCache = await ProbeCache.load({
-        ...cacheOptions,
-        refresh: REFRESH_PROBES,
-    });
-    const openrouter = NEEDS_OPENROUTER
-        ? await fetchOpenRouterIndex()
-        : undefined;
-
-    let anthropic: DerivedModel[] | undefined;
-    let openaiResult: OpenAIPipelineResult | undefined;
-    let googleResult: GooglePipelineResult | undefined;
-
-    if (RUN_ANTHROPIC) {
-        console.log();
-        anthropic = await fetchAnthropic(docsCache, probeCache);
-        if (VERBOSE) {
-            printAnthropicSummary('Anthropic', anthropic);
-        } else {
-            console.log(`Got ${anthropic.length} models from Anthropic`);
-        }
-        printAnthropicWarnings(anthropic);
-
-        await writeSnapshot('anthropic', 'Anthropic', anthropic);
-        await emitAndMaybeWrite(
-            'anthropic.ts',
-            emitProviderFile('anthropic', 'Anthropic', anthropic),
-            { write: WRITE, verbose: VERBOSE }
-        );
-    }
-
-    if (RUN_OPENAI) {
-        console.log();
-        openaiResult = await pipelineOpenAI(openrouter!, docsCache, probeCache);
-        if (VERBOSE) {
-            printOpenAIPipeline(openaiResult);
-        } else {
-            console.log(
-                `Got ${openaiResult.models.length} models from OpenAI (${openaiResult.skipped.length} skipped)`
-            );
-        }
-        printOpenAIWarnings(openaiResult);
-
-        await writeSnapshot('openai', 'OpenAI', openaiResult.models);
-        await emitAndMaybeWrite(
-            'openai.ts',
-            emitProviderFile('openai', 'OpenAI', openaiResult.models),
-            { write: WRITE, verbose: VERBOSE }
-        );
-    }
-
-    if (RUN_GOOGLE) {
-        console.log();
-        googleResult = await pipelineGoogle(openrouter!, docsCache, probeCache);
-        if (VERBOSE) {
-            printGooglePipeline(googleResult);
-        } else {
-            console.log(
-                `Got ${googleResult.models.length} models from Google (${googleResult.skipped.length} skipped)`
-            );
-        }
-        printGoogleWarnings(googleResult);
-
-        await writeSnapshot('google', 'Google', googleResult.models);
-        await emitAndMaybeWrite(
-            'google.ts',
-            emitProviderFile('google', 'Google', googleResult.models),
-            { write: WRITE, verbose: VERBOSE }
-        );
-    }
-
-    const tiersPath = resolve(MODELS_DIR, 'tiers.ts');
-    const originalTiersText = await Bun.file(tiersPath).text();
-    let tiersText = originalTiersText;
-    const newTiersIds: string[] = [];
-    const staleByProvider: Array<{
-        provider: string;
-        entries: Array<{ id: string; tier: string }>;
-    }> = [];
-
-    const tiersUpdates: Array<{
-        provider: string;
-        comment: string;
-        ids: string[] | undefined;
-    }> = [
-        {
-            provider: 'anthropic',
-            comment: '// *** anthropic',
-            ids: anthropic?.map((m) => m.id),
-        },
-        {
-            provider: 'openai',
-            comment: '// *** openai',
-            ids: openaiResult?.models.map((m) => m.id),
-        },
-        {
-            provider: 'google',
-            comment: '// *** google',
-            ids: googleResult?.models.map((m) => m.id),
-        },
-    ];
-
-    for (const u of tiersUpdates) {
-        if (!u.ids) continue;
-        const r = updateTiersFile(tiersText, u.comment, u.ids);
-        tiersText = r.text;
-        newTiersIds.push(...r.newIds);
-        if (r.staleEntries.length > 0) {
-            staleByProvider.push({
-                provider: u.provider,
-                entries: r.staleEntries,
-            });
-        }
-    }
-
-    const tiersChanged = tiersText !== originalTiersText;
-    if (newTiersIds.length > 0) {
-        console.log(
-            `\nAdding ${newTiersIds.length} new id(s) to tiers.ts as 'legacy':`
-        );
-        for (const id of newTiersIds) console.log(`   - ${id}`);
-    }
-
-    const totalStale = staleByProvider.reduce(
-        (n, p) => n + p.entries.length,
-        0
+    const aws = resolveAwsConfig(LOCAL);
+    const store = aws
+        ? new S3StateStore(aws.stateBucket)
+        : new FsStateStore(LOCAL_STATE_DIR);
+    const targets = [localModelsFileTarget(LOCAL_MODELS_FILE)];
+    if (aws)
+        targets.push(s3ModelsFileTarget(aws.wwwBucket, aws.distributionId));
+    console.log(
+        aws
+            ? `AWS mode (profile ${process.env.AWS_PROFILE}): caches in s3://${aws.stateBucket}/, publishing to s3://${aws.wwwBucket}/models.json and ${LOCAL_MODELS_FILE}`
+            : `local mode: caches in ${LOCAL_STATE_DIR}, writing ${LOCAL_MODELS_FILE}`
     );
-    if (totalStale > 0) {
+    console.log(`providers: ${[...PROVIDERS].join(', ')}`);
+
+    const report = await runUpdate(
+        {
+            providers: PROVIDERS,
+            write: WRITE,
+            verbose: VERBOSE,
+            refreshDocs: REFRESH_DOCS,
+            refreshProbes: REFRESH_PROBES,
+            retryNon200: RETRY_NON_200,
+        },
+        { store, targets }
+    );
+
+    console.log('\n=== summary ===');
+    for (const o of report.outcomes) {
         console.log(
-            `\n⚠ ${totalStale} stale tier entry/entries - model not in current provider file, consider removing from tiers.ts:`
-        );
-        for (const { provider, entries } of staleByProvider) {
-            for (const e of entries) {
-                console.log(`   - [${provider}] ${e.id} (${e.tier})`);
-            }
-        }
-    }
-    if (WRITE && tiersChanged) {
-        await Bun.write(tiersPath, tiersText);
-        console.log(
-            newTiersIds.length > 0
-                ? `✓ wrote tiers.ts (+${newTiersIds.length} entries)`
-                : '✓ wrote tiers.ts (re-sorted)'
+            o.status === 'updated'
+                ? `${o.provider}: ${o.modelCount} models (+${o.added.length} added, ${o.changed.length} changed, ${o.unlisted.length} unlisted, ${o.warnings.length} warning(s))`
+                : `${o.provider}: FAILED - kept previous ${o.modelCount} models: ${o.error}`
         );
     }
 
-    if (!WRITE) {
-        console.log('\n(dry run - pass --write to clobber provider files)');
+    if (WRITE) {
+        await notify(
+            updateEmbeds(
+                report,
+                aws ? 'manual run, aws mode' : 'manual run, local mode'
+            )
+        );
+    } else {
+        console.log('\n(dry run - pass --write to publish models.json)');
     }
+
+    assertUpdateSucceeded(report);
 }
 
 main().catch((err) => {
