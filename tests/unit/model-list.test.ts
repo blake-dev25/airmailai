@@ -11,6 +11,7 @@ import type { ModelOption } from '../../packages/airmailai_web/src/lib/models/ty
 import * as anthropic from '../../scripts/model-list/anthropic';
 import * as discord from '../../scripts/model-list/discord';
 import * as env from '../../scripts/model-list/env';
+import { deriveGoogleTemperatureMax } from '../../scripts/model-list/google';
 import { updaterHandler } from '../../scripts/model-list/lambda';
 import * as modelsFile from '../../scripts/model-list/models-file';
 import { RETIRED_MODEL_IDS } from '../../scripts/model-list/overrides';
@@ -371,5 +372,40 @@ describe('Discord report limits', () => {
             ).toBeLessThanOrEqual(6000);
         }
         expect(discord.batchDiscordEmbeds([])).toEqual([]);
+    });
+});
+
+describe('Google temperature derivation', () => {
+    test('only the gemini-2.5 generation derives a temperature range', () => {
+        expect(
+            deriveGoogleTemperatureMax(
+                'gemini-2.5-flash',
+                2,
+                undefined,
+                undefined
+            )
+        ).toBe(2);
+        expect(
+            deriveGoogleTemperatureMax(
+                'gemini-3.8-flash',
+                2,
+                undefined,
+                undefined
+            )
+        ).toBeUndefined();
+        expect(
+            deriveGoogleTemperatureMax(
+                'gemini-2.5-flash',
+                undefined,
+                undefined,
+                undefined
+            )
+        ).toBeUndefined();
+    });
+
+    test('an explicit override applies to any generation', () => {
+        expect(
+            deriveGoogleTemperatureMax('gemini-3.8-flash', 2, undefined, 1)
+        ).toBe(1);
     });
 });

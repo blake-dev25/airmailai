@@ -5,6 +5,7 @@ import {
     type DerivedThinking,
     type ModelProbeResult,
     type OpenRouterIndex,
+    type OpenRouterModelInfo,
     type ThinkingLevel,
     MODEL_PROBE_DELAY_MS,
     WEBPAGE_SCRAPE_DELAY_MS,
@@ -254,6 +255,22 @@ async function fetchGoogleThinkingTable(): Promise<
     }
 }
 
+function googleAcceptsSamplingParams(id: string): boolean {
+    return id.startsWith('gemini-2.5');
+}
+
+export function deriveGoogleTemperatureMax(
+    id: string,
+    apiMaxTemperature: number | undefined,
+    info: OpenRouterModelInfo | undefined,
+    overrideTemperatureMax: number | undefined
+): number | undefined {
+    if (overrideTemperatureMax !== undefined) return overrideTemperatureMax;
+    if (!googleAcceptsSamplingParams(id)) return undefined;
+    if (typeof apiMaxTemperature === 'number') return apiMaxTemperature;
+    return supportsOpenRouterParam(info, 'temperature') ? 2 : undefined;
+}
+
 function deriveGoogle(
     m: GoogleRawModel,
     openrouter: OpenRouterIndex,
@@ -290,13 +307,12 @@ function deriveGoogle(
         notes.push('outputTokenLimit/maxOutputTokens missing');
     }
 
-    const temperatureMax =
-        o?.temperatureMax ??
-        (typeof m.maxTemperature === 'number'
-            ? m.maxTemperature
-            : supportsOpenRouterParam(info, 'temperature')
-              ? 2
-              : undefined);
+    const temperatureMax = deriveGoogleTemperatureMax(
+        id,
+        m.maxTemperature,
+        info,
+        o?.temperatureMax
+    );
 
     return {
         id,

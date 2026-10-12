@@ -41,11 +41,10 @@ and seeds a fresh, isolated profile each run.
 
 ### Setup
 
-1. `bun install`
+1. `bun install` - the root `postinstall` script also downloads the Chromium
+   build matching the installed Playwright version.
 2. Copy `.env.example` to `.env` (repo root) and fill in the four
    `*_API_KEY` values. The fixture seeds these into the extension's storage.
-
-3. `bunx playwright install chromium`
 
 Uses Playwright's bundled Chromium, not system Chrome: stable Chrome (~137+)
 blocks the `--load-extension` flag this harness depends on, while bundled

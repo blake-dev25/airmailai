@@ -151,6 +151,9 @@ export const OPENAI_OVERRIDES: Record<string, ModelOverride> = {
 };
 
 // *** Google's API gives token limits, temperature, and a thinking flag.
+// Its maxTemperature is reported for every model, but only the gemini-2.5
+// generation accepts sampling parameters, so temperature is derived for
+// those ids alone (an explicit temperatureMax override still applies).
 // Thinking levels come from the model table scraped off
 // https://ai.google.dev/gemini-api/docs/thinking; overrides remain only where
 // that table falls short:
@@ -158,9 +161,8 @@ export const OPENAI_OVERRIDES: Record<string, ModelOverride> = {
 //   disable), -1 is dynamic (the API default for Pro and Flash). The table
 //   doesn't express the budget-derived 'max' level or adaptive: 'optional',
 //   so the 2.5 trio stays pinned here.
-// - Models absent from the table (currently gemini-3.1-flash-lite and its
-//   preview) keep hand-sourced levels. Gemini 3+ models cannot disable
-//   thinking, so no 'none' level.
+// - Models absent from the table keep hand-sourced levels. Gemini 3+ models
+//   cannot disable thinking, so no 'none' level.
 export const GOOGLE_OVERRIDES: Record<string, ModelOverride> = {
     'gemini-2.5-pro': {
         thinking: {
@@ -193,6 +195,18 @@ export const GOOGLE_OVERRIDES: Record<string, ModelOverride> = {
         thinking: {
             levels: ['minimal', 'low', 'medium', 'high'],
             defaultLevel: 'minimal',
+        },
+    },
+    'gemini-3.5-flash': {
+        thinking: {
+            levels: ['minimal', 'low', 'medium', 'high'],
+            defaultLevel: 'medium',
+        },
+    },
+    'gemini-3.7-flash': {
+        thinking: {
+            levels: ['low', 'medium', 'high'],
+            defaultLevel: 'medium',
         },
     },
 };

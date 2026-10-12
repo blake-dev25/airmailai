@@ -1,3 +1,6 @@
+**26.10.12.1** - Website
+- Updated models, updated Google thinking levels
+
 **26.9.30.1** - Website
 - Added automatic model list updates
 
