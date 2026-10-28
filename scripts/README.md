@@ -147,6 +147,12 @@ group at the top of the picker for every tier setting. `latest` still wins for
 the default model, so a fresh release is visible immediately but never
 auto-selected.
 
+`models:update` keeps `tiers.ts` in sync with `models.json`: every published id
+missing from `tiers.ts` is added to its provider's section as `'new'`, and
+entries no longer in `models.json` are reported as stale. A dry run prints the
+pending changes; `--write` applies them. `rg "'new'"` lists the models waiting
+for a tier.
+
 - **Promote a model:** add its line under the provider's section (for example
   `'claude-opus-6': 'latest',`), demote what it replaces, keep the section
   alphabetized, then `bun run deploy:web`.
@@ -179,7 +185,7 @@ entries whose model is no longer listed.
    it.
 2. Deploys `infra/model-list.cfn.yaml`: the private state bucket, an IAM role
    scoped to the two buckets, the distribution, and the SSM path, both
-   functions (Node 22, arm64), the hourly EventBridge rule, and 30-day log
+   functions (Node 26, arm64), the hourly EventBridge rule, and 30-day log
    groups.
 3. Copies the four provider keys and the Discord webhook from `.env` into SSM
    as SecureString parameters under `/airmailai/model-list/`.

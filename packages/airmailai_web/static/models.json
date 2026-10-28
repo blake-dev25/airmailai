@@ -1,6 +1,6 @@
 {
     "schemaVersion": 1,
-    "generatedAt": "2026-10-12T19:34:48.081Z",
+    "generatedAt": "2026-10-28T18:36:36.211Z",
     "providers": {
         "anthropic": [
             {
@@ -391,6 +391,27 @@
                     "knowledgeCutoff": "Apr 2026",
                     "thinking": {
                         "levels": [
+                            "low",
+                            "medium",
+                            "high",
+                            "xhigh",
+                            "max"
+                        ],
+                        "defaultLevel": "medium"
+                    }
+                }
+            },
+            {
+                "id": "gpt-6.1-terra",
+                "name": "GPT-6.1 Terra",
+                "params": {
+                    "contextWindow": 1050000,
+                    "maxOutputTokens": 128000,
+                    "defaultMaxTokens": 8192,
+                    "knowledgeCutoff": "Jun 2026",
+                    "thinking": {
+                        "levels": [
+                            "none",
                             "low",
                             "medium",
                             "high",
@@ -847,8 +868,6 @@
                     "contextWindow": 128000,
                     "maxOutputTokens": 4096,
                     "defaultMaxTokens": 4096,
-                    "temperatureMax": 2,
-                    "defaultTemperature": 1,
                     "knowledgeCutoff": "Dec 2023"
                 }
             },
@@ -878,7 +897,7 @@
             },
             {
                 "id": "o4-mini",
-                "name": "o4 Mini",
+                "name": "o4-mini",
                 "params": {
                     "contextWindow": 200000,
                     "maxOutputTokens": 100000,
@@ -901,8 +920,6 @@
                     "contextWindow": 16385,
                     "maxOutputTokens": 4096,
                     "defaultMaxTokens": 4096,
-                    "temperatureMax": 2,
-                    "defaultTemperature": 1,
                     "knowledgeCutoff": "Sep 2021"
                 }
             },
@@ -937,13 +954,13 @@
                 }
             },
             {
-                "id": "o3-mini",
-                "name": "o3 Mini",
+                "id": "o3-pro",
+                "name": "o3 Pro",
                 "params": {
                     "contextWindow": 200000,
                     "maxOutputTokens": 100000,
                     "defaultMaxTokens": 8192,
-                    "knowledgeCutoff": "Oct 2023",
+                    "knowledgeCutoff": "Jun 2024",
                     "thinking": {
                         "levels": [
                             "low",
@@ -955,13 +972,13 @@
                 }
             },
             {
-                "id": "o3-pro",
-                "name": "o3 Pro",
+                "id": "o3-mini",
+                "name": "o3-mini",
                 "params": {
                     "contextWindow": 200000,
                     "maxOutputTokens": 100000,
                     "defaultMaxTokens": 8192,
-                    "knowledgeCutoff": "Jun 2024",
+                    "knowledgeCutoff": "Oct 2023",
                     "thinking": {
                         "levels": [
                             "low",
@@ -1010,6 +1027,23 @@
             }
         ],
         "google": [
+            {
+                "id": "gemini-4-argon",
+                "name": "Gemini 4 Argon",
+                "params": {
+                    "contextWindow": 1048576,
+                    "maxOutputTokens": 32768,
+                    "defaultMaxTokens": 8192,
+                    "thinking": {
+                        "levels": [
+                            "low",
+                            "medium",
+                            "high"
+                        ],
+                        "defaultLevel": "medium"
+                    }
+                }
+            },
             {
                 "id": "gemini-3.8-flash",
                 "name": "Gemini 3.8 Flash",
@@ -1368,7 +1402,7 @@
             },
             {
                 "id": "deep-research-pro-preview-12-2025",
-                "name": "Deep Research Pro Preview (Dec-12-2025)",
+                "name": "Deep Research Pro Preview (Dec-12-2025) [Rerouted]",
                 "params": {
                     "contextWindow": 131072,
                     "maxOutputTokens": 65536,

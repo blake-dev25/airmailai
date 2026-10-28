@@ -5,6 +5,10 @@ export const LOCAL_MODELS_FILE = resolve(
     import.meta.dirname,
     '../../packages/airmailai_web/static/models.json'
 );
+export const LOCAL_TIERS_FILE = resolve(
+    import.meta.dirname,
+    '../../packages/airmailai_web/src/lib/models/tiers.ts'
+);
 export const MODELS_FILE_KEY = 'models.json';
 export const SNAPSHOT_PREFIX = 'snapshots/';
 

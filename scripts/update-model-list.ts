@@ -25,6 +25,7 @@ import {
 } from './model-list/openai';
 import { type Provider, runScrapeTest } from './model-list/shared';
 import { FsStateStore, S3StateStore } from './model-list/state-store';
+import { syncLocalTiersFile } from './model-list/tiers-file';
 import {
     ALL_PROVIDERS,
     assertUpdateSucceeded,
@@ -131,6 +132,8 @@ async function main(): Promise<void> {
                 : `${o.provider}: FAILED - kept previous ${o.modelCount} models: ${o.error}`
         );
     }
+
+    await syncLocalTiersFile(report.file, WRITE);
 
     if (WRITE) {
         await notify(

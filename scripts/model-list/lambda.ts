@@ -145,9 +145,10 @@ export async function updaterHandler(
         );
         await notify(updateEmbeds(report, `lambda, ${reason}`));
         assertUpdateSucceeded(report);
+        const { file: _file, ...summary } = report;
         return {
             ok: true,
-            ...report,
+            ...summary,
         };
     } catch (e) {
         await notifyCrash('model-list updater', e);

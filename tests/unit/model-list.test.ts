@@ -25,6 +25,7 @@ import {
     runUpdate,
     type UpdateOptions,
 } from '../../scripts/model-list/update';
+import { syncTiersFile } from '../../scripts/model-list/tiers-file';
 import {
     acknowledgeModels,
     providersWithNewModels,
@@ -372,6 +373,58 @@ describe('Discord report limits', () => {
             ).toBeLessThanOrEqual(6000);
         }
         expect(discord.batchDiscordEmbeds([])).toEqual([]);
+    });
+});
+
+describe('tiers.ts sync', () => {
+    const tiersText = [
+        'export const MODEL_TIERS = {',
+        '    // *** anthropic',
+        "    'claude-b': 'latest',",
+        "    'claude-old': 'legacy',",
+        '    // *** openai',
+        "    'gpt-2': ['latest', 'test'],",
+        '    // *** google',
+        '};',
+        '',
+    ].join('\n');
+
+    test('adds missing ids as new, sorted, and reports stale entries', () => {
+        const file = modelsFile.emptyModelsFile();
+        file.providers.anthropic = [model('claude-b'), model('claude-a')];
+        file.providers.openai = [model('gpt-10'), model('gpt-2')];
+        file.providers.google = [model('gemini-1')];
+        const sync = syncTiersFile(tiersText, file);
+        expect(sync.text).toBe(
+            [
+                'export const MODEL_TIERS = {',
+                '    // *** anthropic',
+                "    'claude-a': 'new',",
+                "    'claude-b': 'latest',",
+                "    'claude-old': 'legacy',",
+                '    // *** openai',
+                "    'gpt-2': ['latest', 'test'],",
+                "    'gpt-10': 'new',",
+                '    // *** google',
+                "    'gemini-1': 'new',",
+                '};',
+                '',
+            ].join('\n')
+        );
+        expect(sync.added).toEqual(['claude-a', 'gpt-10', 'gemini-1']);
+        expect(sync.stale).toEqual([
+            { provider: 'anthropic', id: 'claude-old' },
+        ]);
+    });
+
+    test('leaves an in-sync file untouched', () => {
+        const file = modelsFile.emptyModelsFile();
+        file.providers.anthropic = [model('claude-b'), model('claude-old')];
+        file.providers.openai = [model('gpt-2')];
+        const sync = syncTiersFile(tiersText, file);
+        expect(sync.text).toBe(tiersText);
+        expect(sync.added).toEqual([]);
+        expect(sync.stale).toEqual([]);
     });
 });
 

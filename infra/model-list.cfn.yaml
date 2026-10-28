@@ -113,7 +113,7 @@ Resources:
         Properties:
             FunctionName: airmailai-model-list-watcher
             Description: Hourly diff of provider model ids; notifies Discord and triggers the updater on new models
-            Runtime: nodejs22.x
+            Runtime: nodejs26.x
             Architectures:
                 - arm64
             Handler: index.watcherHandler
@@ -140,7 +140,7 @@ Resources:
         Properties:
             FunctionName: airmailai-model-list-updater
             Description: Rebuilds models.json from provider APIs and docs, preserving published models unless explicitly retired
-            Runtime: nodejs22.x
+            Runtime: nodejs26.x
             Architectures:
                 - arm64
             Handler: index.updaterHandler

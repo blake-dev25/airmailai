@@ -73,6 +73,7 @@ export interface UpdateReport {
     unchanged: string[];
     outcomes: ProviderOutcome[];
     retired: Partial<Record<Provider, string[]>>;
+    file: ModelsFile;
 }
 
 interface LoadedBase {
@@ -403,5 +404,6 @@ export async function runUpdate(
         unchanged,
         outcomes: prepared.outcomes,
         retired: prepared.retired,
+        file: prepared.file,
     };
 }

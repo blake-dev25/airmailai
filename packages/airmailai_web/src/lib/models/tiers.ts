@@ -8,7 +8,8 @@ export const MODEL_TIERS: Record<string, ModelTierAssignment> = {
     // *** anthropic
     'claude-fable-5': 'previous',
     'claude-fable-5-1': 'latest',
-    'claude-haiku-4-5': 'latest',
+    'claude-haiku-4-5': 'previous',
+    'claude-haiku-5-5': 'latest',
     'claude-opus-4-5-20251101': 'legacy',
     'claude-opus-4-6': 'legacy',
     'claude-opus-4-7': 'legacy',
@@ -50,6 +51,7 @@ export const MODEL_TIERS: Record<string, ModelTierAssignment> = {
     'gpt-6-luna': ['latest', 'test'],
     'gpt-6-sol': 'previous',
     'gpt-6.1-sol': 'latest',
+    'gpt-6.1-terra': 'latest',
     'o1': 'legacy',
     'o1-pro': 'legacy',
     'o3': 'legacy',
@@ -73,12 +75,13 @@ export const MODEL_TIERS: Record<string, ModelTierAssignment> = {
     'gemini-3.1-flash-lite': 'previous',
     'gemini-3.1-flash-lite-image': 'legacy',
     'gemini-3.1-flash-lite-preview': 'previous',
-    'gemini-3.1-pro-preview': 'latest',
+    'gemini-3.1-pro-preview': 'previous',
     'gemini-3.5-flash': 'legacy',
     'gemini-3.5-flash-lite': 'latest',
     'gemini-3.6-flash': 'legacy',
     'gemini-3.7-flash': 'previous',
     'gemini-3.8-flash': ['latest', 'test'],
+    'gemini-4-argon': 'latest',
     'gemini-robotics-er-2-preview': 'legacy',
 };
 
