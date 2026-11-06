@@ -48,6 +48,7 @@ export type {
 export {
     FILE_TRANSFER_CHUNK_BYTES,
     HISTORY_PAGE_CHARS,
+    OPENROUTER_REFRESH_COOLDOWN_MS,
     SETTINGS_KEYS,
 } from './messages';
 export {

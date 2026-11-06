@@ -1,23 +1,29 @@
 import type { BroadcastEvent } from '@airmailai/shared';
 import { chatStore } from './chatStore.svelte';
 import { reportAppError } from './errorStore.svelte';
-import { clearFileBlobCache, subscribeToBroadcast, tabId } from './extension';
+import {
+    type BroadcastSync,
+    clearFileBlobCache,
+    subscribeToBroadcast,
+    tabId,
+} from './extension';
 import { versionCheck } from './versionCheck.svelte';
 
 const messageUpdates = new Map<string, Promise<void>>();
-let helloReceived = false;
 
-function handleBroadcastEvent(event: BroadcastEvent): void {
+function handleHello(
+    event: Extract<BroadcastEvent, { type: 'ext-hello' }>,
+    sync: BroadcastSync
+): void {
+    versionCheck.reportExtVersion(event.version);
+    if (sync === 'initial') chatStore.syncActiveTurns(event.activeChatIds);
+    else void chatStore.reconcileFromIDB(event.activeChatIds);
+}
+
+function handleBroadcastEvent(
+    event: Exclude<BroadcastEvent, { type: 'ext-hello' }>
+): void {
     switch (event.type) {
-        case 'ext-hello':
-            versionCheck.reportExtVersion(event.version);
-            if (helloReceived) {
-                void chatStore.reconcileFromIDB(event.activeChatIds);
-            } else {
-                helloReceived = true;
-                chatStore.syncActiveTurns(event.activeChatIds);
-            }
-            return;
         case 'message-changed': {
             const previous =
                 messageUpdates.get(event.chatId) ?? Promise.resolve();
@@ -106,6 +112,7 @@ function handleBroadcastEvent(event: BroadcastEvent): void {
 
 export function startBroadcastBridge(): () => void {
     const sub = subscribeToBroadcast({
+        onHello: handleHello,
         onEvent: handleBroadcastEvent,
     });
     return () => sub.unsubscribe();

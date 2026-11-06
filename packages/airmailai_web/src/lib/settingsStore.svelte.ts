@@ -7,6 +7,7 @@ import {
     type UserSettings,
 } from '@airmailai/shared';
 import { untrack } from 'svelte';
+import { appMode } from './appMode.svelte';
 import {
     defaultModelForProvider,
     FONT_SIZES,
@@ -16,7 +17,7 @@ import {
     THEMES,
 } from './constants';
 import type { ModelOption } from './models';
-import { reportAppError } from './errorStore.svelte';
+import { errorStore, reportAppError } from './errorStore.svelte';
 import {
     loadSettings as loadFromExt,
     saveSettings as saveToExtRaw,
@@ -137,8 +138,7 @@ class SettingsStore implements UserSettings {
     webFetch = $state(false);
     codeExecution = $state(false);
     systemPrompt = $state('');
-    settingsLoaded = $state(false);
-    paused = $state(false);
+    loadState = $state<'unloaded' | 'loaded' | 'failed'>('unloaded');
     private lastSaved: Partial<UserSettings> = {};
     private pendingSave: Partial<UserSettings> | null = null;
     private pendingSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -237,31 +237,34 @@ class SettingsStore implements UserSettings {
     }
 
     private shouldSave(): boolean {
-        return (
-            untrack(() => this.settingsLoaded) && !untrack(() => this.paused)
-        );
+        return untrack(() => this.loadState === 'loaded' && !appMode.isDemo);
     }
 
-    async load(): Promise<void> {
-        let settings: Partial<UserSettings> | null = null;
-        for (let attempt = 1; attempt <= 3; attempt++) {
+    private async loadWithRetry(): Promise<Partial<UserSettings>> {
+        for (let attempt = 1; ; attempt++) {
             try {
-                settings = await loadFromExt();
-                break;
+                return await loadFromExt();
             } catch (err) {
-                if (attempt === 3) {
-                    reportAppError(
-                        'settings load failed after 3 attempts',
-                        "Couldn't load settings",
-                        err
-                    );
-                    return;
-                }
+                if (attempt === 3) throw err;
                 log.warn(`settings load attempt ${attempt} failed`, err);
                 await new Promise((r) => setTimeout(r, 300 * attempt));
             }
         }
-        if (settings === null) return;
+    }
+
+    async load(): Promise<void> {
+        let settings: Partial<UserSettings>;
+        try {
+            settings = await this.loadWithRetry();
+        } catch (err) {
+            this.loadState = 'failed';
+            reportAppError(
+                'settings load failed after 3 attempts',
+                "Couldn't load settings. Changes won't be saved until you refresh.",
+                err
+            );
+            return;
+        }
         log.info('settings loaded', settings);
 
         for (const key of SETTINGS_KEYS) {
@@ -274,7 +277,7 @@ class SettingsStore implements UserSettings {
             setSettingValue(this, key, v);
             setSettingValue(this.lastSaved, key, v);
         }
-        this.settingsLoaded = true;
+        this.loadState = 'loaded';
     }
 
     applyChatConfig(meta: {
@@ -356,11 +359,18 @@ class SettingsStore implements UserSettings {
         if (provider.models.some((m) => m.id === this.modelId)) return;
         const model = defaultModelForProvider(provider);
         if (!model) return;
+        const unavailableModelId = this.modelId;
         log.info('model selection reconciled', {
-            from: this.modelId,
+            from: unavailableModelId,
             to: model.id,
         });
         this.selectModel(model);
+        if (unavailableModelId) {
+            errorStore.setAppWarning({
+                kind: 'model-unavailable',
+                modelId: unavailableModelId,
+            });
+        }
     }
 
     persistLegalVersion(version: string): void {

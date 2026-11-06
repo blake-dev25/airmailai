@@ -6,8 +6,9 @@
     import { tick, untrack } from 'svelte';
     import { SvelteSet } from 'svelte/reactivity';
     import { appLifecycle } from './appLifecycle.svelte';
+    import { appMode } from './appMode.svelte';
     import { chatStore } from './chatStore.svelte';
-    import { EXTENSION_STORE_URL } from './constants';
+    import { EXTENSION_STORE_URL, GITHUB_ISSUES_URL } from './constants';
     import { errorStore, reportAppError } from './errorStore.svelte';
     import { getFileStatuses } from './extension';
     import {
@@ -51,15 +52,16 @@
     let fileErrors = $state<string[]>([]);
     let hoveredMessageId = $state<string | null>(null);
     let hoverHideTimer: ReturnType<typeof setTimeout> | null = null;
-    let editingMessageId = $state<string | null>(null);
-    let editingText = $state('');
-    let editingDims = $state<{ h: number } | null>(null);
+    let editing = $state<{
+        id: string;
+        text: string;
+        dims: { h: number } | null;
+    } | null>(null);
     let editingMessage = $derived(
-        editingMessageId === null
+        editing === null
             ? null
-            : (chatStore.activeMessages.find(
-                  (m) => m.id === editingMessageId
-              ) ?? null)
+            : (chatStore.activeMessages.find((m) => m.id === editing?.id) ??
+                  null)
     );
 
     let fileStatuses = $state<Record<string, FileAvailability>>({});
@@ -78,7 +80,7 @@
         const key = activeFileHashesKey;
         const provider = settingsStore.providerId;
         settingsStore.enableProviderFileStorage;
-        if (chatStore.demoMode || !key) {
+        if (appMode.isDemo || !key) {
             fileStatuses = {};
             return;
         }
@@ -162,7 +164,7 @@
 
     const smooth = createSmoothText({
         mode: () => settingsStore.smoothTextMode,
-        streaming: () => untrack(() => chatStore.isActiveStreaming),
+        streaming: () => untrack(() => chatStore.isActiveChatBusy),
         onReset: () => {
             if (untrack(() => settingsStore.autoscrollMode) === 'pin-bottom')
                 chatScroll.markAtBottom();
@@ -192,7 +194,7 @@
 
     $effect(() => {
         const chatId = chatStore.activeChatId;
-        if (chatStore.chatLoading) return;
+        if (chatStore.activeChatLoading) return;
         if (chatId === scrolledChatId) return;
         scrolledChatId = chatId;
         untrack(() =>
@@ -214,7 +216,10 @@
     $effect(() => {
         const idx = chatStore.highlightMessageIndex;
         if (idx == null) return;
-        if (chatStore.chatLoading || chatStore.activeMessages.length <= idx)
+        if (
+            chatStore.activeChatLoading ||
+            chatStore.activeMessages.length <= idx
+        )
             return;
         let cancelled = false;
         tick().then(() => {
@@ -256,13 +261,13 @@
         const text = inputText.trim();
         if (
             (!text && !pendingAttachments.length) ||
-            chatStore.isActiveStreaming ||
-            chatStore.chatLoading ||
+            chatStore.isActiveChatBusy ||
+            chatStore.activeChatLoading ||
             activeProcessingAttachments.length
         ) {
             return;
         }
-        if (chatStore.demoMode) {
+        if (appMode.isDemo) {
             appLifecycle.requestExtension();
             return;
         }
@@ -304,7 +309,7 @@
     }
 
     function handleRetry(index: number) {
-        if (chatStore.demoMode) {
+        if (appMode.isDemo) {
             appLifecycle.requestExtension();
             return;
         }
@@ -312,7 +317,7 @@
     }
 
     function openFilePicker() {
-        if (chatStore.demoMode) {
+        if (appMode.isDemo) {
             appLifecycle.requestExtension();
             return;
         }
@@ -510,9 +515,9 @@
 
     let canAcceptFileDrops = $derived(
         settingsStore.enableFileUploads &&
-            !chatStore.demoMode &&
+            !appMode.isDemo &&
             canAttachFiles &&
-            !chatStore.isActiveStreaming
+            !chatStore.isActiveChatBusy
     );
 
     function dragHasFiles(e: DragEvent): boolean {
@@ -574,42 +579,39 @@
         content: string,
         bubbleEl?: HTMLElement | null
     ) {
-        editingDims = bubbleEl ? { h: bubbleEl.offsetHeight } : null;
-        editingMessageId = id;
-        editingText = content;
+        editing = {
+            id,
+            text: content,
+            dims: bubbleEl ? { h: bubbleEl.offsetHeight } : null,
+        };
+    }
+
+    function finishEdit(): { index: number; text: string } | null {
+        if (editing === null) return null;
+        const { id, text } = editing;
+        editing = null;
+        const index = chatStore.activeMessages.findIndex((m) => m.id === id);
+        return index === -1 ? null : { index, text };
     }
 
     function saveEdit() {
-        if (editingMessageId === null) return;
-        const idx = chatStore.activeMessages.findIndex(
-            (m) => m.id === editingMessageId
-        );
-        editingMessageId = null;
-        const text = editingText;
-        editingText = '';
-        if (idx !== -1) chatStore.editMessage(idx, text);
+        const edit = finishEdit();
+        if (edit) chatStore.editMessage(edit.index, edit.text);
     }
 
     function saveEditAndResend() {
-        if (editingMessageId === null) return;
-        const idx = chatStore.activeMessages.findIndex(
-            (m) => m.id === editingMessageId
-        );
-        editingMessageId = null;
-        const text = editingText;
-        editingText = '';
-        if (idx === -1) return;
-        chatStore.editMessage(idx, text);
-        if (chatStore.demoMode) {
+        const edit = finishEdit();
+        if (!edit) return;
+        chatStore.editMessage(edit.index, edit.text);
+        if (appMode.isDemo) {
             appLifecycle.requestExtension();
             return;
         }
-        chatStore.retry(idx);
+        chatStore.retry(edit.index);
     }
 
     function cancelEdit() {
-        editingMessageId = null;
-        editingText = '';
+        editing = null;
     }
 
     function setHovered(id: string | null) {
@@ -672,7 +674,7 @@
                 ></span>
             {/if}
         </button>
-        {#if chatStore.demoMode}
+        {#if appMode.isDemo}
             <a
                 href={EXTENSION_STORE_URL}
                 target="_blank"
@@ -711,7 +713,7 @@
                 style="max-width: min(100vw, calc(744px + (100vw - 744px) * {settingsStore.chatWidth /
                     100}));"
             >
-                {#if chatStore.chatLoading}
+                {#if chatStore.activeChatLoading}
                     <div
                         class="flex flex-col items-center justify-center flex-1 h-full gap-2.5 text-fg"
                     >
@@ -739,7 +741,7 @@
                 {:else}
                     {#each chatStore.activeMessages as message, i (message.id)}
                         {@const isLastStreaming =
-                            chatStore.isActiveStreaming &&
+                            chatStore.isActiveChatBusy &&
                             i === chatStore.activeMessages.length - 1}
                         {@const streamingText =
                             isLastStreaming && message.role === 'assistant'
@@ -763,7 +765,7 @@
                             {fileStatuses}
                             maxFileBytes={filePolicy.maxFileBytes}
                             {providerName}
-                            isStreaming={chatStore.isActiveStreaming}
+                            isStreaming={chatStore.isActiveChatBusy}
                             isLastStreaming={isLastStreaming ||
                                 displayContent !== messageContent}
                             deferRender={i <
@@ -771,8 +773,13 @@
                                     IMMEDIATE_RENDER_TAIL &&
                                 chatStore.highlightMessageIndex == null}
                             editing={editingMessage?.id === message.id}
-                            bind:editingText
-                            {editingDims}
+                            bind:editingText={
+                                () => editing?.text ?? '',
+                                (text) => {
+                                    if (editing) editing.text = text;
+                                }
+                            }
+                            editingDims={editing?.dims ?? null}
                             hovered={hoveredMessageId === message.id}
                             thinkingExpanded={expandedThinking.has(message.id)}
                             sourcesExpanded={expandedSources.has(message.id)}
@@ -854,6 +861,37 @@
                 class="shrink-0 flex items-center justify-center w-6 h-6 p-0 bg-transparent border-0 rounded-md text-fg cursor-pointer opacity-70 transition-[opacity,background-color] duration-150 hover:opacity-100 hover:bg-surface-sunken"
                 onclick={() => versionCheck.dismiss()}
                 aria-label="Dismiss update notice"
+            >
+                <Icon name="close" />
+            </button>
+        </div>
+    {/if}
+
+    {#if errorStore.appWarning?.kind === 'model-unavailable'}
+        <div
+            class="shrink-0 flex items-center gap-3 px-4 py-2 text-sm text-fg border-t border-border bg-canvas"
+            role="status"
+            data-testid="model-unavailable-warning"
+        >
+            <span class="min-w-0 flex-1 wrap-break-word"
+                >Warning: previously selected model '{errorStore.appWarning
+                    .modelId}' is not available. This is usually due to the
+                model being retired by the API provider. Selected model has been
+                switched to the current provider default. If you believe this is
+                incorrect, please open an issue on
+                <a
+                    href={GITHUB_ISSUES_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="inline-flex items-center gap-0.5 text-accent-fg no-underline hover:underline"
+                    >GitHub<Icon name="external-link" /></a
+                >.</span
+            >
+            <button
+                type="button"
+                class="shrink-0 flex items-center justify-center w-6 h-6 p-0 bg-transparent border-0 rounded-md text-fg cursor-pointer opacity-70 transition-[opacity,background-color] duration-150 hover:opacity-100 hover:bg-surface-sunken"
+                onclick={() => errorStore.clearAppWarning()}
+                aria-label="Dismiss warning"
             >
                 <Icon name="close" />
             </button>
@@ -991,7 +1029,7 @@
                         : 'opacity-[0.35] cursor-not-allowed',
                 ]}
                 onclick={openFilePicker}
-                disabled={chatStore.isActiveStreaming ||
+                disabled={chatStore.isActiveChatBusy ||
                     !canAttachFiles ||
                     pendingAttachments.length +
                         activeProcessingAttachments.length >=
@@ -1013,7 +1051,7 @@
                 bind:this={textareaEl}
                 onkeydown={handleKeydown}
                 oninput={autoResize}></textarea>
-            {#if chatStore.isActiveStreaming && chatStore.isActiveLocalStreaming}
+            {#if chatStore.canStopActive}
                 <button
                     type="button"
                     class="{sendStyleBase} bg-accent-3-bg text-on-accent-3-bg hover:bg-accent-3-bg-hover hover:text-on-accent-3-bg-hover"
@@ -1027,8 +1065,8 @@
                     type="button"
                     class="{sendStyleBase} bg-accent-3-bg text-on-accent-3-bg enabled:hover:bg-accent-3-bg-hover enabled:hover:text-on-accent-3-bg-hover disabled:opacity-[0.35] disabled:cursor-not-allowed"
                     onclick={submit}
-                    disabled={chatStore.isActiveStreaming ||
-                        chatStore.chatLoading ||
+                    disabled={chatStore.isActiveChatBusy ||
+                        chatStore.activeChatLoading ||
                         activeProcessingAttachments.length > 0 ||
                         (!inputText.trim() && !pendingAttachments.length)}
                     aria-label="Send message"

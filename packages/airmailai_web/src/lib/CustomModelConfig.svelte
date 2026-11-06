@@ -56,7 +56,7 @@
         type="text"
         class={inputClass}
         bind:value={settingsStore.modelId}
-        disabled={!appLifecycle.initialized}
+        disabled={appLifecycle.bootPhase !== 'ready'}
         autocomplete="off"
         spellcheck="false"
     />
@@ -80,7 +80,7 @@
                     config[field.key] = value;
                 }
             }
-            disabled={!appLifecycle.initialized}
+            disabled={appLifecycle.bootPhase !== 'ready'}
             autocomplete="off"
             spellcheck="false"
         />
@@ -102,7 +102,7 @@
             role="switch"
             aria-checked={config[toggle.key] === true}
             aria-label={toggle.label}
-            disabled={!appLifecycle.initialized}
+            disabled={appLifecycle.bootPhase !== 'ready'}
             onclick={() => {
                 config[toggle.key] = config[toggle.key] !== true;
             }}

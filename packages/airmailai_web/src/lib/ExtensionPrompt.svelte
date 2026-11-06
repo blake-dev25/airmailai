@@ -1,8 +1,7 @@
 <script lang="ts">
+    import type { ExtensionPromptVariant as Variant } from './appMode.svelte';
     import { EXTENSION_STORE_URL } from './constants';
     import Icon from './Icon.svelte';
-
-    type Variant = 'no-extension' | 'unsupported-browser' | 'mobile';
 
     let {
         variant,

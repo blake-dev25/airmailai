@@ -1,6 +1,7 @@
 <script lang="ts">
     import { VList } from 'virtua/svelte';
     import { appLifecycle } from './appLifecycle.svelte';
+    import { appMode } from './appMode.svelte';
     import { chatStore } from './chatStore.svelte';
     import { cleanInline, MAX_TITLE_CHARS } from './chatTransfer';
     import { escapeHtml } from './escapeHtml';
@@ -14,9 +15,9 @@
 
     let showSettings = $state(false);
     let showKeyPrompt = $derived(
-        appLifecycle.initialized &&
-            !chatStore.demoMode &&
-            providersStore.savedKeys !== null &&
+        appLifecycle.bootPhase === 'ready' &&
+            !appMode.isDemo &&
+            providersStore.savedKeys.state.status === 'ready' &&
             !providersStore.hasAnyKey &&
             !showSettings
     );
@@ -44,42 +45,45 @@
         );
     }
 
-    let openMenuChat = $state<Chat | null>(null);
-    let menuPos = $state({ top: 0, left: 0 });
-    let exportMenuOpen = $state(false);
-    let renamingChatId = $state<string | null>(null);
-    let renameValue = $state('');
+    let menu = $state<{
+        chat: Chat;
+        pos: { top: number; left: number };
+        exportOpen: boolean;
+    } | null>(null);
+    let renaming = $state<{ chatId: string; value: string } | null>(null);
 
     function openMenu(e: MouseEvent, chat: Chat) {
         e.stopPropagation();
-        exportMenuOpen = false;
-        if (openMenuChat?.id === chat.id) {
-            openMenuChat = null;
+        if (menu?.chat.id === chat.id) {
+            menu = null;
             return;
         }
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-        menuPos = { top: rect.bottom + 4, left: rect.right - 140 };
-        openMenuChat = chat;
+        menu = {
+            chat,
+            pos: { top: rect.bottom + 4, left: rect.right - 140 },
+            exportOpen: false,
+        };
     }
 
     function closeMenu() {
-        openMenuChat = null;
-        exportMenuOpen = false;
+        menu = null;
     }
 
-    function startRename(chatId: string, currentTitle: string) {
-        renamingChatId = chatId;
-        renameValue = currentTitle;
-        openMenuChat = null;
+    function setExportOpen(open: boolean) {
+        if (menu) menu.exportOpen = open;
+    }
+
+    function startRename(chat: Chat) {
+        renaming = { chatId: chat.id, value: chat.title };
+        menu = null;
     }
 
     function commitRename() {
-        const title = cleanInline(renameValue, MAX_TITLE_CHARS);
-        if (renamingChatId && title) {
-            chatStore.rename(renamingChatId, title);
-        }
-        renamingChatId = null;
-        renameValue = '';
+        if (!renaming) return;
+        const title = cleanInline(renaming.value, MAX_TITLE_CHARS);
+        if (title) chatStore.rename(renaming.chatId, title);
+        renaming = null;
     }
 
     const chatItemClass =
@@ -120,7 +124,7 @@
                     'bg-surface-raised text-accent-fg',
             ]}
             onclick={() => {
-                if (chatStore.demoMode) {
+                if (appMode.isDemo) {
                     appLifecycle.requestExtension();
                     return;
                 }
@@ -182,7 +186,8 @@
         </button>
     </div>
 
-    {#if chatStore.searchResults !== null}
+    {#if chatStore.searchState.kind !== 'inactive'}
+        {@const search = chatStore.searchState}
         <nav
             class={[
                 'history search-mode flex-1 min-h-0 overflow-y-auto px-2 py-1',
@@ -195,19 +200,18 @@
             <p
                 class="px-2.5 pt-2.5 pb-1 text-[0.6875rem] font-semibold tracking-wider uppercase text-fg-muted m-0"
             >
-                {chatStore.searchResults.length} result{chatStore.searchResults
-                    .length === 1
+                {search.results.length} result{search.results.length === 1
                     ? ''
                     : 's'}
             </p>
-            {#if (chatStore.unsearchedChatCount > 0 && !chatStore.allChatsSearched) || chatStore.searchingAll}
+            {#if chatStore.unsearchedChatCount > 0 || search.kind === 'loading-all'}
                 <button
                     type="button"
                     class="flex items-center justify-center gap-1.5 w-full px-2.5 py-1.5 mb-1 bg-transparent border border-border rounded-md text-xs text-fg-muted cursor-pointer transition-[background-color,color] duration-100 hover:bg-surface-raised hover:text-fg disabled:cursor-default"
-                    disabled={chatStore.searchingAll}
+                    disabled={search.kind === 'loading-all'}
                     onclick={() => chatStore.searchAllChats()}
                 >
-                    {#if chatStore.searchingAll}
+                    {#if search.kind === 'loading-all'}
                         <Icon name="spinner" />
                         Searching all chats...
                     {:else}
@@ -215,12 +219,12 @@
                     {/if}
                 </button>
             {/if}
-            {#if chatStore.searchResults.length === 0}
+            {#if search.results.length === 0}
                 <p class="px-2 pt-2 pb-5 text-sm text-fg text-center m-0">
                     No matches found
                 </p>
             {:else}
-                {#each chatStore.searchResults as result (result.id)}
+                {#each search.results as result (result.id)}
                     <div
                         class={[
                             'group flex items-center rounded-md mb-px transition-[background-color] duration-100 hover:bg-surface-raised',
@@ -250,7 +254,7 @@
                                 <!-- eslint-disable-next-line svelte/no-at-html-tags -->
                                 {@html highlightSnippet(
                                     result.title,
-                                    chatStore.searchQuery
+                                    search.query
                                 )}
                             </span>
                             {#if result.snippet}
@@ -260,7 +264,7 @@
                                     <!-- eslint-disable-next-line svelte/no-at-html-tags -->
                                     {@html highlightSnippet(
                                         result.snippet,
-                                        chatStore.searchQuery
+                                        search.query
                                     )}
                                 </span>
                             {/if}
@@ -284,7 +288,7 @@
             >
                 Recent Chats
             </p>
-            {#if !appLifecycle.initialized}
+            {#if appLifecycle.bootPhase !== 'ready'}
                 <!-- Blank until extension responds - avoids "No conversations yet" flash on refresh. -->
             {:else if chatStore.chats.length === 0}
                 <p class="px-2 pt-2 pb-5 text-sm text-fg text-center m-0">
@@ -306,14 +310,20 @@
                                         'bg-surface-raised',
                                 ]}
                             >
-                                {#if renamingChatId === chat.id}
+                                {#if renaming?.chatId === chat.id}
                                     <input
                                         class="flex-1 min-w-0 px-2.5 py-1.5 bg-canvas border border-accent-fg rounded-md outline-none font-sans text-sm text-fg"
                                         {@attach (node: HTMLInputElement) => {
                                             node.focus();
                                             node.select();
                                         }}
-                                        bind:value={renameValue}
+                                        bind:value={
+                                            () => renaming?.value ?? '',
+                                            (value) => {
+                                                if (renaming)
+                                                    renaming.value = value;
+                                            }
+                                        }
                                         onblur={commitRename}
                                         onclick={(e) => e.stopPropagation()}
                                         onkeydown={(e) => {
@@ -322,8 +332,7 @@
                                                 commitRename();
                                             }
                                             if (e.key === 'Escape') {
-                                                renamingChatId = null;
-                                                renameValue = '';
+                                                renaming = null;
                                             }
                                         }}
                                     />
@@ -347,14 +356,14 @@
                                         >
                                     </button>
                                 {/if}
-                                {#if chatStore.allStreamingChatIds.has(chat.id) && chat.id !== chatStore.activeChatId}
+                                {#if chatStore.isChatBusy(chat.id) && chat.id !== chatStore.activeChatId}
                                     <span
                                         class="shrink-0 flex items-center justify-center w-5 h-5 mr-0.5 text-xs font-bold text-fg-muted"
                                         aria-label="Streaming"
                                     >
                                         <Icon name="spinner" />
                                     </span>
-                                {:else if chatStore.chatErrors[chat.id]}
+                                {:else if chatStore.chatStreamError(chat.id)}
                                     <span
                                         class="shrink-0 flex items-center justify-center w-5 h-5 mr-0.5 text-xs font-bold text-accent-fg"
                                         aria-label="Error">!</span
@@ -364,7 +373,7 @@
                                     type="button"
                                     class={[
                                         'menu-btn shrink-0 flex items-center justify-center w-5 h-5 p-0 mr-1.5 bg-transparent border-0 rounded cursor-pointer text-fg-muted opacity-0 transition-[opacity,color,background-color] duration-100 group-hover:opacity-100 hover:text-accent-fg hover:bg-surface-sunken',
-                                        openMenuChat?.id === chat.id &&
+                                        menu?.chat.id === chat.id &&
                                             'opacity-100! text-accent-fg! bg-surface-sunken!',
                                     ]}
                                     aria-label="Chat options"
@@ -405,17 +414,18 @@
     </div>
 </aside>
 
-{#if openMenuChat}
+{#if menu}
+    {@const menuChat = menu.chat}
     <div
         class="fixed z-200 min-w-35 flex flex-col bg-surface-raised border border-border rounded-lg shadow-[0_4px_16px_rgba(0,0,0,0.18)] p-1 select-none"
-        style="top: {menuPos.top}px; left: {menuPos.left}px;"
+        style="top: {menu.pos.top}px; left: {menu.pos.left}px;"
     >
         <button
             type="button"
             class="flex items-center gap-2 w-full px-2.5 py-1.75 bg-transparent border-0 rounded text-sm font-sans text-fg cursor-pointer text-left transition-[background-color,color] duration-100 hover:bg-canvas"
             onclick={(e) => {
                 e.stopPropagation();
-                startRename(openMenuChat!.id, openMenuChat!.title);
+                startRename(menuChat);
             }}
         >
             <Icon name="edit" />
@@ -424,20 +434,20 @@
         <div
             class="relative"
             role="none"
-            onmouseenter={() => (exportMenuOpen = true)}
-            onmouseleave={() => (exportMenuOpen = false)}
+            onmouseenter={() => setExportOpen(true)}
+            onmouseleave={() => setExportOpen(false)}
         >
             <button
                 type="button"
                 class={[
                     'flex items-center gap-2 w-full px-2.5 py-1.75 bg-transparent border-0 rounded text-sm font-sans text-fg cursor-pointer text-left transition-[background-color,color] duration-100 hover:bg-canvas',
-                    exportMenuOpen && 'bg-canvas',
+                    menu.exportOpen && 'bg-canvas',
                 ]}
                 aria-haspopup="menu"
-                aria-expanded={exportMenuOpen}
+                aria-expanded={menu.exportOpen}
                 onclick={(e) => {
                     e.stopPropagation();
-                    exportMenuOpen = !exportMenuOpen;
+                    setExportOpen(!menu?.exportOpen);
                 }}
             >
                 <Icon name="download" />
@@ -446,7 +456,7 @@
                     <Icon name="chevron-right" />
                 </span>
             </button>
-            {#if exportMenuOpen}
+            {#if menu.exportOpen}
                 <div class="absolute left-full top-0 z-10 pl-1.5">
                     <div
                         class="flex flex-col bg-surface-raised border border-border rounded-lg shadow-[0_4px_16px_rgba(0,0,0,0.18)] p-1"
@@ -457,10 +467,7 @@
                                 class="flex items-center gap-2 w-full px-2.5 py-1.75 bg-transparent border-0 rounded text-sm font-sans text-fg cursor-pointer text-left whitespace-nowrap transition-[background-color,color] duration-100 hover:bg-canvas"
                                 onclick={(e) => {
                                     e.stopPropagation();
-                                    chatStore.export(
-                                        openMenuChat!.id,
-                                        fmt.format
-                                    );
+                                    chatStore.export(menuChat.id, fmt.format);
                                     closeMenu();
                                 }}
                             >
@@ -477,10 +484,9 @@
             class="flex items-center gap-2 w-full px-2.5 py-1.75 bg-transparent border-0 rounded text-sm font-sans text-fg cursor-pointer text-left transition-[background-color,color] duration-100 hover:bg-canvas hover:text-accent-fg"
             onclick={(e) => {
                 e.stopPropagation();
-                const chat = openMenuChat!;
-                if (!confirm(`Delete "${chat.title}"? Cannot be undone.`))
+                if (!confirm(`Delete "${menuChat.title}"? Cannot be undone.`))
                     return;
-                chatStore.remove(chat.id);
+                chatStore.remove(menuChat.id);
                 closeMenu();
             }}
         >

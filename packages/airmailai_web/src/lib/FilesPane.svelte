@@ -2,6 +2,7 @@
     import type { LocalFileInfo, ProviderFileInfo } from '@airmailai/shared';
     import { onMount } from 'svelte';
     import { appLifecycle } from './appLifecycle.svelte';
+    import { AsyncResource } from './asyncResource.svelte';
     import { chatStore } from './chatStore.svelte';
     import { PROVIDER_META } from './constants';
     import { reportAppError } from './errorStore.svelte';
@@ -31,11 +32,16 @@
     const rowBtnClass =
         'flex items-center justify-center w-6 h-6 p-0 bg-transparent border-0 text-current opacity-50 cursor-pointer shrink-0 transition-opacity duration-150 hover:opacity-100 disabled:opacity-30 disabled:cursor-default';
 
-    let localFiles = $state<LocalFileInfo[] | null>(null);
-    let localError = $state(false);
-    let keysChecked = $state(false);
-    let providerFiles = $state<Record<string, ProviderFileInfo[] | null>>({});
-    let providerError = $state<Record<string, boolean>>({});
+    const localFiles = new AsyncResource<LocalFileInfo[]>();
+    const providerFiles: Record<
+        string,
+        AsyncResource<ProviderFileInfo[]> | undefined
+    > = Object.fromEntries(
+        [...FILES_API_PROVIDERS].map((id) => [
+            id,
+            new AsyncResource<ProviderFileInfo[]>(),
+        ])
+    );
     let busyKey = $state<string | null>(null);
 
     function sumBytes(files: { sizeBytes: number }[]): number {
@@ -54,55 +60,34 @@
     }
 
     async function loadLocal() {
-        localFiles = null;
-        localError = false;
-        try {
-            localFiles = await listLocalFiles();
-        } catch (err) {
-            localError = true;
-            localFiles = [];
-            reportAppError(
-                'listLocalFiles failed',
-                "Couldn't load your files",
-                err
-            );
-        }
+        await localFiles.load(listLocalFiles, {
+            context: 'listLocalFiles failed',
+            userMessage: "Couldn't load your files",
+        });
     }
 
     async function loadProviders() {
-        try {
-            await providersStore.refreshSavedKeys();
-        } catch (err) {
-            reportAppError(
-                'checkApiKeys failed',
-                "Couldn't read saved API keys",
-                err
-            );
-            return;
-        } finally {
-            keysChecked = true;
-        }
-        for (const provider of PROVIDER_META) {
-            if (!FILES_API_PROVIDERS.has(provider.id)) continue;
-            if (!providersStore.savedKeys?.[provider.id]) continue;
-            void loadProviderFiles(provider.id);
+        await providersStore.refreshSavedKeys();
+        for (const providerId of FILES_API_PROVIDERS) {
+            if (!providersStore.hasSavedKey(providerId)) continue;
+            void loadProviderFiles(providerId);
         }
     }
 
     async function loadProviderFiles(providerId: string) {
-        providerError[providerId] = false;
-        providerFiles[providerId] = null;
-        try {
-            providerFiles[providerId] = await listProviderFiles(providerId);
-        } catch (err) {
-            providerError[providerId] = true;
-            providerFiles[providerId] = [];
-            reportAppError(
-                `listProviderFiles failed (provider=${providerId})`,
-                `Couldn't load ${providerId} files`,
-                err
-            );
-        }
+        await providerFiles[providerId]?.load(
+            () => listProviderFiles(providerId),
+            {
+                context: `listProviderFiles failed (provider=${providerId})`,
+                userMessage: `Couldn't load ${providerId} files`,
+            }
+        );
+    }
+
+    function removeProviderFile(providerId: string, fileId: string) {
+        providerFiles[providerId]?.update((files) =>
+            files.filter((f) => f.fileId !== fileId)
+        );
     }
 
     async function downloadLocal(file: LocalFileInfo) {
@@ -135,7 +120,9 @@
                 hash: file.hash,
             });
             forgetFileBlob(file.hash);
-            localFiles = (localFiles ?? []).filter((f) => f.hash !== file.hash);
+            localFiles.update((files) =>
+                files.filter((f) => f.hash !== file.hash)
+            );
             await chatStore.refreshLoadedChats(chatIds);
         } catch (err) {
             reportAppError(
@@ -176,9 +163,7 @@
                 providerId,
                 fileId: file.fileId,
             });
-            providerFiles[providerId] = (
-                providerFiles[providerId] ?? []
-            ).filter((f) => f.fileId !== file.fileId);
+            removeProviderFile(providerId, file.fileId);
             await chatStore.refreshLoadedChats(chatIds);
         } catch (err) {
             reportAppError(
@@ -192,7 +177,7 @@
     }
 
     async function deleteAllProvider(providerId: string, providerName: string) {
-        const files = providerFiles[providerId] ?? [];
+        const files = providerFiles[providerId]?.value ?? [];
         if (busyKey || !files.length) return;
         const label = files.length === 1 ? 'file' : 'files';
         if (
@@ -213,9 +198,7 @@
                         fileId: file.fileId,
                     });
                     for (const id of ids) chatIds.add(id);
-                    providerFiles[providerId] = (
-                        providerFiles[providerId] ?? []
-                    ).filter((f) => f.fileId !== file.fileId);
+                    removeProviderFile(providerId, file.fileId);
                 } catch (err) {
                     failed = true;
                     reportAppError(
@@ -269,14 +252,14 @@
                     </h2>
                     {@render info('IndexedDB storage')}
                 </div>
-                {#if localFiles === null}
-                    {@render loading()}
-                {:else if localError}
+                {#if localFiles.state.status === 'error'}
                     <p class="text-sm text-fg-muted">Couldn't load files.</p>
-                {:else if localFiles.length === 0}
+                {:else if localFiles.state.status !== 'ready'}
+                    {@render loading()}
+                {:else if localFiles.state.value.length === 0}
                     <p class="text-sm text-fg-muted">No files</p>
                 {:else}
-                    {#each localFiles as file (file.hash)}
+                    {#each localFiles.state.value as file (file.hash)}
                         {@render fileRow({
                             filename: file.filename,
                             createdAt: file.createdAt,
@@ -290,14 +273,10 @@
             </section>
 
             {#each PROVIDER_META as provider (provider.id)}
-                {@const files = providerFiles[provider.id] ?? []}
-                {@const keySaved = !!providersStore.savedKeys?.[provider.id]}
-                {@const ready =
-                    FILES_API_PROVIDERS.has(provider.id) &&
-                    keysChecked &&
-                    keySaved &&
-                    providerFiles[provider.id] != null &&
-                    !providerError[provider.id]}
+                {@const resource = providerFiles[provider.id]}
+                {@const files = resource?.value ?? []}
+                {@const keySaved = providersStore.hasSavedKey(provider.id)}
+                {@const ready = keySaved && resource?.state.status === 'ready'}
                 {@const max = PROVIDER_STORAGE_MAX_BYTES[provider.id]}
                 <section class="flex flex-col gap-1.5">
                     <div class="flex items-center justify-between gap-2">
@@ -342,18 +321,22 @@
                             {/if}
                         </div>
                     </div>
-                    {#if !FILES_API_PROVIDERS.has(provider.id)}
+                    {#if !resource}
                         <p class="text-sm text-fg-muted">No files API</p>
-                    {:else if !keysChecked}
+                    {:else if providersStore.savedKeys.state.status === 'error'}
+                        <p class="text-sm text-fg-muted">
+                            Couldn't check API keys.
+                        </p>
+                    {:else if providersStore.savedKeys.value === null}
                         {@render loading()}
                     {:else if !keySaved}
                         <p class="text-sm text-fg-muted">No API key</p>
-                    {:else if providerFiles[provider.id] == null}
-                        {@render loading()}
-                    {:else if providerError[provider.id]}
+                    {:else if resource.state.status === 'error'}
                         <p class="text-sm text-fg-muted">
                             Couldn't load files.
                         </p>
+                    {:else if resource.state.status !== 'ready'}
+                        {@render loading()}
                     {:else if files.length === 0}
                         <p class="text-sm text-fg-muted">No files</p>
                     {:else}

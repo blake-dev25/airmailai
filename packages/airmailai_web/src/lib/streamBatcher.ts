@@ -1,6 +1,5 @@
 import type { AirmailAIChunk, MessageAssemblerState } from '@airmailai/shared';
 import { applyAirmailAIChunk } from '@airmailai/shared';
-import type { Chat } from './types';
 
 type DeltaChunk = Extract<
     AirmailAIChunk,
@@ -15,7 +14,7 @@ export interface StreamBatcher {
 
 export function createStreamBatcher(
     assembler: MessageAssemblerState,
-    chat: Chat
+    appendText: (text: string) => void
 ): StreamBatcher {
     const pending = new Map<string, DeltaChunk>();
     let pendingText = '';
@@ -34,7 +33,7 @@ export function createStreamBatcher(
         }
         pending.clear();
         if (pendingText) {
-            chat.streamingText = (chat.streamingText ?? '') + pendingText;
+            appendText(pendingText);
             pendingText = '';
         }
     }

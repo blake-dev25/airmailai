@@ -29,13 +29,9 @@ import {
 } from './models';
 
 const ROOT = path.resolve(__dirname, '../..');
-const EXT_PATH = path.join(
-    ROOT,
-    'packages',
-    'airmailai_ext',
-    '.output',
-    'chrome-mv3'
-);
+const EXT_PATH =
+    process.env.AIRMAILAI_EXT_PATH ??
+    path.join(ROOT, 'packages', 'airmailai_ext', '.output', 'chrome-mv3');
 const LEGAL_DIR = path.join(
     ROOT,
     'packages',

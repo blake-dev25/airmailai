@@ -47,6 +47,7 @@ import {
     recoverRejectedProviderFiles,
     uploadWithDedup,
 } from './provider-file-sync';
+import { TurnLifecycle } from './turn-lifecycle';
 
 const TEXT_PART_SEPARATOR = '\n\n';
 
@@ -187,22 +188,12 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
     log.info('turn port connected');
     trackStreamPort(port);
     const controller = new AbortController();
-    type Disposition =
-        | 'pending'
-        | 'streaming'
-        | 'stopped'
-        | 'aborted'
-        | 'completed'
-        | 'errored';
-    let disposition: Disposition = 'pending';
+    const lifecycle = new TurnLifecycle();
     let lockedChatId: string | null = null;
     let lockedSourceTabId: string | null = null;
     let assistantMessageId: string | null = null;
-    let inStreamErrorText: string | null = null;
-    let errorSource: StreamErrorSource = 'extension';
+    let activeSource: StreamErrorSource = 'extension';
     let portOpen = true;
-    let truncateTo: number | null = null;
-    let persisted = false;
     let chatRevision: number | null = null;
 
     const send = (event: ExtensionStreamEvent) => {
@@ -211,38 +202,31 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
 
     port.onDisconnect.addListener(() => {
         portOpen = false;
-        log.info('port disconnected, disposition:', disposition);
-        if (disposition === 'pending' || disposition === 'streaming') {
-            disposition = 'aborted';
-        }
+        log.info('port disconnected, phase:', lifecycle.currentPhase);
+        lifecycle.disconnect();
         controller.abort();
         releaseStreamPort(port);
     });
 
     port.onMessage.addListener(async (msg: TurnRequest) => {
         if (msg.type === 'stop') {
-            if (disposition !== 'streaming' && disposition !== 'completed')
-                return;
+            if (!lifecycle.requestStop(msg.truncateTo)) return;
             log.info('stop received', 'truncateTo:', msg.truncateTo);
-            if (!persisted) {
-                disposition = 'stopped';
-                truncateTo = msg.truncateTo;
-                if (lockedChatId) {
-                    broadcast(
-                        {
-                            type: 'turn-truncate',
-                            chatId: lockedChatId,
-                            charLen: msg.truncateTo,
-                        },
-                        lockedSourceTabId ?? undefined
-                    );
-                }
+            if (lockedChatId) {
+                broadcast(
+                    {
+                        type: 'turn-truncate',
+                        chatId: lockedChatId,
+                        charLen: msg.truncateTo,
+                    },
+                    lockedSourceTabId ?? undefined
+                );
             }
             controller.abort();
             return;
         }
 
-        if (disposition !== 'pending') return;
+        if (!lifecycle.isPending()) return;
 
         if (activeTurns.has(msg.chatId)) {
             log.info('lock taken, rejecting', msg.chatId);
@@ -259,7 +243,7 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
         lockedChatId = msg.chatId;
         lockedSourceTabId = msg.sourceTabId;
         assistantMessageId = msg.assistantMessageId;
-        disposition = 'streaming';
+        lifecycle.start();
 
         broadcast(
             {
@@ -296,9 +280,10 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
             apiKey = await readApiKey(msg.provider);
             if (!apiKey) {
                 log.error('no API key for provider', msg.provider);
-                inStreamErrorText = `No API key saved for ${msg.provider}. Add one in Settings.`;
-                errorSource = 'extension';
-                disposition = 'errored';
+                lifecycle.streamFailed(
+                    `No API key saved for ${msg.provider}. Add one in Settings.`,
+                    'extension'
+                );
                 return;
             }
 
@@ -351,11 +336,10 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
             );
             const generateChunks =
                 async function* (): AsyncGenerator<AirmailAIChunk> {
-                    let delivered = false;
-                    let recovered = false;
+                    let canRecover = storageOn;
                     for (;;) {
                         controller.signal.throwIfAborted();
-                        errorSource = 'extension';
+                        activeSource = 'extension';
                         const prepared = await prepareProviderFiles(
                             messages,
                             msg.provider,
@@ -391,18 +375,16 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
                             blobs,
                             providerFiles: prepared.files,
                         });
-                        errorSource = 'api';
+                        activeSource = 'api';
                         try {
                             for await (const chunk of stream) {
-                                delivered = true;
+                                canRecover = false;
                                 yield chunk;
                             }
                             return;
                         } catch (error) {
                             if (
-                                delivered ||
-                                recovered ||
-                                !storageOn ||
+                                !canRecover ||
                                 controller.signal.aborted ||
                                 !(await recoverRejectedProviderFiles(
                                     error,
@@ -411,7 +393,7 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
                                 ))
                             )
                                 throw error;
-                            recovered = true;
+                            canRecover = false;
                             broadcast({
                                 type: 'files-changed',
                                 chatIds: [msg.chatId],
@@ -425,7 +407,7 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
                 outbound: AirmailAIChunk
             ) => {
                 applyAirmailAIChunk(assembler, chunk);
-                if (disposition !== 'streaming') return;
+                if (!lifecycle.isDelivering()) return;
                 send({ type: 'chunk', chunk: outbound });
                 broadcast(
                     {
@@ -500,26 +482,24 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
                     deliver(separator, separator);
                 }
             }
-            errorSource = 'extension';
-
-            if (disposition === 'streaming') {
-                disposition = 'completed';
-            }
+            activeSource = 'extension';
+            lifecycle.streamEnded();
         } catch (e: unknown) {
             log.error('stream threw', e);
-            if (disposition === 'streaming') {
-                inStreamErrorText = e instanceof Error ? e.message : String(e);
-                disposition = 'errored';
-            }
+            lifecycle.streamFailed(
+                e instanceof Error ? e.message : String(e),
+                activeSource
+            );
         } finally {
-            let disp = disposition as Disposition;
+            lifecycle.beginCapturing();
             let orphanedReplicas: ProviderFileRef[] = [];
             const assembled = assembler.message;
-            if (truncateTo !== null) {
-                truncateMessageTextParts(assembled, truncateTo);
+            const truncateBeforeCapture = lifecycle.truncateTo();
+            if (truncateBeforeCapture !== null) {
+                truncateMessageTextParts(assembled, truncateBeforeCapture);
             }
             if (
-                disp !== 'aborted' &&
+                lifecycle.persistsMessage() &&
                 lockedChatId &&
                 assistantMessageId &&
                 assembled.parts.length > 0
@@ -570,20 +550,25 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
                             log.info('output capture aborted by stop');
                         } else {
                             log.error('output capture failed', err);
-                            inStreamErrorText = `Couldn't download generated file(s): ${err instanceof Error ? err.message : String(err)}`;
-                            disp = 'errored';
+                            lifecycle.finalizeFailed(
+                                `Couldn't download generated file(s): ${err instanceof Error ? err.message : String(err)}`
+                            );
                         }
                     }
                 }
-                if (truncateTo !== null) {
-                    truncateMessageTextParts(finalMessage, truncateTo);
+                lifecycle.beginPersisting();
+                const truncateAfterCapture = lifecycle.truncateTo();
+                if (truncateAfterCapture !== null) {
+                    truncateMessageTextParts(
+                        finalMessage,
+                        truncateAfterCapture
+                    );
                 }
                 finalMessage.parts.push(...capturedParts);
                 const stored: StoredMessage = {
                     chatId: lockedChatId,
                     message: finalMessage,
                 };
-                persisted = true;
                 try {
                     const saved = await dbPutMessage(stored, freshBlobs);
                     orphanedReplicas = saved.refs;
@@ -591,9 +576,9 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
                 } catch (err) {
                     log.error('save failed', err);
                     const m = err instanceof Error ? err.message : String(err);
-                    inStreamErrorText = `Couldn't save assistant message: ${m}`;
-                    errorSource = 'extension';
-                    disp = 'errored';
+                    lifecycle.finalizeFailed(
+                        `Couldn't save assistant message: ${m}`
+                    );
                 }
                 if (capturedContainerId) {
                     try {
@@ -610,10 +595,10 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
                 }
             }
 
-            if (outputWarnings.length && disp !== 'errored') {
-                inStreamErrorText = outputWarnings.join('\n');
-                disp = 'errored';
+            if (outputWarnings.length) {
+                lifecycle.warn(outputWarnings.join('\n'));
             }
+            const outcome = lifecycle.finish();
 
             if (
                 lockedChatId &&
@@ -621,31 +606,31 @@ export function handleTurnPort(port: chrome.runtime.Port): void {
             ) {
                 activeTurns.delete(lockedChatId);
             }
-            if (disp === 'errored' && inStreamErrorText) {
+            if (outcome.kind === 'errored') {
                 send({
                     type: 'error',
-                    source: errorSource,
-                    message: inStreamErrorText,
+                    source: outcome.source,
+                    message: outcome.message,
                     ...(chatRevision !== null
                         ? { revision: chatRevision }
                         : {}),
                 });
-            } else if (disp !== 'aborted' && chatRevision !== null) {
+            } else if (outcome.kind !== 'aborted' && chatRevision !== null) {
                 send({ type: 'done', revision: chatRevision });
             }
 
             if (lockedChatId) {
-                if (disp === 'errored' && inStreamErrorText) {
+                if (outcome.kind === 'errored') {
                     broadcast(
                         {
                             type: 'turn-error',
                             chatId: lockedChatId,
-                            message: inStreamErrorText,
-                            source: errorSource,
+                            message: outcome.message,
+                            source: outcome.source,
                         },
                         msg.sourceTabId
                     );
-                } else if (disp === 'aborted') {
+                } else if (outcome.kind === 'aborted') {
                     broadcast(
                         { type: 'turn-aborted', chatId: lockedChatId },
                         msg.sourceTabId

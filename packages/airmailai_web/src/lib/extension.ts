@@ -674,9 +674,11 @@ export function sendToExtension(
 ): StreamHandle {
     if (!extensionId) {
         log.error('chat: extension not detected');
-        handlers.onError(
-            'AirmailAI extension not detected. Install it and refresh to start chatting.',
-            'extension'
+        queueMicrotask(() =>
+            handlers.onError(
+                'AirmailAI extension not detected. Install it and refresh to start chatting.',
+                'extension'
+            )
         );
         return { abort: () => {}, stop: () => {} };
     }
@@ -688,25 +690,24 @@ export function sendToExtension(
         params: request.params,
     });
 
-    let done = false;
-    let aborted = false;
-    let stopped = false;
+    let phase: 'open' | 'stopping' | 'closed' = 'open';
     const port = chrome.runtime.connect(extensionId);
 
     port.onMessage.addListener((event: ExtensionStreamEvent) => {
+        if (phase === 'closed') return;
         switch (event.type) {
             case 'chunk':
-                if (stopped) break;
+                if (phase === 'stopping') break;
                 handlers.onChunk(event.chunk);
                 break;
             case 'done': {
-                done = true;
+                phase = 'closed';
                 handlers.onDone(event.revision);
                 port.disconnect();
                 break;
             }
             case 'error':
-                done = true;
+                phase = 'closed';
                 log.error('<- stream error', event.source, event.message);
                 handlers.onError(event.message, event.source, event.revision);
                 port.disconnect();
@@ -715,28 +716,26 @@ export function sendToExtension(
     });
 
     port.onDisconnect.addListener(() => {
-        if (!done && !aborted) {
-            done = true;
-            const msg =
-                chrome.runtime.lastError?.message ??
-                'Extension disconnected unexpectedly.';
-            log.error('X unexpected port disconnect', msg);
-            handlers.onError(msg, 'extension');
-        }
+        if (phase === 'closed') return;
+        phase = 'closed';
+        const msg =
+            chrome.runtime.lastError?.message ??
+            'Extension disconnected unexpectedly.';
+        log.error('X unexpected port disconnect', msg);
+        handlers.onError(msg, 'extension');
     });
 
     port.postMessage({ type: 'start', ...request });
 
     return {
         abort: () => {
-            if (!done) {
-                aborted = true;
-                port.disconnect();
-            }
+            if (phase === 'closed') return;
+            phase = 'closed';
+            port.disconnect();
         },
         stop: (truncateTo: number) => {
-            if (done || stopped) return;
-            stopped = true;
+            if (phase !== 'open') return;
+            phase = 'stopping';
             port.postMessage({ type: 'stop', truncateTo });
         },
     };
@@ -746,41 +745,103 @@ export interface BroadcastSubscription {
     unsubscribe: () => void;
 }
 
-export function subscribeToBroadcast(handlers: {
-    onEvent: (event: BroadcastEvent) => void;
-}): BroadcastSubscription {
-    let port: chrome.runtime.Port | null = null;
-    let unsubscribed = false;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-    let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+type ExtHelloEvent = Extract<BroadcastEvent, { type: 'ext-hello' }>;
+export type BroadcastSync = 'initial' | 'reconnect';
 
-    const clearKeepalive = () => {
-        if (keepaliveTimer === null) return;
-        clearInterval(keepaliveTimer);
-        keepaliveTimer = null;
+type BroadcastConnection =
+    | { kind: 'idle' }
+    | { kind: 'waiting'; timer: ReturnType<typeof setTimeout> }
+    | {
+          kind: 'connected';
+          port: chrome.runtime.Port;
+          keepalive: ReturnType<typeof setInterval>;
+      }
+    | { kind: 'suspended' }
+    | { kind: 'closed' };
+
+const BROADCAST_RETRY_MS = 1000;
+
+export function subscribeToBroadcast(handlers: {
+    onHello: (event: ExtHelloEvent, sync: BroadcastSync) => void;
+    onEvent: (event: Exclude<BroadcastEvent, ExtHelloEvent>) => void;
+}): BroadcastSubscription {
+    let connection: BroadcastConnection = { kind: 'idle' };
+    let nextSync: BroadcastSync = 'initial';
+
+    const release = () => {
+        if (connection.kind === 'waiting') {
+            clearTimeout(connection.timer);
+        } else if (connection.kind === 'connected') {
+            clearInterval(connection.keepalive);
+            connection.port.disconnect();
+        }
     };
 
-    const clearReconnect = () => {
-        if (reconnectTimer === null) return;
-        clearTimeout(reconnectTimer);
-        reconnectTimer = null;
+    const isCurrent = (port: chrome.runtime.Port) =>
+        connection.kind === 'connected' && connection.port === port;
+
+    const retryLater = () => {
+        release();
+        connection = {
+            kind: 'waiting',
+            timer: setTimeout(connect, BROADCAST_RETRY_MS),
+        };
     };
 
     function connect() {
-        if (unsubscribed) return;
-        clearReconnect();
+        if (connection.kind === 'closed') return;
+        release();
         if (!extensionId) {
-            reconnectTimer = setTimeout(connect, 1000);
+            retryLater();
             return;
         }
+        let port: chrome.runtime.Port;
         try {
             port = chrome.runtime.connect(extensionId, { name: 'broadcast' });
         } catch (err) {
             log.error('broadcast: connect failed', err);
-            reconnectTimer = setTimeout(connect, 1000);
+            retryLater();
             return;
         }
         log.info('broadcast: connected');
+
+        port.onMessage.addListener((event: BroadcastEvent) => {
+            if (!isCurrent(port)) return;
+            if (event.type === 'ext-hello') {
+                const sync = nextSync;
+                nextSync = 'reconnect';
+                handlers.onHello(event, sync);
+                return;
+            }
+            handlers.onEvent(event);
+        });
+
+        port.onDisconnect.addListener(() => {
+            if (!isCurrent(port)) return;
+            const reason = chrome.runtime.lastError?.message;
+            log.info(
+                'broadcast: disconnected, reconnecting in 1s',
+                reason ? `(${reason})` : ''
+            );
+            if (connection.kind === 'connected') {
+                clearInterval(connection.keepalive);
+            }
+            connection = {
+                kind: 'waiting',
+                timer: setTimeout(connect, BROADCAST_RETRY_MS),
+            };
+        });
+
+        const keepalive = setInterval(() => {
+            try {
+                const msg: BroadcastRequest = { type: 'keepalive' };
+                port.postMessage(msg);
+            } catch (err) {
+                log.warn('broadcast keepalive failed', err);
+                clearInterval(keepalive);
+            }
+        }, KEEPALIVE_MS);
+        connection = { kind: 'connected', port, keepalive };
 
         try {
             const msg: BroadcastRequest = {
@@ -791,43 +852,16 @@ export function subscribeToBroadcast(handlers: {
         } catch (err) {
             log.warn('broadcast register failed', err);
         }
-
-        port.onMessage.addListener((event: BroadcastEvent) => {
-            handlers.onEvent(event);
-        });
-
-        port.onDisconnect.addListener(() => {
-            const reason = chrome.runtime.lastError?.message;
-            log.info(
-                'broadcast: disconnected, reconnecting in 1s',
-                reason ? `(${reason})` : ''
-            );
-            port = null;
-            clearKeepalive();
-            if (!unsubscribed) reconnectTimer = setTimeout(connect, 1000);
-        });
-
-        keepaliveTimer = setInterval(() => {
-            if (!port) return;
-            try {
-                const msg: BroadcastRequest = { type: 'keepalive' };
-                port.postMessage(msg);
-            } catch (err) {
-                log.warn('broadcast keepalive failed', err);
-                clearKeepalive();
-            }
-        }, KEEPALIVE_MS);
     }
 
     const onPageHide = (event: PageTransitionEvent) => {
-        if (!event.persisted) return;
+        if (!event.persisted || connection.kind === 'closed') return;
         log.info('broadcast: page entering bfcache, releasing port');
-        clearKeepalive();
-        clearReconnect();
-        port = null;
+        release();
+        connection = { kind: 'suspended' };
     };
     const onPageShow = (event: PageTransitionEvent) => {
-        if (!event.persisted) return;
+        if (!event.persisted || connection.kind !== 'suspended') return;
         log.info('broadcast: page restored from bfcache, reconnecting');
         connect();
     };
@@ -838,12 +872,10 @@ export function subscribeToBroadcast(handlers: {
 
     return {
         unsubscribe: () => {
-            unsubscribed = true;
             window.removeEventListener('pagehide', onPageHide);
             window.removeEventListener('pageshow', onPageShow);
-            clearReconnect();
-            clearKeepalive();
-            if (port) port.disconnect();
+            release();
+            connection = { kind: 'closed' };
         },
     };
 }

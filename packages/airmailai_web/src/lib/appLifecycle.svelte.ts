@@ -1,4 +1,5 @@
 import { untrack } from 'svelte';
+import { appMode, type ExtensionPromptVariant } from './appMode.svelte';
 import { detectBrowser } from './browser';
 import { startBroadcastBridge } from './broadcastBridge.svelte';
 import { chatStore } from './chatStore.svelte';
@@ -7,7 +8,6 @@ import {
     filterProvidersByTier,
     type ModelTierFilter,
 } from './constants';
-import { reportAppError } from './errorStore.svelte';
 import { getExtensionVersion, waitForExtension } from './extension';
 import { providersStore } from './providersStore.svelte';
 import { settingsStore } from './settingsStore.svelte';
@@ -15,13 +15,20 @@ import { versionCheck } from './versionCheck.svelte';
 
 import { log } from './log';
 
+function missingExtensionVariant(): ExtensionPromptVariant {
+    const browser = detectBrowser();
+    if (browser === 'mobile') return 'mobile';
+    if (browser === 'other-desktop') return 'unsupported-browser';
+    return 'no-extension';
+}
+
 class AppLifecycle {
-    initialized = $state(false);
+    bootPhase = $state<'booting' | 'ready'>('booting');
     view = $state<'chat' | 'files'>('chat');
-    showExtensionPrompt = $state(false);
-    showLegalGate = $state(false);
-    promptVariant = $state<'no-extension' | 'unsupported-browser' | 'mobile'>(
-        'no-extension'
+    showLegalGate = $derived(
+        this.bootPhase === 'ready' &&
+            appMode.extension.kind === 'connected' &&
+            settingsStore.legalAcceptedVersion !== __LEGAL_VERSION__
     );
 
     private lastSnappedTier: ModelTierFilter | null = null;
@@ -35,7 +42,7 @@ class AppLifecycle {
         $effect.root(() => {
             $effect(() => {
                 const tier = settingsStore.modelTier;
-                if (!settingsStore.settingsLoaded) return;
+                if (settingsStore.loadState !== 'loaded') return;
                 if (this.lastSnappedTier === null) {
                     this.lastSnappedTier = tier;
                     return;
@@ -95,16 +102,9 @@ class AppLifecycle {
 
         const modelsReady = providersStore.hydrateModels();
         const detected = await waitForExtension();
-        if (!detected) {
-            const browser = detectBrowser();
-            this.promptVariant =
-                browser === 'mobile'
-                    ? 'mobile'
-                    : browser === 'other-desktop'
-                      ? 'unsupported-browser'
-                      : 'no-extension';
-            this.showExtensionPrompt = true;
-        }
+        appMode.extension = detected
+            ? { kind: 'connected' }
+            : { kind: 'missing', variant: missingExtensionVariant() };
         log.info('extension detected:', detected);
 
         if (detected) {
@@ -115,47 +115,49 @@ class AppLifecycle {
             );
 
             void providersStore.hydrateOpenRouter();
-            providersStore.refreshSavedKeys().catch((err) => {
-                reportAppError(
-                    'saved key check failed',
-                    "Couldn't check saved API keys",
-                    err
-                );
-            });
+            void providersStore.refreshSavedKeys();
 
             await settingsStore.load();
             await chatStore.loadChats();
-
-            if (settingsStore.legalAcceptedVersion !== __LEGAL_VERSION__) {
-                this.showLegalGate = true;
-                log.info('legal gate', {
-                    acceptedVersion: settingsStore.legalAcceptedVersion,
-                    currentVersion: __LEGAL_VERSION__,
-                });
-            }
         }
 
         await modelsReady;
         settingsStore.reconcileModelSelection(providersStore.providers);
         settingsStore.applyToolDefaults(providersStore.selectedModel);
-        this.initialized = true;
+        this.bootPhase = 'ready';
+        if (this.showLegalGate) {
+            log.info('legal gate', {
+                acceptedVersion: settingsStore.legalAcceptedVersion,
+                currentVersion: __LEGAL_VERSION__,
+            });
+        }
 
         if (detected) this.stopBridge = startBroadcastBridge();
     }
 
     enterDemoMode(): void {
-        settingsStore.paused = true;
+        const mode = appMode.extension;
+        if (mode.kind === 'demo') {
+            appMode.extension = { ...mode, promptOpen: false };
+            return;
+        }
+        if (mode.kind !== 'missing') return;
+        appMode.extension = {
+            kind: 'demo',
+            variant: mode.variant,
+            promptOpen: false,
+        };
         chatStore.loadDemo();
-        this.showExtensionPrompt = false;
     }
 
     requestExtension(): void {
-        this.showExtensionPrompt = true;
+        const mode = appMode.extension;
+        if (mode.kind !== 'demo') return;
+        appMode.extension = { ...mode, promptOpen: true };
     }
 
     handleLegalAgree(): void {
         settingsStore.persistLegalVersion(__LEGAL_VERSION__);
-        this.showLegalGate = false;
         log.info('legal agreed', __LEGAL_VERSION__);
     }
 }

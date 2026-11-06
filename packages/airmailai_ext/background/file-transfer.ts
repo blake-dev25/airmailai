@@ -51,16 +51,29 @@ async function replicateDraftAttachment(
     }
 }
 
+type UploadStartRequest = Extract<
+    FileTransferRequest,
+    { type: 'upload_start' }
+>;
+
+type TransferState =
+    | { kind: 'idle' }
+    | {
+          kind: 'uploading';
+          request: UploadStartRequest;
+          hasher: ReturnType<typeof sha256.create>;
+          chunks: Blob[];
+          nextIndex: number;
+      }
+    | { kind: 'upload-saved' }
+    | { kind: 'downloading'; blob: Blob; chunkCount: number }
+    | { kind: 'download-missing' }
+    | { kind: 'failed' };
+
 export function handleFileTransferPort(port: chrome.runtime.Port): void {
     log.info('file transfer port connected');
     trackStreamPort(port);
-    let upload:
-        Extract<FileTransferRequest, { type: 'upload_start' }> | undefined;
-    let uploadChunks: Blob[] = [];
-    let hasher: ReturnType<typeof sha256.create> | null = null;
-    let nextUploadIndex = 0;
-    let downloadBlob: Blob | null = null;
-    let failed = false;
+    let state: TransferState = { kind: 'idle' };
     let portOpen = true;
     let work = Promise.resolve();
 
@@ -68,136 +81,149 @@ export function handleFileTransferPort(port: chrome.runtime.Port): void {
         if (portOpen) port.postMessage(response);
     };
 
-    const releaseUploadState = () => {
-        hasher?.destroy();
-        hasher = null;
-        uploadChunks = [];
+    const transition = (next: TransferState) => {
+        if (state.kind === 'uploading') state.hasher.destroy();
+        state = next;
     };
 
     const fail = (error: unknown) => {
-        failed = true;
-        releaseUploadState();
+        transition({ kind: 'failed' });
         const message = error instanceof Error ? error.message : String(error);
         log.error('file transfer failed', error);
         send({ type: 'error', message });
     };
 
-    const handle = async (message: FileTransferRequest) => {
-        if (failed) return;
-        if (message.type === 'upload_start') {
-            if (upload || downloadBlob) {
-                throw new Error('File transfer already started.');
-            }
-            const expectedChunks = Math.ceil(
-                message.attachment.sizeBytes / FILE_TRANSFER_CHUNK_BYTES
+    const startUpload = (message: UploadStartRequest) => {
+        if (state.kind !== 'idle') {
+            throw new Error('File transfer already started.');
+        }
+        const expectedChunks = Math.ceil(
+            message.attachment.sizeBytes / FILE_TRANSFER_CHUNK_BYTES
+        );
+        if (message.chunkCount !== expectedChunks) {
+            throw new Error('Invalid file transfer chunk count.');
+        }
+        transition({
+            kind: 'uploading',
+            request: message,
+            hasher: sha256.create(),
+            chunks: [],
+            nextIndex: 0,
+        });
+        send({ type: 'upload_ready' });
+    };
+
+    const receiveUploadChunk = (index: number, base64: string) => {
+        if (state.kind !== 'uploading') {
+            throw new Error('File upload has not started.');
+        }
+        const { request } = state;
+        if (index !== state.nextIndex || index >= request.chunkCount) {
+            throw new Error('File chunks arrived out of order.');
+        }
+        const bytes = base64ToBytes(base64);
+        const expectedBytes = Math.min(
+            FILE_TRANSFER_CHUNK_BYTES,
+            request.attachment.sizeBytes - index * FILE_TRANSFER_CHUNK_BYTES
+        );
+        if (bytes.byteLength !== expectedBytes) {
+            throw new Error('File chunk size does not match the source file.');
+        }
+        state.hasher.update(bytes);
+        state.chunks.push(new Blob([bytes]));
+        state.nextIndex++;
+        send({ type: 'upload_chunk_saved', index });
+    };
+
+    const completeUpload = async () => {
+        if (state.kind !== 'uploading') {
+            throw new Error('File upload has not started.');
+        }
+        const { request } = state;
+        if (state.nextIndex !== request.chunkCount) {
+            throw new Error('File upload is incomplete.');
+        }
+        const blob = new Blob(state.chunks, {
+            type: request.attachment.mediaType,
+        });
+        if (blob.size !== request.attachment.sizeBytes) {
+            throw new Error(
+                'Transferred file size does not match the source file.'
             );
-            if (message.chunkCount !== expectedChunks) {
-                throw new Error('Invalid file transfer chunk count.');
-            }
-            upload = message;
-            hasher = sha256.create();
-            send({ type: 'upload_ready' });
-            return;
         }
-        if (message.type === 'upload_chunk') {
-            if (!upload || !hasher) {
-                throw new Error('File upload has not started.');
-            }
-            if (
-                message.index !== nextUploadIndex ||
-                message.index >= upload.chunkCount
-            ) {
-                throw new Error('File chunks arrived out of order.');
-            }
-            const bytes = base64ToBytes(message.base64);
-            const expectedBytes = Math.min(
-                FILE_TRANSFER_CHUNK_BYTES,
-                upload.attachment.sizeBytes -
-                    message.index * FILE_TRANSFER_CHUNK_BYTES
+        const attachment: DraftAttachment = {
+            ...request.attachment,
+            hash: bytesToHex(state.hasher.digest()),
+        };
+        transition({ kind: 'upload-saved' });
+        await dbStageDraftAttachment(request.chatId, attachment, blob);
+        send({ type: 'upload_saved', hash: attachment.hash });
+        if (request.replicateTo && FILE_PROVIDERS.has(request.replicateTo)) {
+            void replicateDraftAttachment(
+                request.chatId,
+                request.replicateTo,
+                attachment,
+                blob,
+                request.sourceTabId
             );
-            if (bytes.byteLength !== expectedBytes) {
-                throw new Error(
-                    'File chunk size does not match the source file.'
-                );
-            }
-            hasher.update(bytes);
-            uploadChunks.push(new Blob([bytes]));
-            nextUploadIndex++;
-            send({ type: 'upload_chunk_saved', index: message.index });
+        }
+    };
+
+    const startDownload = async (hash: string) => {
+        if (state.kind !== 'idle') {
+            throw new Error('File transfer already started.');
+        }
+        const blob = await dbGetFileBlob(hash);
+        if (!blob) {
+            transition({ kind: 'download-missing' });
+            send({ type: 'download_missing' });
             return;
         }
-        if (message.type === 'upload_complete') {
-            if (!upload || !hasher) {
-                throw new Error('File upload has not started.');
-            }
-            if (nextUploadIndex !== upload.chunkCount) {
-                throw new Error('File upload is incomplete.');
-            }
-            const blob = new Blob(uploadChunks, {
-                type: upload.attachment.mediaType,
-            });
-            if (blob.size !== upload.attachment.sizeBytes) {
-                throw new Error(
-                    'Transferred file size does not match the source file.'
-                );
-            }
-            const attachment: DraftAttachment = {
-                ...upload.attachment,
-                hash: bytesToHex(hasher.digest()),
-            };
-            releaseUploadState();
-            await dbStageDraftAttachment(upload.chatId, attachment, blob);
-            send({ type: 'upload_saved', hash: attachment.hash });
-            if (upload.replicateTo && FILE_PROVIDERS.has(upload.replicateTo)) {
-                void replicateDraftAttachment(
-                    upload.chatId,
-                    upload.replicateTo,
-                    attachment,
-                    blob,
-                    upload.sourceTabId
-                );
-            }
-            return;
-        }
-        if (message.type === 'download_start') {
-            if (upload || downloadBlob) {
-                throw new Error('File transfer already started.');
-            }
-            downloadBlob = await dbGetFileBlob(message.hash);
-            if (!downloadBlob) {
-                send({ type: 'download_missing' });
-                return;
-            }
-            send({
-                type: 'download_ready',
-                mediaType: downloadBlob.type,
-                sizeBytes: downloadBlob.size,
-                chunkCount: Math.ceil(
-                    downloadBlob.size / FILE_TRANSFER_CHUNK_BYTES
-                ),
-            });
-            return;
-        }
-        if (!downloadBlob) {
+        const chunkCount = Math.ceil(blob.size / FILE_TRANSFER_CHUNK_BYTES);
+        transition({ kind: 'downloading', blob, chunkCount });
+        send({
+            type: 'download_ready',
+            mediaType: blob.type,
+            sizeBytes: blob.size,
+            chunkCount,
+        });
+    };
+
+    const sendDownloadChunk = async (index: number) => {
+        if (state.kind !== 'downloading') {
             throw new Error('File download has not started.');
         }
-        const chunkCount = Math.ceil(
-            downloadBlob.size / FILE_TRANSFER_CHUNK_BYTES
-        );
-        if (message.index < 0 || message.index >= chunkCount) {
+        if (index < 0 || index >= state.chunkCount) {
             throw new Error('Invalid file download chunk.');
         }
-        const start = message.index * FILE_TRANSFER_CHUNK_BYTES;
+        const start = index * FILE_TRANSFER_CHUNK_BYTES;
         const bytes = new Uint8Array(
-            await downloadBlob
+            await state.blob
                 .slice(start, start + FILE_TRANSFER_CHUNK_BYTES)
                 .arrayBuffer()
         );
-        send({
-            type: 'download_chunk',
-            index: message.index,
-            base64: bytesToBase64(bytes),
-        });
+        send({ type: 'download_chunk', index, base64: bytesToBase64(bytes) });
+    };
+
+    const handle = async (message: FileTransferRequest) => {
+        if (state.kind === 'failed') return;
+        switch (message.type) {
+            case 'upload_start':
+                startUpload(message);
+                return;
+            case 'upload_chunk':
+                receiveUploadChunk(message.index, message.base64);
+                return;
+            case 'upload_complete':
+                await completeUpload();
+                return;
+            case 'download_start':
+                await startDownload(message.hash);
+                return;
+            case 'download_chunk':
+                await sendDownloadChunk(message.index);
+                return;
+        }
     };
 
     port.onMessage.addListener((message: FileTransferRequest) => {
@@ -205,7 +231,7 @@ export function handleFileTransferPort(port: chrome.runtime.Port): void {
     });
     port.onDisconnect.addListener(() => {
         portOpen = false;
-        releaseUploadState();
+        transition({ kind: 'failed' });
         releaseStreamPort(port);
     });
 }

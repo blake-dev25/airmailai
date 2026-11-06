@@ -5,16 +5,12 @@ import type {
     AirmailAIMessage,
     DraftAttachment,
     DraftAttachmentMeta,
-    MessageAssemblerState,
     StoredChat,
     StoredMessage,
     StreamErrorSource,
 } from '@airmailai/shared';
-import {
-    createMessageAssembler,
-    truncateMessageTextParts,
-} from '@airmailai/shared';
-import { SvelteSet } from 'svelte/reactivity';
+import { SvelteMap } from 'svelte/reactivity';
+import { appMode } from './appMode.svelte';
 import {
     backupFilename,
     buildBackupExport,
@@ -32,8 +28,14 @@ import {
     type ImportedChat,
     type TransferChatInfo,
 } from './chatTransfer';
+import {
+    isTurnBusy,
+    isTurnRemote,
+    StreamPipeline,
+    type TurnState,
+} from './chatTurn.svelte';
 import { buildDemoChats } from './demo';
-import { reportAppError } from './errorStore.svelte';
+import { errorStore, reportAppError } from './errorStore.svelte';
 import {
     clearDraftAttachments,
     clearFileBlobCache,
@@ -50,7 +52,6 @@ import {
     saveMeta,
     sendToExtension,
     stageDraftAttachment,
-    type StreamHandle,
     tabId,
 } from './extension';
 import { triggerBlobDownload } from './files';
@@ -58,7 +59,6 @@ import { providersStore } from './providersStore.svelte';
 import { customModelTools } from './models/custom';
 import { validateModelRequest } from './modelValidation';
 import { settingsStore } from './settingsStore.svelte';
-import { createStreamBatcher, type StreamBatcher } from './streamBatcher';
 import { versionCheck } from './versionCheck.svelte';
 import {
     messageText,
@@ -156,7 +156,7 @@ function chatToMeta(chat: Chat): ChatMeta {
 }
 
 function chatFromMeta(meta: ChatMeta): Chat {
-    return { ...meta, messages: [], messagesLoaded: false };
+    return { ...meta, messages: [], loadState: 'unloaded' };
 }
 
 function snapshotChat(chat: Chat): Chat {
@@ -171,58 +171,53 @@ function storedToMessages(stored: StoredMessage[]): Message[] {
     return stored.map((s) => s.message);
 }
 
-interface RemoteStreamPipeline {
-    assembler: MessageAssemblerState;
-    batcher: StreamBatcher;
-    placeholderId: string;
-    chat: Chat;
+type SearchState =
+    | { kind: 'inactive' }
+    | { kind: 'results'; query: string; results: SearchResult[] }
+    | { kind: 'loading-all'; query: string; results: SearchResult[] };
+
+function removeMessageById(chat: Chat, messageId: string): void {
+    const index = chat.messages.findIndex((m) => m.id === messageId);
+    if (index >= 0) chat.messages.splice(index, 1);
 }
 
 class ChatStore {
     chats = $state<Chat[]>([]);
     activeChatId = $state<string | null>(null);
-    streamingChatIds = new SvelteSet<string>();
-    remoteStreamingChatIds = new SvelteSet<string>();
-    chatErrors = $state<Record<string, string>>({});
-    searchResults = $state<SearchResult[] | null>(null);
-    searchQuery = $state('');
+    private turns = new SvelteMap<string, TurnState>();
+    searchState = $state.raw<SearchState>({ kind: 'inactive' });
     highlightMessageIndex = $state<number | null>(null);
-    chatLoading = $state(false);
-    demoMode = $state(false);
     fileStatusVersion = $state(0);
-    searchingAll = $state(false);
-    allChatsSearched = $state(false);
-    private searchCache: Map<string, Message[]> | null = null;
-    private streamHandles = new Map<string, StreamHandle>();
-    private streamBatchers = new Map<string, StreamBatcher>();
-    private remotePipelines = new Map<string, RemoteStreamPipeline>();
+    private searchCache = new SvelteMap<string, Message[]>();
     unsearchedChatCount = $derived(
-        this.chats.filter((c) => !c.messagesLoaded).length
+        this.chats.filter(
+            (c) => c.loadState !== 'loaded' && !this.searchCache.has(c.id)
+        ).length
     );
     sortedChats = $derived(
         [...this.chats].sort((a, b) => chatSortKey(b) - chatSortKey(a))
     );
-    isActiveLocalStreaming = $derived(
-        this.streamingChatIds.has(this.activeChatId ?? '')
-    );
-    isActiveRemoteStreaming = $derived(
-        this.remoteStreamingChatIds.has(this.activeChatId ?? '')
-    );
-    isActiveStreaming = $derived(
-        this.isActiveLocalStreaming || this.isActiveRemoteStreaming
-    );
-    allStreamingChatIds = $derived(
-        new Set([...this.streamingChatIds, ...this.remoteStreamingChatIds])
-    );
-    activeStreamError = $derived(
-        this.chatErrors[this.activeChatId ?? ''] ?? null
-    );
     activeChat = $derived(
         this.chats.find((c) => c.id === this.activeChatId) ?? null
     );
+    private activeTurn = $derived(this.turns.get(this.activeChatId ?? ''));
+    isActiveChatBusy = $derived(isTurnBusy(this.activeTurn));
+    canStopActive = $derived(
+        this.activeTurn?.kind === 'preparing' ||
+            this.activeTurn?.kind === 'local-streaming'
+    );
+    activeStreamError = $derived(
+        this.activeTurn?.kind === 'failed' ? this.activeTurn.message : null
+    );
+    activeStreamingText = $derived(
+        this.activeTurn?.kind === 'local-streaming' ||
+            this.activeTurn?.kind === 'remote-streaming'
+            ? this.activeTurn.pipeline.text
+            : null
+    );
+    activeChatLoading = $derived(this.activeChat?.loadState === 'loading');
     activeMessages = $derived(this.activeChat?.messages ?? []);
     activeDraftAttachments = $derived(this.activeChat?.draftAttachments ?? []);
-    activeStreamingText = $derived(this.activeChat?.streamingText ?? null);
     activeTokens = $derived.by(() => {
         const msgs = this.activeChat?.messages ?? [];
         for (let i = msgs.length - 1; i >= 0; i--) {
@@ -236,6 +231,27 @@ class ChatStore {
 
     private findChat(id: string): Chat | undefined {
         return this.chats.find((c) => c.id === id);
+    }
+
+    isChatBusy(id: string): boolean {
+        return isTurnBusy(this.turns.get(id));
+    }
+
+    chatStreamError(id: string): string | null {
+        const turn = this.turns.get(id);
+        return turn?.kind === 'failed' ? turn.message : null;
+    }
+
+    private endTurn(chatId: string, failure: string | null = null): void {
+        const turn = this.turns.get(chatId);
+        if (turn?.kind === 'local-streaming') {
+            turn.handle.abort();
+            turn.pipeline.flush();
+        } else if (turn?.kind === 'remote-streaming') {
+            turn.pipeline.flush();
+        }
+        if (failure === null) this.turns.delete(chatId);
+        else this.turns.set(chatId, { kind: 'failed', message: failure });
     }
 
     async loadChats(): Promise<void> {
@@ -252,15 +268,6 @@ class ChatStore {
         }
         this.chats = metas.map(chatFromMeta);
         log.info('chat metas loaded', `${metas.length} chats`);
-    }
-
-    private applyLoadedMessages(stored: StoredChat): void {
-        const chat = this.findChat(stored.id);
-        if (!chat || chat.messagesLoaded) return;
-        if (this.allStreamingChatIds.has(chat.id)) return;
-        chat.messages = storedToMessages(stored.messages);
-        chat.revision = stored.revision;
-        chat.messagesLoaded = true;
     }
 
     loadDemo(): void {
@@ -280,7 +287,6 @@ class ChatStore {
         });
         this.chats = demoChats;
         this.activeChatId = demoChats[0].id;
-        this.demoMode = true;
         log.info('entered demo mode');
     }
 
@@ -315,77 +321,89 @@ class ChatStore {
         return null;
     }
 
-    search(query: string): void {
-        this.searchQuery = query;
-        this.highlightMessageIndex = null;
+    private matchAll(query: string): SearchResult[] {
         const q = query.toLowerCase();
         const results: SearchResult[] = [];
         for (const chat of this.chats) {
-            const messages = chat.messagesLoaded
-                ? chat.messages
-                : this.searchCache?.get(chat.id);
+            const messages =
+                chat.loadState === 'loaded'
+                    ? chat.messages
+                    : this.searchCache.get(chat.id);
             if (!messages) continue;
             const result = this.matchChat(chat.id, chat.title, messages, q);
             if (result) results.push(result);
         }
-        this.searchResults = results;
+        return results;
+    }
+
+    search(query: string): void {
+        this.highlightMessageIndex = null;
+        this.searchState = {
+            kind:
+                this.searchState.kind === 'loading-all'
+                    ? 'loading-all'
+                    : 'results',
+            query,
+            results: this.matchAll(query),
+        };
+    }
+
+    private refreshSearchResults(): void {
+        if (this.searchState.kind === 'inactive') return;
+        this.searchState = {
+            ...this.searchState,
+            results: this.matchAll(this.searchState.query),
+        };
     }
 
     clearSearch(): void {
-        this.searchResults = null;
-        this.searchQuery = '';
+        this.searchState = { kind: 'inactive' };
         this.highlightMessageIndex = null;
-        this.searchCache = null;
-        this.allChatsSearched = false;
+        this.searchCache.clear();
     }
 
     async searchAllChats(): Promise<void> {
-        if (
-            this.searchingAll ||
-            this.allChatsSearched ||
-            this.unsearchedChatCount === 0
-        )
-            return;
-        this.searchingAll = true;
+        if (this.searchState.kind !== 'results') return;
+        const unsearchedIds = this.chats
+            .filter(
+                (c) => c.loadState !== 'loaded' && !this.searchCache.has(c.id)
+            )
+            .map((c) => c.id);
+        if (unsearchedIds.length === 0) return;
+        this.searchState = { ...this.searchState, kind: 'loading-all' };
+        let fullChats: StoredChat[];
         try {
-            const unloadedIds = this.chats
-                .filter((c) => !c.messagesLoaded)
-                .map((c) => c.id);
-            const fullChats = await loadChatsByIds(unloadedIds);
-            const cache = new Map<string, Message[]>();
-            for (const stored of fullChats) {
-                cache.set(stored.id, storedToMessages(stored.messages));
-            }
-            this.searchCache = cache;
-            this.allChatsSearched = true;
-            log.info('search cache built', `${fullChats.length} chats`);
-            if (this.searchQuery) this.search(this.searchQuery);
+            fullChats = await loadChatsByIds(unsearchedIds);
         } catch (err) {
+            if (this.searchState.kind === 'loading-all')
+                this.searchState = { ...this.searchState, kind: 'results' };
             reportAppError(
                 'searchAllChats failed',
                 "Couldn't load all chats for search",
                 err
             );
-        } finally {
-            this.searchingAll = false;
+            return;
         }
+        if (this.searchState.kind !== 'loading-all') return;
+        const loaded = new Map(
+            fullChats.map((s) => [s.id, storedToMessages(s.messages)])
+        );
+        for (const id of unsearchedIds) {
+            this.searchCache.set(id, loaded.get(id) ?? []);
+        }
+        log.info('search cache built', `${fullChats.length} chats`);
+        this.searchState = {
+            kind: 'results',
+            query: this.searchState.query,
+            results: this.matchAll(this.searchState.query),
+        };
     }
 
     resetLocal(): void {
         log.info('resetting local chat state');
-        for (const handle of this.streamHandles.values()) handle.abort();
-        for (const batcher of this.streamBatchers.values()) batcher.discard();
-        this.streamHandles.clear();
-        this.streamBatchers.clear();
-        for (const pipeline of this.remotePipelines.values()) {
-            pipeline.batcher.discard();
-        }
-        this.remotePipelines.clear();
+        for (const chatId of [...this.turns.keys()]) this.endTurn(chatId);
         this.chats = [];
         this.activeChatId = null;
-        this.streamingChatIds.clear();
-        this.remoteStreamingChatIds.clear();
-        this.chatErrors = {};
         this.clearSearch();
         clearFileBlobCache();
         settingsStore.systemPrompt = '';
@@ -393,9 +411,7 @@ class ChatStore {
     }
 
     clearChatError(id: string): void {
-        if (!this.chatErrors[id]) return;
-        const { [id]: _, ...rest } = this.chatErrors;
-        this.chatErrors = rest;
+        if (this.turns.get(id)?.kind === 'failed') this.turns.delete(id);
     }
 
     clearActiveChatError(): void {
@@ -412,7 +428,7 @@ class ChatStore {
             id,
             title: 'New Chat',
             messages: [],
-            messagesLoaded: true,
+            loadState: 'loaded',
             createdAt: now,
             ...settingsStore.snapshotChatConfig(),
         });
@@ -423,40 +439,35 @@ class ChatStore {
         this.highlightMessageIndex = matchIndex ?? null;
         log.info('select chat', id);
         this.activeChatId = id;
+        errorStore.clearAppWarning();
         const chat = this.findChat(id);
         if (!chat) return;
         settingsStore.applyChatConfig(chat);
-        if (chat.messagesLoaded || this.demoMode) return;
-        const full = await this.loadChatReported(id);
-        if (full) this.applyLoadedMessages(full);
-    }
-
-    private async loadChatReported(id: string): Promise<StoredChat | null> {
-        this.chatLoading = true;
+        settingsStore.reconcileModelSelection(providersStore.providers);
+        if (chat.loadState !== 'unloaded' || appMode.isDemo) return;
+        chat.loadState = 'loading';
+        let stored: StoredChat | null = null;
         try {
-            return await loadChat(id);
+            stored = await loadChat(id);
         } catch (err) {
             reportAppError(
                 `activate: loadChat failed (id=${id})`,
                 "Couldn't load chat",
                 err
             );
-            return null;
-        } finally {
-            this.chatLoading = false;
         }
-    }
-
-    private abortLocalStream(id: string): void {
-        this.streamHandles.get(id)?.abort();
-        this.streamHandles.delete(id);
-        this.streamBatchers.get(id)?.discard();
-        this.streamBatchers.delete(id);
-        this.streamingChatIds.delete(id);
+        if (chat.loadState !== 'loading') return;
+        if (!stored || this.isChatBusy(id)) {
+            chat.loadState = 'unloaded';
+            return;
+        }
+        chat.messages = storedToMessages(stored.messages);
+        chat.revision = stored.revision;
+        chat.loadState = 'loaded';
     }
 
     private removeLocal(id: string): void {
-        this.abortLocalStream(id);
+        this.endTurn(id);
         const chatIdx = this.chats.findIndex((c) => c.id === id);
         if (chatIdx >= 0) this.chats.splice(chatIdx, 1);
         if (this.activeChatId === id) {
@@ -464,16 +475,13 @@ class ChatStore {
             settingsStore.systemPrompt = '';
             settingsStore.applyToolDefaults(providersStore.selectedModel);
         }
-        this.remoteStreamingChatIds.delete(id);
-        this.closeRemotePipeline(id);
-        this.clearChatError(id);
     }
 
     remove(id: string): void {
         log.info('remove chat', id);
         const removedTitle = this.findChat(id)?.title;
         this.removeLocal(id);
-        if (!this.demoMode)
+        if (!appMode.isDemo)
             deleteChat(id).catch((err) => {
                 reportAppError(
                     `delete chat failed (id=${id})`,
@@ -493,18 +501,17 @@ class ChatStore {
         if (chat) {
             const revision = chat.revision;
             Object.assign(chat, meta);
-            if (chat.messagesLoaded) chat.revision = revision;
+            if (chat.loadState === 'loaded') chat.revision = revision;
             return;
         }
         this.chats.unshift(chatFromMeta(meta));
     }
 
     applyRemoteChatsImported(metas: ChatMeta[]): void {
-        this.searchCache = null;
-        this.allChatsSearched = false;
         for (const meta of metas) {
+            this.searchCache.delete(meta.id);
             const chat = this.findChat(meta.id);
-            if (chat?.messagesLoaded) {
+            if (chat?.loadState === 'loaded') {
                 void this.refreshChatFromIDB(meta.id, {
                     context: 'chats-imported: reload failed',
                     userMessage: "Couldn't refresh an imported chat",
@@ -519,11 +526,9 @@ class ChatStore {
         messageId: string,
         revision: number
     ): Promise<void> {
-        this.searchCache?.delete(chatId);
-        this.allChatsSearched = false;
+        this.searchCache.delete(chatId);
         const chat = this.findChat(chatId);
-        if (!chat?.messagesLoaded || this.allStreamingChatIds.has(chatId))
-            return;
+        if (chat?.loadState !== 'loaded' || this.isChatBusy(chatId)) return;
         if (revision <= (chat.revision ?? 0)) return;
         if (revision !== (chat.revision ?? 0) + 1) {
             await this.refreshChatFromIDB(chatId, {
@@ -536,7 +541,7 @@ class ChatStore {
             const stored = await loadChat(chatId, messageId);
             if (
                 !stored ||
-                this.allStreamingChatIds.has(chatId) ||
+                this.isChatBusy(chatId) ||
                 this.findChat(chatId) !== chat
             )
                 return;
@@ -561,7 +566,7 @@ class ChatStore {
                 );
             }
             chat.revision = revision;
-            if (this.searchQuery) this.search(this.searchQuery);
+            this.refreshSearchResults();
         } catch (error) {
             reportAppError(
                 'message synchronization failed',
@@ -576,7 +581,7 @@ class ChatStore {
         const chat = this.findChat(id);
         if (!chat) return;
         chat.title = newTitle;
-        if (!this.demoMode)
+        if (!appMode.isDemo)
             saveMeta(chatToMeta(chat)).catch((err) => {
                 reportAppError(
                     `rename save failed (id=${id})`,
@@ -602,7 +607,7 @@ class ChatStore {
         if (!chat) return;
 
         let messages = chat.messages;
-        if (!chat.messagesLoaded) {
+        if (chat.loadState !== 'loaded') {
             try {
                 const full = await loadChat(id);
                 if (full) messages = storedToMessages(full.messages);
@@ -732,7 +737,7 @@ class ChatStore {
             id: crypto.randomUUID(),
             title: imp.title || 'Imported Chat',
             messages,
-            messagesLoaded: true,
+            loadState: 'loaded',
             createdAt,
             lastMessageAt: messages.length
                 ? messages[messages.length - 1].metadata.createdAt
@@ -751,7 +756,7 @@ class ChatStore {
     }
 
     private async persistImportedChats(chats: Chat[]): Promise<Chat[]> {
-        if (this.demoMode) return chats;
+        if (appMode.isDemo) return chats;
         const saved: Chat[] = [];
         let batch: Chat[] = [];
         let batchChars = 0;
@@ -851,7 +856,7 @@ class ChatStore {
         ];
         chat.messages[index] = { ...target, parts: newParts };
         const editedMsg = chat.messages[index];
-        if (!this.demoMode) {
+        if (!appMode.isDemo) {
             putMessage(toStoredMessage(chatId, editedMsg)).catch((err) => {
                 reportAppError(
                     `edit save failed (chatId=${chatId})`,
@@ -868,7 +873,7 @@ class ChatStore {
         const chatId = chat.id;
         const removedId = chat.messages[index]?.id;
         chat.messages.splice(index, 1);
-        if (removedId && !this.demoMode)
+        if (removedId && !appMode.isDemo)
             deleteMessage(chatId, removedId).catch((err) => {
                 reportAppError(
                     `delete-msg save failed (chatId=${chatId})`,
@@ -893,7 +898,7 @@ class ChatStore {
             ),
         };
         chat.messages[index] = updated;
-        if (!this.demoMode) {
+        if (!appMode.isDemo) {
             putMessage(toStoredMessage(chatId, updated)).catch((err) => {
                 reportAppError(
                     `delete-file save failed (chatId=${chatId})`,
@@ -923,13 +928,13 @@ class ChatStore {
             id: chatId,
             title: 'New Chat',
             messages: [],
-            messagesLoaded: true,
+            loadState: 'loaded',
             createdAt: Date.now(),
             ...settingsStore.snapshotChatConfig(),
         };
         this.chats.unshift(chat);
         this.activeChatId = chatId;
-        if (!this.demoMode) await saveMeta(chatToMeta(chat));
+        if (!appMode.isDemo) await saveMeta(chatToMeta(chat));
         return chatId;
     }
 
@@ -937,7 +942,7 @@ class ChatStore {
         const chatId = await this.ensureActiveChat();
         const chat = this.findChat(chatId);
         if (!chat) throw new Error('The destination chat was deleted.');
-        if (!this.demoMode) await saveMeta(chatToMeta(chat));
+        if (!appMode.isDemo) await saveMeta(chatToMeta(chat));
         return chatId;
     }
 
@@ -948,7 +953,7 @@ class ChatStore {
         file: File,
         onProgress?: (progress: number) => void
     ): Promise<{ chatId: string; attachment: DraftAttachment } | null> {
-        if (this.demoMode) return null;
+        if (appMode.isDemo) return null;
         if (!this.findChat(chatId)) {
             throw new Error('The destination chat was deleted.');
         }
@@ -981,14 +986,14 @@ class ChatStore {
                 (d) => d.hash !== key
             );
         }
-        if (!this.demoMode) await reqRemoveDraftAttachment(chatId, key);
+        if (!appMode.isDemo) await reqRemoveDraftAttachment(chatId, key);
     }
 
     async clearActiveDraftAttachments(): Promise<void> {
         const chat = this.activeChat;
         if (!chat) return;
         chat.draftAttachments = [];
-        if (!this.demoMode) await clearDraftAttachments(chat.id);
+        if (!appMode.isDemo) await clearDraftAttachments(chat.id);
     }
 
     private validateModelConfig(
@@ -1015,12 +1020,19 @@ class ChatStore {
         }
     }
 
+    private finishPreparing(chatId: string, assistantId: string): boolean {
+        const turn = this.turns.get(chatId);
+        if (turn?.kind !== 'preparing') return false;
+        if (!turn.stopRequested) return true;
+        this.turns.delete(chatId);
+        const chat = this.findChat(chatId);
+        if (chat) removeMessageById(chat, assistantId);
+        log.info('turn stopped before streaming', chatId);
+        return false;
+    }
+
     async sendMessage(content: string): Promise<boolean> {
-        if (
-            this.activeChatId &&
-            (this.streamingChatIds.has(this.activeChatId) ||
-                this.remoteStreamingChatIds.has(this.activeChatId))
-        )
+        if (this.activeChatId && this.isChatBusy(this.activeChatId))
             return false;
 
         if (!this.validateModelConfig()) return false;
@@ -1035,14 +1047,14 @@ class ChatStore {
                 id: chatId,
                 title: chatTitleFor(content, []),
                 messages: [],
-                messagesLoaded: true,
+                loadState: 'loaded',
                 createdAt: Date.now(),
                 ...settingsStore.snapshotChatConfig(),
             });
             this.activeChatId = chatId;
         } else {
             const existing = this.findChat(chatId);
-            if (!existing || !existing.messagesLoaded) {
+            if (!existing || existing.loadState !== 'loaded') {
                 reportAppError(
                     `sendMessage: chat not loaded (id=${chatId})`,
                     'This chat is still loading, try again in a moment',
@@ -1091,10 +1103,9 @@ class ChatStore {
         chat.draftAttachments = [];
         chat.lastMessageAt = Date.now();
 
-        this.streamingChatIds.add(chatId);
-        this.clearChatError(chatId);
+        this.turns.set(chatId, { kind: 'preparing', stopRequested: false });
 
-        if (this.demoMode) {
+        if (appMode.isDemo) {
             this.streamForChat(chatId, assistantId);
             return true;
         }
@@ -1106,7 +1117,7 @@ class ChatStore {
                 toStoredMessage(id, userMsg)
             );
         } catch (err) {
-            this.streamingChatIds.delete(id);
+            if (this.turns.get(id)?.kind === 'preparing') this.turns.delete(id);
             if (createdNewChat) {
                 const index = this.chats.findIndex((item) => item.id === id);
                 if (index >= 0) this.chats.splice(index, 1);
@@ -1124,16 +1135,17 @@ class ChatStore {
             );
             return false;
         }
-        this.streamForChat(id, assistantId);
+        if (this.finishPreparing(id, assistantId))
+            this.streamForChat(id, assistantId);
         return true;
     }
 
     async retry(index: number): Promise<void> {
         const chat = this.activeChat;
         if (!chat) return;
-        if (!this.validateModelConfig()) return;
         const chatId = chat.id;
-        this.abortLocalStream(chatId);
+        if (this.isChatBusy(chatId)) return;
+        if (!this.validateModelConfig()) return;
         const msg = chat.messages[index];
         if (!msg) return;
         const keepUpTo = msg.role === 'user' ? index : index - 1;
@@ -1155,10 +1167,9 @@ class ChatStore {
             assistantPlaceholder
         );
 
-        this.clearChatError(chatId);
-        this.streamingChatIds.add(chatId);
+        this.turns.set(chatId, { kind: 'preparing', stopRequested: false });
 
-        if (this.demoMode) {
+        if (appMode.isDemo) {
             this.streamForChat(chatId, assistantId);
             return;
         }
@@ -1169,7 +1180,8 @@ class ChatStore {
                 lastKeptMsg.id
             );
         } catch (err) {
-            this.streamingChatIds.delete(chatId);
+            if (this.turns.get(chatId)?.kind === 'preparing')
+                this.turns.delete(chatId);
             const currentIndex = this.chats.findIndex(
                 (item) => item.id === chatId
             );
@@ -1181,34 +1193,32 @@ class ChatStore {
             );
             return;
         }
-        this.streamForChat(chatId, assistantId);
+        if (this.finishPreparing(chatId, assistantId))
+            this.streamForChat(chatId, assistantId);
     }
 
     stop(visibleChars: number): void {
-        const chat = this.activeChat;
-        if (!chat) return;
-        const handle = this.streamHandles.get(chat.id);
-        if (!handle) return;
-        handle.stop(visibleChars);
-        this.streamBatchers.get(chat.id)?.discard();
-        const last = chat.messages[chat.messages.length - 1];
-        if (last && last.role === 'assistant') {
-            truncateMessageTextParts(last, visibleChars);
-            chat.streamingText = messageText(last);
+        const chatId = this.activeChatId;
+        if (!chatId) return;
+        const turn = this.turns.get(chatId);
+        if (turn?.kind === 'preparing') {
+            this.turns.set(chatId, { kind: 'preparing', stopRequested: true });
+            return;
         }
+        if (turn?.kind !== 'local-streaming') return;
+        turn.handle.stop(visibleChars);
+        turn.pipeline.truncate(visibleChars);
     }
 
     private streamForChat(chatId: string, assistantId: string): void {
         const chat = this.findChat(chatId);
         if (!chat) {
-            this.streamingChatIds.delete(chatId);
+            this.turns.delete(chatId);
             return;
         }
         if (!this.validateModelConfig(chat)) {
-            this.streamingChatIds.delete(chatId);
-            chat.messages = chat.messages.filter(
-                (message) => message.id !== assistantId
-            );
+            this.turns.delete(chatId);
+            removeMessageById(chat, assistantId);
             return;
         }
 
@@ -1245,17 +1255,12 @@ class ChatStore {
         const mayHaveContainerOutputs =
             chat.providerId === 'openai' && !!wireTools.codeExecution;
         const assistantRef = chat.messages[chat.messages.length - 1];
-        const assembler = createMessageAssembler(assistantRef);
-        const batcher = createStreamBatcher(assembler, chat);
-        chat.streamingText = '';
-
-        const finishStream = () => {
-            batcher.flush();
-            this.streamHandles.delete(chatId);
-            this.streamBatchers.delete(chatId);
-            this.streamingChatIds.delete(chatId);
-            chat.streamingText = null;
-            versionCheck.maybeCheckWebVersion();
+        const pipeline = new StreamPipeline(chat, assistantRef);
+        const isCurrentTurn = () => {
+            const turn = this.turns.get(chatId);
+            return (
+                turn?.kind === 'local-streaming' && turn.pipeline === pipeline
+            );
         };
 
         const handle = sendToExtension(
@@ -1291,10 +1296,14 @@ class ChatStore {
                 assistantCreatedAt: assistantRef.metadata.createdAt,
             },
             {
-                onChunk: (chunk) => batcher.push(chunk),
+                onChunk: (chunk) => {
+                    if (isCurrentTurn()) pipeline.push(chunk);
+                },
                 onDone: (revision) => {
+                    if (!isCurrentTurn()) return;
                     chat.revision = revision;
-                    finishStream();
+                    this.endTurn(chatId);
+                    versionCheck.maybeCheckWebVersion();
                     if (mayHaveContainerOutputs) {
                         void this.refreshChatFromIDB(chatId, {
                             context: 'onDone: refresh after file capture',
@@ -1303,23 +1312,16 @@ class ChatStore {
                     }
                 },
                 onError: (msg, source, revision) => {
+                    if (!isCurrentTurn()) return;
                     if (revision !== undefined) chat.revision = revision;
-                    finishStream();
-                    this.chatErrors = {
-                        ...this.chatErrors,
-                        [chatId]: formatStreamError(msg, source),
-                    };
-                    if (!assistantRef.parts.length) {
-                        const idx = chat.messages.findIndex(
-                            (m) => m.id === assistantId
-                        );
-                        if (idx >= 0) chat.messages.splice(idx, 1);
-                    }
+                    this.endTurn(chatId, formatStreamError(msg, source));
+                    versionCheck.maybeCheckWebVersion();
+                    if (!assistantRef.parts.length)
+                        removeMessageById(chat, assistantId);
                 },
             }
         );
-        this.streamHandles.set(chatId, handle);
-        this.streamBatchers.set(chatId, batcher);
+        this.turns.set(chatId, { kind: 'local-streaming', handle, pipeline });
     }
 
     applyRemoteTurnStart(
@@ -1328,6 +1330,15 @@ class ChatStore {
         assistantMessageId: string,
         assistantCreatedAt: number
     ): void {
+        const current = this.turns.get(chatId);
+        if (
+            current?.kind === 'preparing' ||
+            current?.kind === 'local-streaming'
+        ) {
+            log.warn('remote turn-start ignored, local turn active', chatId);
+            return;
+        }
+        this.endTurn(chatId);
         const placeholder = buildAssistantPlaceholder(
             assistantMessageId,
             assistantCreatedAt
@@ -1342,22 +1353,14 @@ class ChatStore {
             this.chats.unshift({
                 ...meta,
                 messages: [placeholder],
-                messagesLoaded: false,
+                loadState: 'unloaded',
             });
             chat = this.findChat(chatId)!;
         }
-        this.remoteStreamingChatIds.add(chatId);
-        this.clearChatError(chatId);
-
-        this.closeRemotePipeline(chatId);
         const assistantRef = chat.messages[chat.messages.length - 1];
-        const assembler = createMessageAssembler(assistantRef);
-        chat.streamingText = '';
-        this.remotePipelines.set(chatId, {
-            assembler,
-            batcher: createStreamBatcher(assembler, chat),
-            placeholderId: assistantMessageId,
-            chat,
+        this.turns.set(chatId, {
+            kind: 'remote-streaming',
+            pipeline: new StreamPipeline(chat, assistantRef),
         });
 
         void this.backfillRemoteHistory(chatId, assistantMessageId);
@@ -1379,47 +1382,44 @@ class ChatStore {
             return;
         }
         if (!stored) return;
-        const pipeline = this.remotePipelines.get(chatId);
-        if (!pipeline || pipeline.placeholderId !== assistantMessageId) return;
-        const assistantRef =
-            pipeline.chat.messages[pipeline.chat.messages.length - 1];
+        const turn = this.turns.get(chatId);
+        if (
+            turn?.kind !== 'remote-streaming' ||
+            turn.pipeline.message.id !== assistantMessageId
+        )
+            return;
+        const { chat, message } = turn.pipeline;
         const history = storedToMessages(
             stored.messages.filter((s) => s.message.id !== assistantMessageId)
         );
-        pipeline.chat.messages = [...history, assistantRef];
-        pipeline.chat.revision = stored.revision;
-        pipeline.chat.messagesLoaded = true;
+        chat.messages = [...history, message];
+        chat.revision = stored.revision;
+        chat.loadState = 'loaded';
     }
 
     applyRemoteTurnChunk(chatId: string, chunk: AirmailAIChunk): void {
-        if (!this.remoteStreamingChatIds.has(chatId)) return;
-        const pipeline = this.remotePipelines.get(chatId);
-        if (!pipeline) return;
+        const turn = this.turns.get(chatId);
+        if (turn?.kind !== 'remote-streaming') return;
         try {
-            pipeline.batcher.push(chunk);
+            turn.pipeline.push(chunk);
         } catch (e) {
             log.warn('remote chunk apply failed', e);
         }
     }
 
     applyRemoteTurnTruncate(chatId: string, charLen: number): void {
-        if (!this.remoteStreamingChatIds.has(chatId)) return;
-        const pipeline = this.remotePipelines.get(chatId);
-        if (!pipeline) return;
-        pipeline.batcher.discard();
-        const chat = pipeline.chat;
-        const last = chat.messages[chat.messages.length - 1];
-        if (!last || last.role !== 'assistant') return;
-        truncateMessageTextParts(last, charLen);
-        chat.streamingText = messageText(last);
+        const turn = this.turns.get(chatId);
+        if (turn?.kind !== 'remote-streaming') return;
+        turn.pipeline.truncate(charLen);
     }
 
-    private closeRemotePipeline(chatId: string): void {
-        const pipeline = this.remotePipelines.get(chatId);
-        if (!pipeline) return;
-        pipeline.batcher.flush();
-        pipeline.chat.streamingText = null;
-        this.remotePipelines.delete(chatId);
+    private endRemoteTurn(
+        chatId: string,
+        failure: string | null = null
+    ): boolean {
+        if (!isTurnRemote(this.turns.get(chatId))) return false;
+        this.endTurn(chatId, failure);
+        return true;
     }
 
     private async refreshChatFromIDB(
@@ -1445,12 +1445,12 @@ class ChatStore {
             const chat = this.findChat(chatId);
             if (
                 chat &&
-                !this.allStreamingChatIds.has(chatId) &&
+                !this.isChatBusy(chatId) &&
                 stored.revision >= (chat.revision ?? 0)
             ) {
                 chat.messages = storedToMessages(stored.messages);
                 chat.revision = stored.revision;
-                chat.messagesLoaded = true;
+                chat.loadState = 'loaded';
             }
         } else if (opts.onMissing === 'drop') {
             const idx = this.chats.findIndex((c) => c.id === chatId);
@@ -1460,9 +1460,7 @@ class ChatStore {
     }
 
     async applyRemoteTurnDone(chatId: string): Promise<void> {
-        if (!this.remoteStreamingChatIds.has(chatId)) return;
-        this.remoteStreamingChatIds.delete(chatId);
-        this.closeRemotePipeline(chatId);
+        if (!this.endRemoteTurn(chatId)) return;
         await this.refreshChatFromIDB(chatId, {
             context: 'applyRemoteTurnDone: loadChat failed',
             userMessage: "Couldn't refresh chat from storage",
@@ -1470,9 +1468,7 @@ class ChatStore {
     }
 
     async applyRemoteTurnAborted(chatId: string): Promise<void> {
-        if (!this.remoteStreamingChatIds.has(chatId)) return;
-        this.remoteStreamingChatIds.delete(chatId);
-        this.closeRemotePipeline(chatId);
+        if (!this.endRemoteTurn(chatId)) return;
         await this.refreshChatFromIDB(chatId, {
             context: 'applyRemoteTurnAborted: loadChat failed',
             userMessage: "Couldn't refresh chat from storage",
@@ -1485,13 +1481,8 @@ class ChatStore {
         message: string,
         source: StreamErrorSource = 'api'
     ): Promise<void> {
-        if (!this.remoteStreamingChatIds.has(chatId)) return;
-        this.remoteStreamingChatIds.delete(chatId);
-        this.closeRemotePipeline(chatId);
-        this.chatErrors = {
-            ...this.chatErrors,
-            [chatId]: formatStreamError(message, source),
-        };
+        if (!this.endRemoteTurn(chatId, formatStreamError(message, source)))
+            return;
         await this.refreshChatFromIDB(chatId, {
             context: 'applyRemoteTurnError: loadChat failed',
             userMessage: null,
@@ -1499,24 +1490,24 @@ class ChatStore {
     }
 
     syncActiveTurns(activeChatIds: string[]): string[] {
-        if (this.demoMode) return [];
+        if (appMode.isDemo) return [];
         const active = new Set(activeChatIds);
         const interrupted: string[] = [];
-        for (const id of this.remoteStreamingChatIds) {
-            if (active.has(id)) continue;
-            this.remoteStreamingChatIds.delete(id);
-            this.closeRemotePipeline(id);
+        for (const [id, turn] of [...this.turns]) {
+            if (!isTurnRemote(turn) || active.has(id)) continue;
+            this.endTurn(id);
             interrupted.push(id);
         }
         for (const id of active) {
-            if (!this.streamingChatIds.has(id))
-                this.remoteStreamingChatIds.add(id);
+            const turn = this.turns.get(id);
+            if (turn === undefined || turn.kind === 'failed')
+                this.turns.set(id, { kind: 'remote-joined-midway' });
         }
         return interrupted;
     }
 
     async reconcileFromIDB(activeChatIds: string[]): Promise<void> {
-        if (this.demoMode) return;
+        if (appMode.isDemo) return;
         const interrupted = this.syncActiveTurns(activeChatIds);
         let metas: ChatMeta[];
         try {
@@ -1532,12 +1523,13 @@ class ChatStore {
         const metaById = new Map(metas.map((m) => [m.id, m]));
         const staleIds: string[] = [...interrupted];
         for (const chat of [...this.chats]) {
-            const streaming = this.allStreamingChatIds.has(chat.id);
+            const busy = this.isChatBusy(chat.id);
+            const loaded = chat.loadState === 'loaded';
             const fresh = metaById.get(chat.id);
             if (fresh) {
                 if (
-                    !streaming &&
-                    chat.messagesLoaded &&
+                    !busy &&
+                    loaded &&
                     (fresh.revision ?? 0) !== (chat.revision ?? 0) &&
                     !staleIds.includes(chat.id)
                 ) {
@@ -1545,11 +1537,8 @@ class ChatStore {
                 }
                 const revision = chat.revision;
                 Object.assign(chat, fresh);
-                if (chat.messagesLoaded) chat.revision = revision;
-            } else if (
-                !streaming &&
-                (!chat.messagesLoaded || chat.messages.length > 0)
-            ) {
+                if (loaded) chat.revision = revision;
+            } else if (!busy && (!loaded || chat.messages.length > 0)) {
                 this.removeLocal(chat.id);
             }
         }
@@ -1573,12 +1562,12 @@ class ChatStore {
                 const chat = this.findChat(stored.id);
                 if (
                     chat &&
-                    !this.allStreamingChatIds.has(chat.id) &&
+                    !this.isChatBusy(chat.id) &&
                     stored.revision >= (chat.revision ?? 0)
                 ) {
                     chat.messages = storedToMessages(stored.messages);
                     chat.revision = stored.revision;
-                    chat.messagesLoaded = true;
+                    chat.loadState = 'loaded';
                 }
             }
         }
@@ -1591,7 +1580,7 @@ class ChatStore {
     async refreshLoadedChats(chatIds: string[]): Promise<void> {
         this.fileStatusVersion++;
         for (const id of chatIds) {
-            if (!this.findChat(id)?.messagesLoaded) continue;
+            if (this.findChat(id)?.loadState !== 'loaded') continue;
             await this.refreshChatFromIDB(id, {
                 context: 'refreshLoadedChats: loadChat failed',
                 userMessage: "Couldn't refresh chat after deleting a file",

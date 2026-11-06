@@ -1,5 +1,8 @@
 <script lang="ts">
     import type { StorageUsage } from '@airmailai/shared';
+    import { OPENROUTER_REFRESH_COOLDOWN_MS } from '@airmailai/shared';
+    import { appMode } from './appMode.svelte';
+    import { AsyncResource } from './asyncResource.svelte';
     import { chatStore } from './chatStore.svelte';
     import {
         defaultModelForProvider,
@@ -27,7 +30,7 @@
 
     let { onclose }: { onclose: () => void } = $props();
 
-    const demo = chatStore.demoMode;
+    const demo = appMode.isDemo;
 
     let activeTab = $state<
         'keys' | 'ui' | 'tools' | 'storage' | 'advanced' | 'changelog'
@@ -49,13 +52,13 @@
         'Controls how PDFs are processed in OpenRouter chats. "Provider native only" sends the PDF to the model provider and nowhere else, but only works with models that support PDF input. The Cloudflare and Mistral options parse the PDF into text first, which lets any model read PDFs but routes the file contents through that third party. Mistral OCR bills per page to your OpenRouter account; Cloudflare parsing is free.';
     const FILE_UPLOADS_WARNING =
         "When file uploads are enabled, AirmailAI turns on Provider File Storage (PFS) and Code Execution (CE) by default. Any files uploaded through AirmailAI are stored on your device in IndexedDB; PFS also saves a copy on provider servers until you delete it, subject to each provider's retention policies. When combined with PFS, Code Execution enables Anthropic and OpenAI models to access, search, and process files directly in its sandbox container, which can reduce token usage. With Google, files are read fully into the model's context each time they are used (including by CE), so they do not reduce token usage and large files may not fit. When PFS is turned off, the full file content must be sent to the provider with every relevant message, which can increase token usage. You can manage stored files anytime from the Files tab in the sidebar. PFS and CE may add provider-side costs, see each provider's API documentation for pricing and retention details.";
-    const OPENROUTER_REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
     const OPENROUTER_REFRESH_COOLDOWN_TITLE =
         'Recently refreshed, please wait 5m to try again.';
     const DEMO_LOCKED_TITLE = 'Requires the AirmailAI extension';
 
-    let storageUsage = $state<StorageUsage | null>(null);
-    let storageLoading = $state(false);
+    const storage = new AsyncResource<StorageUsage>();
+    let storageUsage = $derived(storage.value);
+    let storageLoading = $derived(storage.state.status === 'loading');
     let storageBusy = $state(false);
     let transferBusy = $state(false);
     let importInput = $state<HTMLInputElement | undefined>(undefined);
@@ -85,48 +88,35 @@
     }
 
     async function refreshStorageUsage() {
-        storageLoading = true;
-        try {
-            await waitForExtension();
-            storageUsage = await getStorageUsage();
-        } catch (err) {
-            reportAppError(
-                'getStorageUsage failed',
-                "Couldn't read storage usage",
-                err
-            );
-        } finally {
-            storageLoading = false;
-        }
+        await storage.load(
+            async () => {
+                await waitForExtension();
+                return getStorageUsage();
+            },
+            {
+                context: 'getStorageUsage failed',
+                userMessage: "Couldn't read storage usage",
+            }
+        );
     }
 
     function openStorageTab() {
         activeTab = 'storage';
         if (demo) return;
-        if (storageUsage === null && !storageLoading) refreshStorageUsage();
+        if (storage.state.status === 'idle') refreshStorageUsage();
     }
 
-    let changelogMd = $state<string | null>(null);
-    let changelogLoading = $state(false);
-    let changelogError = $state<string | null>(null);
+    const changelog = new AsyncResource<string>();
 
-    async function loadChangelog() {
-        changelogLoading = true;
-        changelogError = null;
-        try {
-            const res = await fetch('/changelog.md');
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            changelogMd = await res.text();
-        } catch (err) {
-            changelogError = `Couldn't load the changelog: ${formatErr(err)}`;
-        } finally {
-            changelogLoading = false;
-        }
+    async function fetchChangelog(): Promise<string> {
+        const res = await fetch('/changelog.md');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.text();
     }
 
     function openChangelogTab() {
         activeTab = 'changelog';
-        if (changelogMd === null && !changelogLoading) loadChangelog();
+        if (changelog.state.status === 'idle') changelog.load(fetchChangelog);
     }
 
     async function handleClearChats() {
@@ -230,46 +220,47 @@
         settingsStore.modelTier = checked ? 'legacy' : 'previous';
     }
 
-    type OpenRouterRefreshState = 'idle' | 'loading' | 'success' | 'error';
-    let openRouterRefreshState = $state<OpenRouterRefreshState>('idle');
-    let openRouterRefreshStatusLoading = $state(true);
-    let openRouterRefreshCoolingDown = $state(false);
-    let openRouterRefreshTimer: ReturnType<typeof setTimeout> | undefined;
-
-    let hasOpenRouterKey = $derived(
-        providersStore.savedKeys?.openrouter === true
+    type OpenRouterRefreshState =
+        | { kind: 'checking' }
+        | { kind: 'ready' }
+        | { kind: 'refreshing'; until: number }
+        | {
+              kind: 'cooldown';
+              until: number;
+              lastResult: 'success' | 'error' | null;
+          };
+    let openRouterRefresh = $state.raw<OpenRouterRefreshState>({
+        kind: 'checking',
+    });
+    let openRouterCooldownTimer: ReturnType<typeof setTimeout> | undefined;
+    let openRouterLastResult = $derived(
+        openRouterRefresh.kind === 'cooldown'
+            ? openRouterRefresh.lastResult
+            : null
     );
+
+    let hasOpenRouterKey = $derived(providersStore.hasSavedKey('openrouter'));
     let openRouterRefreshDisabled = $derived(
-        !hasOpenRouterKey ||
-            openRouterRefreshStatusLoading ||
-            openRouterRefreshCoolingDown ||
-            openRouterRefreshState === 'loading'
+        !hasOpenRouterKey || openRouterRefresh.kind !== 'ready'
     );
 
-    function setOpenRouterRefreshCooldown(lastAttemptAt: number | null) {
-        if (openRouterRefreshTimer !== undefined) {
-            clearTimeout(openRouterRefreshTimer);
-            openRouterRefreshTimer = undefined;
-        }
-        if (lastAttemptAt === null) {
-            openRouterRefreshCoolingDown = false;
-            return;
-        }
-        const remaining =
-            lastAttemptAt + OPENROUTER_REFRESH_COOLDOWN_MS - Date.now();
-        if (remaining <= 0) {
-            openRouterRefreshCoolingDown = false;
-            if (openRouterRefreshState !== 'loading') {
-                openRouterRefreshState = 'idle';
+    function scheduleCooldownEnd(until: number) {
+        clearTimeout(openRouterCooldownTimer);
+        openRouterCooldownTimer = setTimeout(() => {
+            if (openRouterRefresh.kind === 'cooldown') {
+                openRouterRefresh = { kind: 'ready' };
             }
-            return;
-        }
-        openRouterRefreshCoolingDown = true;
-        openRouterRefreshTimer = setTimeout(() => {
-            openRouterRefreshCoolingDown = false;
-            openRouterRefreshState = 'idle';
-            openRouterRefreshTimer = undefined;
-        }, remaining);
+        }, until - Date.now());
+    }
+
+    function settleOpenRouterRefresh(
+        until: number,
+        lastResult: 'success' | 'error' | null
+    ) {
+        openRouterRefresh =
+            until > Date.now()
+                ? { kind: 'cooldown', until, lastResult }
+                : { kind: 'ready' };
     }
 
     $effect(() => {
@@ -278,39 +269,40 @@
         waitForExtension()
             .then(() => getOpenRouterRefreshStatus())
             .then((lastAttemptAt) => {
-                if (!cancelled) {
-                    setOpenRouterRefreshCooldown(lastAttemptAt);
+                if (cancelled) return;
+                if (lastAttemptAt === null) {
+                    openRouterRefresh = { kind: 'ready' };
+                    return;
                 }
+                const until = lastAttemptAt + OPENROUTER_REFRESH_COOLDOWN_MS;
+                settleOpenRouterRefresh(until, null);
+                scheduleCooldownEnd(until);
             })
             .catch((err) => {
-                if (!cancelled) {
-                    reportAppError(
-                        'OpenRouter refresh status load failed',
-                        "Couldn't read OpenRouter refresh status",
-                        err
-                    );
-                }
-            })
-            .finally(() => {
-                if (!cancelled) openRouterRefreshStatusLoading = false;
+                if (cancelled) return;
+                openRouterRefresh = { kind: 'ready' };
+                reportAppError(
+                    'OpenRouter refresh status load failed',
+                    "Couldn't read OpenRouter refresh status",
+                    err
+                );
             });
         return () => {
             cancelled = true;
-            if (openRouterRefreshTimer !== undefined) {
-                clearTimeout(openRouterRefreshTimer);
-            }
+            clearTimeout(openRouterCooldownTimer);
         };
     });
 
     async function handleOpenRouterRefresh() {
         if (openRouterRefreshDisabled) return;
-        setOpenRouterRefreshCooldown(Date.now());
-        openRouterRefreshState = 'loading';
+        const until = Date.now() + OPENROUTER_REFRESH_COOLDOWN_MS;
+        openRouterRefresh = { kind: 'refreshing', until };
+        scheduleCooldownEnd(until);
         try {
             await providersStore.refreshOpenRouterModels();
-            openRouterRefreshState = 'success';
+            settleOpenRouterRefresh(until, 'success');
         } catch (err) {
-            openRouterRefreshState = 'error';
+            settleOpenRouterRefresh(until, 'error');
             reportAppError(
                 'OpenRouter model refresh failed',
                 "Couldn't refresh OpenRouter models",
@@ -325,15 +317,7 @@
 
     $effect(() => {
         if (demo) return;
-        waitForExtension().then(() => {
-            providersStore.refreshSavedKeys().catch((err) => {
-                reportAppError(
-                    'checkApiKeys failed',
-                    "Couldn't read saved API keys",
-                    err
-                );
-            });
-        });
+        waitForExtension().then(() => providersStore.refreshSavedKeys());
     });
 
     type KeyTestStatus = 'testing' | 'ok' | 'fail';
@@ -535,7 +519,7 @@
                                         !isLast && 'border-b border-border',
                                     ]}
                                 >
-                                    {#if providersStore.savedKeys?.[provider.id]}
+                                    {#if providersStore.hasSavedKey(provider.id)}
                                         <Icon name="check" class="icon-check" />
                                     {:else}
                                         <Icon
@@ -588,8 +572,9 @@
                                         <button
                                             type="button"
                                             class="shrink-0 px-2.5 py-1.25 border border-border rounded-md text-xs font-medium cursor-pointer whitespace-nowrap transition-[background-color,opacity] duration-150 disabled:opacity-[0.35] disabled:cursor-not-allowed bg-surface-raised text-fg enabled:hover:bg-surface-sunken"
-                                            disabled={!providersStore
-                                                .savedKeys?.[provider.id]}
+                                            disabled={!providersStore.hasSavedKey(
+                                                provider.id
+                                            )}
                                             onclick={() =>
                                                 handleClear(provider.id)}
                                         >
@@ -606,8 +591,9 @@
                                                       ? 'text-accent-fg! border-accent-fg!'
                                                       : 'text-fg border-border',
                                             ]}
-                                            disabled={!providersStore
-                                                .savedKeys?.[provider.id] ||
+                                            disabled={!providersStore.hasSavedKey(
+                                                provider.id
+                                            ) ||
                                                 keyTests[provider.id] ===
                                                     'testing'}
                                             onclick={() => handleTest(provider)}
@@ -1130,7 +1116,7 @@
                         >Refresh OpenRouter Model List</label
                     >
                     <div class="flex items-center gap-2">
-                        {#if openRouterRefreshState === 'loading'}
+                        {#if openRouterRefresh.kind === 'refreshing'}
                             <Icon name="spinner" class="text-fg-muted" />
                         {/if}
                         <button
@@ -1138,19 +1124,20 @@
                             type="button"
                             class={[
                                 'w-20 shrink-0 px-2.5 py-1.25 border rounded-md bg-surface-raised text-xs font-medium cursor-pointer whitespace-nowrap transition-[background-color,opacity,color,border-color] duration-150 enabled:hover:bg-surface-sunken disabled:cursor-not-allowed',
-                                openRouterRefreshState === 'error'
+                                openRouterLastResult === 'error'
                                     ? 'text-accent-fg! border-accent-fg! disabled:opacity-100!'
                                     : 'text-fg border-border disabled:opacity-[0.35]',
                             ]}
-                            title={openRouterRefreshCoolingDown
+                            title={openRouterRefresh.kind === 'refreshing' ||
+                            openRouterRefresh.kind === 'cooldown'
                                 ? OPENROUTER_REFRESH_COOLDOWN_TITLE
                                 : undefined}
                             disabled={openRouterRefreshDisabled}
                             onclick={handleOpenRouterRefresh}
                         >
-                            {#if openRouterRefreshState === 'success'}
+                            {#if openRouterLastResult === 'success'}
                                 Refreshed
-                            {:else if openRouterRefreshState === 'error'}
+                            {:else if openRouterLastResult === 'error'}
                                 Error
                             {:else}
                                 Refresh
@@ -1254,12 +1241,14 @@
             aria-hidden={activeTab !== 'changelog'}
             style:--font-message="var(--font-sans)"
         >
-            {#if changelogError}
-                <p class="text-sm text-accent-fg m-0 py-1">{changelogError}</p>
-            {:else if changelogMd === null}
-                <p class="text-sm text-fg m-0 py-1">Loading...</p>
+            {#if changelog.state.status === 'error'}
+                <p class="text-sm text-accent-fg m-0 py-1">
+                    Couldn't load the changelog: {changelog.state.message}
+                </p>
+            {:else if changelog.state.status === 'ready'}
+                <MarkdownMessage content={changelog.state.value} />
             {:else}
-                <MarkdownMessage content={changelogMd} />
+                <p class="text-sm text-fg m-0 py-1">Loading...</p>
             {/if}
         </div>
     </div>

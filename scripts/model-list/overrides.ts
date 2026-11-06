@@ -10,7 +10,17 @@ export const RETIRED_MODEL_IDS: Record<
     readonly string[]
 > = {
     anthropic: [],
-    openai: [],
+    openai: [
+        'gpt-3.5-turbo',
+        'gpt-3.5-turbo-16k',
+        'gpt-4',
+        'gpt-4-turbo',
+        'gpt-4.1-nano',
+        'o1',
+        'o1-pro',
+        'o3-mini',
+        'o4-mini',
+    ],
     google: [],
 };
 
@@ -142,12 +152,8 @@ export const OPENAI_OVERRIDES: Record<string, ModelOverride> = {
     'gpt-5-pro': {
         thinking: { levels: ['high'], defaultLevel: 'high' },
     },
-    o1: { thinking: O_SERIES_THINKING },
-    'o1-pro': { thinking: O_SERIES_THINKING },
     o3: { thinking: O_SERIES_THINKING },
-    'o3-mini': { thinking: O_SERIES_THINKING },
     'o3-pro': { thinking: O_SERIES_THINKING },
-    'o4-mini': { thinking: O_SERIES_THINKING },
 };
 
 // *** Google's API gives token limits, temperature, and a thinking flag.

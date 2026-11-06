@@ -228,18 +228,20 @@
             : 0
     );
     let providerDropdownEmptyLabel = $derived(
-        providersStore.modelsLoadError
+        providersStore.firstParty.state.status === 'error'
             ? "Couldn't load providers"
             : 'Loading providers...'
     );
     let modelPickerEmptyLabel = $derived.by(() => {
-        if (providersStore.modelsLoadError)
-            return `Couldn't load the model list: ${providersStore.modelsLoadError}. Refresh to try again.`;
+        const firstParty = providersStore.firstParty.state;
+        if (firstParty.status === 'error')
+            return `Couldn't load the model list: ${firstParty.message}. Refresh to try again.`;
         if (currentProvider?.id !== 'openrouter') return 'Loading models...';
-        if (providersStore.openRouterCatalogLoading)
+        const catalog = providersStore.openRouterCatalog.state;
+        if (catalog.status === 'loading')
             return 'Downloading the OpenRouter model catalog...';
-        if (providersStore.openRouterCatalogError)
-            return `Couldn't download the OpenRouter model catalog: ${providersStore.openRouterCatalogError}. Retry from Settings > Refresh OpenRouter Model List.`;
+        if (catalog.status === 'error')
+            return `Couldn't download the OpenRouter model catalog: ${catalog.message}. Retry from Settings > Refresh OpenRouter Model List.`;
         return OPENROUTER_EMPTY_LABEL;
     });
 
@@ -381,10 +383,12 @@
             <label for="provider" class={labelClass}>Provider</label>
             <Dropdown
                 id="provider"
-                options={appLifecycle.initialized ? providerOptions : []}
+                options={appLifecycle.bootPhase === 'ready'
+                    ? providerOptions
+                    : []}
                 value={settingsStore.providerId}
                 onchange={onProviderChange}
-                disabled={!appLifecycle.initialized}
+                disabled={appLifecycle.bootPhase !== 'ready'}
                 emptyLabel={providerDropdownEmptyLabel}
                 fullWidth
             />
@@ -399,13 +403,13 @@
                     groups={modelGroups}
                     bind:value={settingsStore.modelId}
                     onchange={onModelChange}
-                    disabled={!appLifecycle.initialized}
+                    disabled={appLifecycle.bootPhase !== 'ready'}
                     emptyLabel={modelPickerEmptyLabel}
                 />
             </div>
         {/if}
 
-        {#if appLifecycle.initialized && currentModel}
+        {#if appLifecycle.bootPhase === 'ready' && currentModel}
             {#if currentModel.params.temperatureMax !== undefined}
                 <div class={fieldClass}>
                     <div class={labelRowClass}>
@@ -742,7 +746,7 @@
                             ? "This conversation is approaching the model's context limit."
                             : undefined}
                     >
-                        {#if !appLifecycle.initialized || !currentModel}
+                        {#if appLifecycle.bootPhase !== 'ready' || !currentModel}
                             &nbsp;
                         {:else if contextUsed !== null}
                             {contextUsed.toLocaleString()} / {currentModel.params.contextWindow.toLocaleString()}
@@ -754,11 +758,11 @@
                         {/if}
                     </span>
                 </div>
-                {#if !appLifecycle.initialized || !currentModel || currentModel.params.knowledgeCutoff}
+                {#if appLifecycle.bootPhase !== 'ready' || !currentModel || currentModel.params.knowledgeCutoff}
                     <div class={detailRowClass}>
                         <span class={detailLabelClass}>Knowledge Cutoff</span>
                         <span class={detailValueClass}>
-                            {#if appLifecycle.initialized && currentModel}
+                            {#if appLifecycle.bootPhase === 'ready' && currentModel}
                                 {currentModel.params.knowledgeCutoff}
                             {:else}
                                 &nbsp;

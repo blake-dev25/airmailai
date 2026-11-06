@@ -3,6 +3,7 @@ import { expect, test } from './fixtures';
 test('Max Output Tokens cap truncates the response', async ({ airmailai }) => {
     await airmailai.goto();
 
+    await airmailai.setThinkingLowest();
     await airmailai.setMaxTokens(5);
     await airmailai.send('Write ten detailed paragraphs about the ocean.');
 

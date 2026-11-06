@@ -1,9 +1,9 @@
 import type { OpenRouterModel } from '@airmailai/shared';
+import { OPENROUTER_REFRESH_COOLDOWN_MS } from '@airmailai/shared';
 import { log } from './debug';
 
 const FRESH_MS = 24 * 60 * 60 * 1000;
-export const MANUAL_REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
-const ERROR_COOLDOWN_MS = MANUAL_REFRESH_COOLDOWN_MS;
+const ERROR_COOLDOWN_MS = OPENROUTER_REFRESH_COOLDOWN_MS;
 export const CACHE_VERSION = 4;
 
 export const CACHE_KEY = 'openrouter_models_cache';
@@ -16,6 +16,34 @@ interface CacheEntry {
     fetchedAt: number;
     nextRetryAt?: number;
     lastError?: string;
+}
+
+type CacheStatus =
+    | { kind: 'empty' }
+    | { kind: 'fresh'; models: OpenRouterModel[] }
+    | { kind: 'stale'; models: OpenRouterModel[] }
+    | { kind: 'stale-cooling-down'; models: OpenRouterModel[] }
+    | { kind: 'failed'; message: string; nextRetryAt: number };
+
+function classifyCache(cache: CacheEntry | null, now: number): CacheStatus {
+    const nextRetryAt = cache?.nextRetryAt;
+    const coolingDown = nextRetryAt !== undefined && now < nextRetryAt;
+    if (cache && cache.models.length > 0) {
+        if (now - cache.fetchedAt < FRESH_MS) {
+            return { kind: 'fresh', models: cache.models };
+        }
+        return coolingDown
+            ? { kind: 'stale-cooling-down', models: cache.models }
+            : { kind: 'stale', models: cache.models };
+    }
+    if (coolingDown) {
+        return {
+            kind: 'failed',
+            message: cache?.lastError ?? 'download failed',
+            nextRetryAt,
+        };
+    }
+    return { kind: 'empty' };
 }
 
 interface RawModel {
@@ -105,24 +133,24 @@ export async function getOpenRouterManualRefreshAt(): Promise<number | null> {
 export async function getOpenRouterModels(
     apiKey?: string
 ): Promise<OpenRouterModel[] | null> {
-    const cache = await readCache();
     const now = Date.now();
+    const status = classifyCache(await readCache(), now);
 
-    if (!apiKey) {
-        return cache && cache.models.length > 0 ? cache.models : null;
-    }
+    if (!apiKey) return 'models' in status ? status.models : null;
 
-    if (cache && cache.models.length > 0) {
-        if (now - cache.fetchedAt < FRESH_MS) return cache.models;
-        if (cache.nextRetryAt && now < cache.nextRetryAt) return cache.models;
-        refreshInBackground(apiKey);
-        return cache.models;
-    }
-
-    if (cache?.nextRetryAt && now < cache.nextRetryAt) {
-        throw new Error(
-            `${cache.lastError ?? 'download failed'} (next automatic attempt after ${formatRetryTime(cache.nextRetryAt)})`
-        );
+    switch (status.kind) {
+        case 'fresh':
+        case 'stale-cooling-down':
+            return status.models;
+        case 'stale':
+            refreshInBackground(apiKey);
+            return status.models;
+        case 'failed':
+            throw new Error(
+                `${status.message} (next automatic attempt after ${formatRetryTime(status.nextRetryAt)})`
+            );
+        case 'empty':
+            break;
     }
 
     try {
@@ -158,7 +186,7 @@ export async function refreshOpenRouterModels(
         const lastRefreshAt = await getOpenRouterManualRefreshAt();
         if (
             lastRefreshAt !== null &&
-            now - lastRefreshAt < MANUAL_REFRESH_COOLDOWN_MS
+            now - lastRefreshAt < OPENROUTER_REFRESH_COOLDOWN_MS
         ) {
             throw new Error(
                 'OpenRouter models were recently refreshed. Please wait 5 minutes before trying again.'

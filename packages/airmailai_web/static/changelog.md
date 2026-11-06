@@ -1,3 +1,6 @@
+**26.11.6.1** - Website + Extension
+- Code state improvements, updated models
+
 **26.10.28.1** - Website
 - Updated models
 

@@ -1,6 +1,7 @@
 <script lang="ts">
     import { onMount } from 'svelte';
     import { appLifecycle } from './lib/appLifecycle.svelte';
+    import { appMode } from './lib/appMode.svelte';
     import ChatPanel from './lib/ChatPanel.svelte';
     import ExtensionPrompt from './lib/ExtensionPrompt.svelte';
     import FilesPane from './lib/FilesPane.svelte';
@@ -18,9 +19,9 @@
     });
 </script>
 
-{#if appLifecycle.showExtensionPrompt}
+{#if appMode.extensionPrompt}
     <ExtensionPrompt
-        variant={appLifecycle.promptVariant}
+        variant={appMode.extensionPrompt}
         onlookaround={() => appLifecycle.enterDemoMode()}
     />
 {/if}

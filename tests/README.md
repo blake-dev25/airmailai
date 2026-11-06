@@ -62,6 +62,11 @@ bun run test smoke         # one file
 bun run test --ui          # interactive (time-travel DOM snapshots)
 ```
 
+The suite builds the extension and loads `packages/airmailai_ext/.output/chrome-mv3`.
+Set `AIRMAILAI_EXT_PATH` to an unpacked extension folder to load that build
+instead and skip the build step, e.g. to run the current web app against an
+older extension release.
+
 ### Notes
 
 - **Cost:** specs hit real providers with cheap models.

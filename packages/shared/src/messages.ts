@@ -13,6 +13,8 @@ export interface DraftAttachment extends DraftAttachmentMeta {
 
 export const FILE_TRANSFER_CHUNK_BYTES = 16 * 1024 * 1024;
 
+export const OPENROUTER_REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
+
 export type FileTransferRequest =
     | {
           type: 'upload_start';

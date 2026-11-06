@@ -1,4 +1,4 @@
-import type { OpenRouterModel } from '@airmailai/shared';
+import { AsyncResource } from './asyncResource.svelte';
 import {
     buildFirstPartyProviders,
     buildOpenRouterProvider,
@@ -9,7 +9,6 @@ import {
     type ProviderOption,
     sortProviders,
 } from './constants';
-import { formatErr, reportAppError } from './errorStore.svelte';
 import {
     checkApiKeys,
     loadOpenRouterModels,
@@ -19,18 +18,40 @@ import { settingsStore } from './settingsStore.svelte';
 
 import { log } from './log';
 
+async function fetchFirstPartyProviders(): Promise<ProviderOption[]> {
+    const res = await fetch(MODELS_FILE_PATH, { cache: 'no-cache' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const file = parseModelsFile(await res.json());
+    const providers = buildFirstPartyProviders(file);
+    log.info('models hydrated', {
+        generatedAt: file.generatedAt,
+        counts: Object.fromEntries(
+            providers.map((p) => [p.id, p.models.length])
+        ),
+    });
+    return providers;
+}
+
+async function fetchOpenRouterProvider(): Promise<ProviderOption> {
+    const raw = await loadOpenRouterModels();
+    if (!raw) return OPENROUTER;
+    log.info('openrouter hydrated', `${raw.length} models`);
+    return buildOpenRouterProvider(raw);
+}
+
 class ProvidersStore {
-    private firstParty = $state<ProviderOption[] | null>(null);
-    private openRouter = $state<ProviderOption>(OPENROUTER);
+    firstParty = new AsyncResource<ProviderOption[]>();
+    openRouterCatalog = new AsyncResource<ProviderOption>();
+    savedKeys = new AsyncResource<Record<string, boolean>>();
+
     providers = $derived<ProviderOption[]>(
-        this.firstParty
-            ? sortProviders([...this.firstParty, this.openRouter])
+        this.firstParty.value
+            ? sortProviders([
+                  ...this.firstParty.value,
+                  this.openRouterCatalog.value ?? OPENROUTER,
+              ])
             : []
     );
-    modelsLoadError = $state<string | null>(null);
-    savedKeys = $state<Record<string, boolean> | null>(null);
-    openRouterCatalogLoading = $state(false);
-    openRouterCatalogError = $state<string | null>(null);
 
     selectedModel = $derived(
         settingsStore.customModel
@@ -41,87 +62,76 @@ class ProvidersStore {
     );
 
     hasAnyKey = $derived(
-        this.savedKeys !== null && Object.values(this.savedKeys).some(Boolean)
+        Object.values(this.savedKeys.value ?? {}).some(Boolean)
     );
 
+    hasSavedKey(providerId: string): boolean {
+        return this.savedKeys.value?.[providerId] === true;
+    }
+
     async hydrateModels(): Promise<void> {
-        this.modelsLoadError = null;
-        try {
-            const res = await fetch(MODELS_FILE_PATH, { cache: 'no-cache' });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const file = parseModelsFile(await res.json());
-            this.firstParty = buildFirstPartyProviders(file);
-            log.info('models hydrated', {
-                generatedAt: file.generatedAt,
-                counts: Object.fromEntries(
-                    this.firstParty.map((p) => [p.id, p.models.length])
-                ),
-            });
-        } catch (err) {
-            this.modelsLoadError = formatErr(err);
-            reportAppError(
-                'model list load failed',
-                "Couldn't load the model list",
-                err
-            );
-        }
+        await this.firstParty.load(fetchFirstPartyProviders, {
+            context: 'model list load failed',
+            userMessage: "Couldn't load the model list",
+        });
     }
 
     async refreshSavedKeys(): Promise<void> {
-        this.savedKeys = await checkApiKeys(PROVIDER_META.map((p) => p.id));
+        await this.savedKeys.load(
+            () => checkApiKeys(PROVIDER_META.map((p) => p.id)),
+            {
+                context: 'saved key check failed',
+                userMessage: "Couldn't read saved API keys",
+            }
+        );
     }
 
     async hydrateOpenRouter(): Promise<void> {
-        this.openRouterCatalogLoading = true;
-        this.openRouterCatalogError = null;
-        try {
-            const raw = await loadOpenRouterModels();
-            if (raw) this.setOpenRouterModels(raw);
-        } catch (err) {
-            this.openRouterCatalogError = formatErr(err);
-            reportAppError(
-                'openrouter hydrate failed',
-                "Couldn't load OpenRouter models",
-                err
-            );
-        } finally {
-            this.openRouterCatalogLoading = false;
-        }
+        await this.openRouterCatalog.load(fetchOpenRouterProvider, {
+            context: 'openrouter hydrate failed',
+            userMessage: "Couldn't load OpenRouter models",
+        });
     }
 
     ensureOpenRouterCatalog(): void {
-        if (this.savedKeys?.openrouter !== true) return;
-        if (this.hasOpenRouterModels() || this.openRouterCatalogLoading) return;
+        if (!this.hasSavedKey('openrouter')) return;
+        if (
+            this.hasOpenRouterModels() ||
+            this.openRouterCatalog.state.status === 'loading'
+        )
+            return;
         void this.hydrateOpenRouter();
     }
 
     async refreshOpenRouterModels(): Promise<void> {
         const raw = await refreshOpenRouterModels();
-        this.setOpenRouterModels(raw);
-    }
-
-    private setOpenRouterModels(raw: OpenRouterModel[]): void {
-        this.openRouter = buildOpenRouterProvider(raw);
-        this.openRouterCatalogError = null;
-        log.info('openrouter hydrated', `${raw.length} models`);
+        this.openRouterCatalog.set(buildOpenRouterProvider(raw));
+        log.info('openrouter refreshed', `${raw.length} models`);
     }
 
     hasOpenRouterModels(): boolean {
-        return this.openRouter.models.length > 0;
+        return (this.openRouterCatalog.value?.models.length ?? 0) > 0;
+    }
+
+    private setSavedKey(providerId: string, saved: boolean): void {
+        this.savedKeys.set({
+            ...(this.savedKeys.value ?? {}),
+            [providerId]: saved,
+        });
     }
 
     onApiKeySaved(providerId: string): void {
-        this.savedKeys = { ...(this.savedKeys ?? {}), [providerId]: true };
+        this.setSavedKey(providerId, true);
         if (providerId === 'openrouter') this.ensureOpenRouterCatalog();
     }
 
     onApiKeyCleared(providerId: string): void {
-        this.savedKeys = { ...(this.savedKeys ?? {}), [providerId]: false };
+        this.setSavedKey(providerId, false);
     }
 
     markAllKeysCleared(): void {
-        this.savedKeys = Object.fromEntries(
-            PROVIDER_META.map((p) => [p.id, false])
+        this.savedKeys.set(
+            Object.fromEntries(PROVIDER_META.map((p) => [p.id, false]))
         );
     }
 }

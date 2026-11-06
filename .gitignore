@@ -4,6 +4,7 @@ CLAUDE.md
 !packages/airmailai_web/static/legal/third-party-licenses.txt
 !packages/airmailai_ext/public/third-party-licenses.txt
 !packages/airmailai_web/static/robots.txt
+!packages/airmailai_web/static/security.txt
 
 # dependencies
 node_modules/

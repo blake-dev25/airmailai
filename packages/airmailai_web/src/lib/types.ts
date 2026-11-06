@@ -6,12 +6,14 @@ import type {
 
 export type Message = AirmailAIMessage;
 
+export type ChatLoadState = 'unloaded' | 'loading' | 'loaded';
+
 export interface Chat {
     customModel: CustomModelConfig | null;
     id: string;
     title: string;
     messages: AirmailAIMessage[];
-    messagesLoaded: boolean;
+    loadState: ChatLoadState;
     createdAt: number;
     lastMessageAt?: number;
     revision?: number;
@@ -26,7 +28,6 @@ export interface Chat {
     webFetch: boolean;
     codeExecution: boolean;
     draftAttachments?: DraftAttachment[];
-    streamingText?: string | null;
 }
 
 export interface SearchResult {
