@@ -16,6 +16,7 @@ export type Provider = FirstPartyProviderId;
 export interface DerivedThinking {
     levels: ThinkingLevel[];
     defaultLevel: ThinkingLevel;
+    defaultGuessed?: boolean;
     adaptive?: 'optional' | 'required';
 }
 
@@ -31,7 +32,6 @@ export interface DerivedModel {
     defaultTemperature?: number;
     tools?: ModelTools;
     created?: number;
-    shutdownDate?: string;
     notes: string[];
 }
 
@@ -50,6 +50,10 @@ interface OpenRouterRawModel {
         max_completion_tokens?: number;
     };
     supported_parameters?: string[];
+    reasoning?: {
+        supported_efforts?: string[];
+        default_effort?: string | null;
+    } | null;
 }
 
 export interface OpenRouterModelInfo {
@@ -64,17 +68,23 @@ export interface OpenRouterModelInfo {
     inputModalities: string[];
     outputModalities: string[];
     supportedParams: string[];
+    reasoningEfforts: ThinkingLevel[];
+    defaultReasoningEffort: ThinkingLevel | undefined;
 }
 
 export interface OpenRouterIndex {
     byProvider: Map<string, Map<string, OpenRouterModelInfo>>;
 }
 
-export type ModelProbeStatus = 'ok' | 'grandfathered' | 'dead';
-export interface ModelProbeResult {
-    status: ModelProbeStatus;
-    code: string;
+export interface SkippedModel {
+    id: string;
+    reason: string;
 }
+
+export type ModelProbeResult =
+    | { status: 'ok' | 'grandfathered' | 'dead'; code: string }
+    | { status: 'unsupported'; code: string; message: string };
+export type ModelProbeStatus = ModelProbeResult['status'];
 
 export const OPENROUTER_URL = 'https://openrouter.ai/api/v1/models';
 export const WEBPAGE_SCRAPE_DELAY_MS = 2000;
@@ -94,6 +104,10 @@ const FALLBACK_REASONING_LEVELS: ThinkingLevel[] = ['none', 'low', 'high'];
 export function sortLevels(levels: ThinkingLevel[]): ThinkingLevel[] {
     const set = new Set(levels);
     return LEVEL_ORDER.filter((l) => set.has(l));
+}
+
+export function isThinkingLevel(value: string): value is ThinkingLevel {
+    return LEVEL_ORDER.some((level) => level === value);
 }
 
 export function fallbackReasoningThinking(): DerivedThinking {
@@ -173,6 +187,21 @@ export function printIdList(header: string, ids: string[]): void {
 export function idListWarning(header: string, ids: string[]): string[] {
     if (ids.length === 0) return [];
     return [`${header}\n${ids.map((id) => `   - ${id}`).join('\n')}`];
+}
+
+export function unpublishedNewIdWarning(
+    newIds: readonly string[],
+    skipped: readonly SkippedModel[]
+): string[] {
+    const reasons = new Map(skipped.map((s) => [s.id, s.reason]));
+    const lines = newIds.flatMap((id) => {
+        const reason = reasons.get(id);
+        return reason === undefined ? [] : [`${id} - ${reason}`];
+    });
+    return idListWarning(
+        `${lines.length} newly observed id(s) not published:`,
+        lines
+    );
 }
 
 export function assertSafeModelId(id: string): void {
@@ -348,6 +377,7 @@ export async function fetchOpenRouterIndex(): Promise<OpenRouterIndex> {
         const provider = rawProvider?.replace(/^~/, '');
         const localId = rest.join('/');
         if (!provider || !localId) continue;
+        const defaultEffort = raw.reasoning?.default_effort;
         const info: OpenRouterModelInfo = {
             id: raw.id,
             provider,
@@ -361,6 +391,13 @@ export async function fetchOpenRouterIndex(): Promise<OpenRouterIndex> {
             inputModalities: raw.architecture?.input_modalities ?? [],
             outputModalities: raw.architecture?.output_modalities ?? [],
             supportedParams: raw.supported_parameters ?? [],
+            reasoningEfforts: sortLevels(
+                (raw.reasoning?.supported_efforts ?? []).filter(isThinkingLevel)
+            ),
+            defaultReasoningEffort:
+                defaultEffort && isThinkingLevel(defaultEffort)
+                    ? defaultEffort
+                    : undefined,
         };
         let providerMap = byProvider.get(provider);
         if (!providerMap) {

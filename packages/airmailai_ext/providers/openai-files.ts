@@ -36,7 +36,6 @@ export async function listOpenAIFiles(
         files.push({
             fileId: file.id,
             filename: file.filename,
-            mediaType: '',
             sizeBytes: file.bytes,
             createdAt: file.created_at * 1000,
         });

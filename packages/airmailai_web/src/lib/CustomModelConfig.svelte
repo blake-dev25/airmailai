@@ -3,6 +3,7 @@
     import { appLifecycle } from './appLifecycle.svelte';
     import { CUSTOM_PROVIDER_TOOLS } from './models/custom';
     import { settingsStore } from './settingsStore.svelte';
+    import ToggleSwitch from './ToggleSwitch.svelte';
 
     let { config }: { config: CustomModelConfig } = $props();
     let provider = $derived(settingsStore.providerId);
@@ -22,7 +23,9 @@
         label: string;
     }[]);
     let fields = $derived([
-        { key: 'temperature', label: 'Temperature' },
+        ...(provider !== 'anthropic'
+            ? [{ key: 'temperature', label: 'Temperature' }]
+            : []),
         { key: 'maxTokens', label: 'Max Output Tokens' },
         ...(provider !== 'anthropic' || config.adaptiveThinking
             ? [{ key: 'thinkingLevel', label: 'Thinking Level' }]
@@ -92,22 +95,14 @@
         <label for={`custom-${toggle.key}`} class="text-sm font-medium text-fg"
             >{toggle.label}</label
         >
-        <button
+        <ToggleSwitch
             id={`custom-${toggle.key}`}
-            type="button"
-            class={[
-                'toggle-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
-                config[toggle.key] === true && 'on',
-            ]}
-            role="switch"
-            aria-checked={config[toggle.key] === true}
-            aria-label={toggle.label}
+            checked={config[toggle.key] === true}
+            label={toggle.label}
             disabled={appLifecycle.bootPhase !== 'ready'}
-            onclick={() => {
-                config[toggle.key] = config[toggle.key] !== true;
+            onchange={(checked) => {
+                config[toggle.key] = checked;
             }}
-        >
-            <span class="toggle-switch-thumb"></span>
-        </button>
+        />
     </div>
 {/each}

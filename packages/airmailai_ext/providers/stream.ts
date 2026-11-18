@@ -1,11 +1,15 @@
-import type { AirmailAIChunk, ProviderStreamArgs } from '@airmailai/shared';
+import type {
+    AirmailAIChunk,
+    ProviderId,
+    ProviderStreamArgs,
+} from '@airmailai/shared';
 import { streamAnthropic } from './anthropic';
 import { streamGoogle } from './google';
 import { streamOpenAI } from './openai';
 import { streamOpenRouter } from './openrouter';
 
 export function streamProvider(
-    provider: string,
+    provider: ProviderId,
     args: ProviderStreamArgs
 ): AsyncIterable<AirmailAIChunk> {
     switch (provider) {

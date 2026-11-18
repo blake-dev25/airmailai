@@ -34,7 +34,13 @@ function rawToOption(m: OpenRouterModel): ModelOption {
                   }
                 : {}),
         },
-        tools: { webSearch: true, webFetch: true },
+        tools: {
+            webSearch: true,
+            webFetch: true,
+            ...(m.supportedParams.includes('tools')
+                ? { codeExecution: true }
+                : {}),
+        },
     };
 }
 

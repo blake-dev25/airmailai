@@ -1,6 +1,6 @@
 {
     "schemaVersion": 1,
-    "generatedAt": "2026-11-06T20:58:13.067Z",
+    "generatedAt": "2026-11-17T19:51:05.800Z",
     "providers": {
         "anthropic": [
             {
@@ -40,7 +40,6 @@
                     "knowledgeCutoff": "Jun 2026",
                     "thinking": {
                         "levels": [
-                            "none",
                             "low",
                             "medium",
                             "high",
@@ -67,7 +66,33 @@
                     "knowledgeCutoff": "Jun 2026",
                     "thinking": {
                         "levels": [
-                            "none",
+                            "minimal",
+                            "low",
+                            "medium",
+                            "high",
+                            "xhigh",
+                            "max"
+                        ],
+                        "defaultLevel": "high",
+                        "adaptive": "required"
+                    }
+                },
+                "tools": {
+                    "webSearch": "web_search_20260318",
+                    "webFetch": "web_fetch_20260318",
+                    "codeExecution": "code_execution_20260521"
+                }
+            },
+            {
+                "id": "claude-fable-5-2",
+                "name": "Claude Fable 5.2",
+                "params": {
+                    "contextWindow": 1000000,
+                    "maxOutputTokens": 128000,
+                    "defaultMaxTokens": 8192,
+                    "knowledgeCutoff": "Jun 2026",
+                    "thinking": {
+                        "levels": [
                             "low",
                             "medium",
                             "high",
@@ -94,7 +119,6 @@
                     "knowledgeCutoff": "Jun 2026",
                     "thinking": {
                         "levels": [
-                            "none",
                             "low",
                             "medium",
                             "high",
@@ -252,8 +276,6 @@
                     "contextWindow": 1000000,
                     "maxOutputTokens": 128000,
                     "defaultMaxTokens": 8192,
-                    "temperatureMax": 1,
-                    "defaultTemperature": 1,
                     "knowledgeCutoff": "May 2025",
                     "thinking": {
                         "levels": [
@@ -280,8 +302,6 @@
                     "contextWindow": 1000000,
                     "maxOutputTokens": 128000,
                     "defaultMaxTokens": 8192,
-                    "temperatureMax": 1,
-                    "defaultTemperature": 1,
                     "knowledgeCutoff": "Aug 2025",
                     "thinking": {
                         "levels": [
@@ -308,8 +328,6 @@
                     "contextWindow": 200000,
                     "maxOutputTokens": 64000,
                     "defaultMaxTokens": 8192,
-                    "temperatureMax": 1,
-                    "defaultTemperature": 1,
                     "knowledgeCutoff": "Feb 2025",
                     "thinking": {
                         "levels": [
@@ -334,8 +352,6 @@
                     "contextWindow": 200000,
                     "maxOutputTokens": 64000,
                     "defaultMaxTokens": 8192,
-                    "temperatureMax": 1,
-                    "defaultTemperature": 1,
                     "knowledgeCutoff": "May 2025",
                     "thinking": {
                         "levels": [
@@ -360,8 +376,6 @@
                     "contextWindow": 200000,
                     "maxOutputTokens": 64000,
                     "defaultMaxTokens": 8192,
-                    "temperatureMax": 1,
-                    "defaultTemperature": 1,
                     "knowledgeCutoff": "Jan 2025",
                     "thinking": {
                         "levels": [
@@ -381,6 +395,46 @@
             }
         ],
         "openai": [
+            {
+                "id": "gpt-6.2-astra",
+                "name": "GPT-6.2 Astra",
+                "params": {
+                    "contextWindow": 1050000,
+                    "maxOutputTokens": 128000,
+                    "defaultMaxTokens": 8192,
+                    "knowledgeCutoff": "May 2026",
+                    "thinking": {
+                        "levels": [
+                            "low",
+                            "medium",
+                            "high",
+                            "xhigh",
+                            "max"
+                        ],
+                        "defaultLevel": "medium"
+                    }
+                }
+            },
+            {
+                "id": "gpt-6.2-sol",
+                "name": "GPT-6.2 Sol",
+                "params": {
+                    "contextWindow": 1050000,
+                    "maxOutputTokens": 128000,
+                    "defaultMaxTokens": 8192,
+                    "knowledgeCutoff": "Jun 2026",
+                    "thinking": {
+                        "levels": [
+                            "low",
+                            "medium",
+                            "high",
+                            "xhigh",
+                            "max"
+                        ],
+                        "defaultLevel": "medium"
+                    }
+                }
+            },
             {
                 "id": "gpt-6.1-sol",
                 "name": "GPT-6.1 Sol",
@@ -438,7 +492,7 @@
                             "xhigh",
                             "max"
                         ],
-                        "defaultLevel": "low"
+                        "defaultLevel": "medium"
                     }
                 }
             },
@@ -679,7 +733,7 @@
                             "high",
                             "xhigh"
                         ],
-                        "defaultLevel": "none"
+                        "defaultLevel": "medium"
                     }
                 }
             },
@@ -755,7 +809,7 @@
                             "medium",
                             "high"
                         ],
-                        "defaultLevel": "minimal"
+                        "defaultLevel": "medium"
                     }
                 }
             },
@@ -774,7 +828,7 @@
                             "medium",
                             "high"
                         ],
-                        "defaultLevel": "minimal"
+                        "defaultLevel": "medium"
                     }
                 }
             },
@@ -793,7 +847,7 @@
                             "medium",
                             "high"
                         ],
-                        "defaultLevel": "minimal"
+                        "defaultLevel": "medium"
                     }
                 }
             },
@@ -906,13 +960,51 @@
                     "contextWindow": 1048576,
                     "maxOutputTokens": 32768,
                     "defaultMaxTokens": 8192,
+                    "knowledgeCutoff": "Mar 2026",
                     "thinking": {
                         "levels": [
-                            "none",
                             "low",
+                            "medium",
                             "high"
                         ],
-                        "defaultLevel": "none"
+                        "defaultLevel": "medium"
+                    }
+                }
+            },
+            {
+                "id": "gemini-4-carbon",
+                "name": "Gemini 4 Carbon",
+                "params": {
+                    "contextWindow": 1048576,
+                    "maxOutputTokens": 32768,
+                    "defaultMaxTokens": 8192,
+                    "knowledgeCutoff": "Mar 2026",
+                    "thinking": {
+                        "levels": [
+                            "low",
+                            "medium",
+                            "high"
+                        ],
+                        "defaultLevel": "medium"
+                    }
+                }
+            },
+            {
+                "id": "gemini-4-hydrogen",
+                "name": "Gemini 4 Hydrogen",
+                "params": {
+                    "contextWindow": 1048576,
+                    "maxOutputTokens": 65536,
+                    "defaultMaxTokens": 8192,
+                    "knowledgeCutoff": "Mar 2026",
+                    "thinking": {
+                        "levels": [
+                            "low",
+                            "medium",
+                            "high",
+                            "xhigh"
+                        ],
+                        "defaultLevel": "high"
                     }
                 }
             },
@@ -926,11 +1018,11 @@
                     "knowledgeCutoff": "Mar 2026",
                     "thinking": {
                         "levels": [
-                            "none",
                             "low",
+                            "medium",
                             "high"
                         ],
-                        "defaultLevel": "none"
+                        "defaultLevel": "medium"
                     }
                 }
             },
@@ -962,11 +1054,12 @@
                     "knowledgeCutoff": "Mar 2026",
                     "thinking": {
                         "levels": [
-                            "none",
+                            "minimal",
                             "low",
+                            "medium",
                             "high"
                         ],
-                        "defaultLevel": "none"
+                        "defaultLevel": "medium"
                     }
                 }
             },
@@ -999,11 +1092,12 @@
                     "knowledgeCutoff": "Mar 2026",
                     "thinking": {
                         "levels": [
-                            "none",
+                            "minimal",
                             "low",
+                            "medium",
                             "high"
                         ],
-                        "defaultLevel": "none"
+                        "defaultLevel": "minimal"
                     }
                 }
             },
@@ -1052,11 +1146,11 @@
                     "defaultMaxTokens": 8192,
                     "thinking": {
                         "levels": [
-                            "none",
                             "low",
+                            "medium",
                             "high"
                         ],
-                        "defaultLevel": "none"
+                        "defaultLevel": "high"
                     }
                 }
             },
@@ -1069,30 +1163,12 @@
                     "defaultMaxTokens": 8192,
                     "thinking": {
                         "levels": [
-                            "none",
+                            "minimal",
                             "low",
+                            "medium",
                             "high"
                         ],
-                        "defaultLevel": "none"
-                    }
-                }
-            },
-            {
-                "id": "gemini-2.5-computer-use-preview-10-2025",
-                "name": "Gemini 2.5 Computer Use Preview 10-2025",
-                "params": {
-                    "contextWindow": 131072,
-                    "maxOutputTokens": 65536,
-                    "defaultMaxTokens": 8192,
-                    "temperatureMax": 2,
-                    "defaultTemperature": 1,
-                    "thinking": {
-                        "levels": [
-                            "none",
-                            "low",
-                            "high"
-                        ],
-                        "defaultLevel": "none"
+                        "defaultLevel": "high"
                     }
                 }
             },
@@ -1165,6 +1241,22 @@
                 }
             },
             {
+                "id": "gemini-nano-banana-2.1",
+                "name": "Nano Banana 2.1",
+                "params": {
+                    "contextWindow": 65536,
+                    "maxOutputTokens": 65536,
+                    "defaultMaxTokens": 8192,
+                    "thinking": {
+                        "levels": [
+                            "minimal",
+                            "high"
+                        ],
+                        "defaultLevel": "minimal"
+                    }
+                }
+            },
+            {
                 "id": "gemini-robotics-er-2-preview",
                 "name": "Gemini Robotics-ER 2 Preview",
                 "params": {
@@ -1174,11 +1266,12 @@
                     "knowledgeCutoff": "Jan 2025",
                     "thinking": {
                         "levels": [
-                            "none",
+                            "minimal",
                             "low",
+                            "medium",
                             "high"
                         ],
-                        "defaultLevel": "none"
+                        "defaultLevel": "high"
                     }
                 }
             },
@@ -1189,13 +1282,13 @@
                     "contextWindow": 65536,
                     "maxOutputTokens": 65536,
                     "defaultMaxTokens": 8192,
+                    "knowledgeCutoff": "Jan 2025",
                     "thinking": {
                         "levels": [
-                            "none",
-                            "low",
+                            "minimal",
                             "high"
                         ],
-                        "defaultLevel": "none"
+                        "defaultLevel": "minimal"
                     }
                 }
             },
@@ -1209,80 +1302,10 @@
                     "knowledgeCutoff": "Jan 2025",
                     "thinking": {
                         "levels": [
-                            "none",
-                            "low",
+                            "minimal",
                             "high"
                         ],
-                        "defaultLevel": "none"
-                    }
-                }
-            },
-            {
-                "id": "antigravity-preview-05-2026",
-                "name": "Antigravity Agent Preview",
-                "params": {
-                    "contextWindow": 1048576,
-                    "maxOutputTokens": 65536,
-                    "defaultMaxTokens": 8192
-                }
-            },
-            {
-                "id": "antigravity-preview-09-2026",
-                "name": "Antigravity Agent Preview",
-                "params": {
-                    "contextWindow": 1048576,
-                    "maxOutputTokens": 65536,
-                    "defaultMaxTokens": 8192
-                }
-            },
-            {
-                "id": "deep-research-max-preview-04-2026",
-                "name": "Deep Research Max Preview (Apr-21-2026)",
-                "params": {
-                    "contextWindow": 131072,
-                    "maxOutputTokens": 65536,
-                    "defaultMaxTokens": 8192,
-                    "thinking": {
-                        "levels": [
-                            "none",
-                            "low",
-                            "high"
-                        ],
-                        "defaultLevel": "none"
-                    }
-                }
-            },
-            {
-                "id": "deep-research-preview-04-2026",
-                "name": "Deep Research Preview (Apr-21-2026)",
-                "params": {
-                    "contextWindow": 131072,
-                    "maxOutputTokens": 65536,
-                    "defaultMaxTokens": 8192,
-                    "thinking": {
-                        "levels": [
-                            "none",
-                            "low",
-                            "high"
-                        ],
-                        "defaultLevel": "none"
-                    }
-                }
-            },
-            {
-                "id": "deep-research-pro-preview-12-2025",
-                "name": "Deep Research Pro Preview (Dec-12-2025) [Rerouted]",
-                "params": {
-                    "contextWindow": 131072,
-                    "maxOutputTokens": 65536,
-                    "defaultMaxTokens": 8192,
-                    "thinking": {
-                        "levels": [
-                            "none",
-                            "low",
-                            "high"
-                        ],
-                        "defaultLevel": "none"
+                        "defaultLevel": "minimal"
                     }
                 }
             },

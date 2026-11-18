@@ -41,13 +41,12 @@ const versionName = channelName
 
 export default defineConfig({
     vite: () => ({
-        logLevel: verbose ? 'info' : 'error',
+        logLevel: verbose ? 'info' : 'warn',
         define: {
             __LOG_LEVEL__: JSON.stringify(logLevel),
         },
         build: {
             sourcemap: true,
-            ...(verbose ? {} : { rollupOptions: { onwarn: () => {} } }),
         },
     }),
     zip: {

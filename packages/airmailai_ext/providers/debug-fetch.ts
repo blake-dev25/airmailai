@@ -1,3 +1,4 @@
+import type { ProviderId } from '@airmailai/shared';
 import { LOG_LEVEL, log } from '../debug';
 
 type FetchFn = (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>;
@@ -11,7 +12,7 @@ async function readRequestBody(
     return undefined;
 }
 
-function logRequestBody(provider: string, raw: string): void {
+function logRequestBody(provider: ProviderId, raw: string): void {
     try {
         log.debug(`${provider}: -> request`, JSON.parse(raw));
     } catch {
@@ -19,7 +20,7 @@ function logRequestBody(provider: string, raw: string): void {
     }
 }
 
-export function makeDebugFetch(provider: string): FetchFn | undefined {
+export function makeDebugFetch(provider: ProviderId): FetchFn | undefined {
     if (LOG_LEVEL !== 'all') return undefined;
     return async (input, init) => {
         const raw = await readRequestBody(input, init);

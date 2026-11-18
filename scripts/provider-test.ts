@@ -7,7 +7,9 @@ import type {
     ProviderStream,
 } from '@airmailai/shared';
 import type { ThinkingLevel } from '../packages/airmailai_web/src/lib/models';
+import { assertKnownFlags, flagValue } from './cli-flags';
 import { loadLocalProviders } from './model-list/models-file';
+import { ANTHROPIC_TOOLS_LATEST } from './model-list/overrides';
 
 const PROVIDERS = loadLocalProviders();
 
@@ -29,12 +31,12 @@ const TOOL_WIRE: Record<
 > = {
     openai: { web_search: true, web_fetch: true, code_execution: true },
     anthropic: {
-        web_search: 'web_search_20260209',
-        web_fetch: 'web_fetch_20260209',
-        code_execution: 'code_execution_20260120',
+        web_search: ANTHROPIC_TOOLS_LATEST.webSearch ?? null,
+        web_fetch: ANTHROPIC_TOOLS_LATEST.webFetch ?? null,
+        code_execution: ANTHROPIC_TOOLS_LATEST.codeExecution ?? null,
     },
     google: { web_search: true, web_fetch: true, code_execution: true },
-    openrouter: { web_search: true, web_fetch: true, code_execution: null },
+    openrouter: { web_search: true, web_fetch: true, code_execution: true },
 };
 
 const WIRE_KEY: Record<ToolName, 'webSearch' | 'webFetch' | 'codeExecution'> = {
@@ -50,7 +52,7 @@ const WIRE_KEY: Record<ToolName, 'webSearch' | 'webFetch' | 'codeExecution'> = {
 // surfaced it. To regenerate:
 //   python -c "import hashlib; print(hashlib.sha256('AirmailAI'.encode()).hexdigest())"
 const AIRMAILAI_SHA256 =
-    '59d1aef073ffe17cb27ad0bae25c9b75bb7a94b6aa98944563bbf45efd4dc8a8';
+    'af0ee59d2a627d4e3aac6123be7cb87e9e79c7df311fd7b46ef2c3255f1f0ab4';
 
 const DEFAULT_PROMPTS: Record<ToolName, string> = {
     web_search:
@@ -61,9 +63,20 @@ const DEFAULT_PROMPTS: Record<ToolName, string> = {
         "Use the code execution tool to compute the SHA-256 hex digest of the exact string 'AirmailAI' (no quotes, no trailing newline) using Python's hashlib. Do not compute it from memory. Print only the digest.",
 };
 
+const KNOWN_FLAGS = [
+    '--provider',
+    '--tool',
+    '--model',
+    '--input',
+    '--prompt',
+    '--thinking',
+    '--adaptive',
+    '--dump',
+    '--help',
+];
+
 function flag(name: string): string | undefined {
-    const i = process.argv.indexOf(name);
-    return i >= 0 ? process.argv[i + 1] : undefined;
+    return flagValue(process.argv.slice(2), name);
 }
 
 function thinkingDefaults(
@@ -276,6 +289,7 @@ async function main() {
         printHelp();
         return;
     }
+    assertKnownFlags(args, KNOWN_FLAGS);
 
     const providerArg = flag('--provider');
     if (!providerArg) {
@@ -312,7 +326,7 @@ async function main() {
         maxTokens: 4096,
     };
 
-    console.log(`=== ${provider} / ${model} · tool=${tool} ===`);
+    console.log(`=== ${provider} / ${model} - tool=${tool} ===`);
     console.log('--- TURN 1 ---');
     const t1 = await runTurn(
         stream,

@@ -1,4 +1,6 @@
-import { resolve } from 'node:path';
+import { existsSync, readdirSync, realpathSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { assertKnownFlags } from './cli-flags';
 
 const ROOT = resolve(import.meta.dir, '..');
 const OUTPUTS = [
@@ -9,9 +11,13 @@ const OUTPUTS = [
     ),
     resolve(ROOT, 'packages/airmailai_ext/public/third-party-licenses.txt'),
 ];
-const WRITE = process.argv.includes('--write');
+const args = process.argv.slice(2);
+const WRITE = args.includes('--write');
 
 const BUNDLED_PACKAGES = ['airmailai_web', 'airmailai_ext'];
+const WORKSPACE_SCOPE = '@airmailai/';
+const LICENSE_FILE = /^(licen[sc]e|copying)([-.].*)?$/i;
+const NOTICE_FILE = /^notice([-.].*)?$/i;
 
 // *** For dual/multi-licensed packages (SPDX "X OR Y"), the licensee picks which
 // terms to comply with. We record our choice here so the attribution states a
@@ -24,13 +30,16 @@ const LICENSE_ELECTIONS: Record<string, string> = {
 interface PkgJson {
     name?: string;
     version?: string;
-    license?: string;
+    license?: unknown;
+    licenses?: unknown;
     author?: string | { name?: string };
     dependencies?: Record<string, string>;
+    optionalDependencies?: Record<string, string>;
 }
 
 interface Attribution {
     name: string;
+    version: string | null;
     license: string;
     copyright: string;
     licenseText: string;
@@ -70,6 +79,7 @@ const KNOWN_LICENSE_TEXTS: Record<string, string> = {
 const VENDORED_ATTRIBUTIONS: Attribution[] = [
     {
         name: 'Solarized (color palette)',
+        version: null,
         license: 'MIT',
         copyright: 'Copyright (c) 2011 Ethan Schoonover',
         licenseText: [
@@ -103,57 +113,84 @@ async function readJson<T>(path: string): Promise<T | null> {
     return JSON.parse(await file.text()) as T;
 }
 
-async function collectDepNames(): Promise<string[]> {
-    const names = new Set<string>();
-    for (const pkg of BUNDLED_PACKAGES) {
-        const json = await readJson<PkgJson>(
-            resolve(ROOT, 'packages', pkg, 'package.json')
-        );
-        for (const dep of Object.keys(json?.dependencies ?? {})) {
-            if (dep.startsWith('@airmailai/')) continue;
-            names.add(dep);
+function findInstalledDir(name: string, fromDir: string): string | null {
+    let dir = fromDir;
+    for (;;) {
+        const candidate = resolve(dir, 'node_modules', name);
+        if (existsSync(resolve(candidate, 'package.json'))) {
+            return realpathSync(candidate);
+        }
+        const parent = dirname(dir);
+        if (parent === dir) return null;
+        dir = parent;
+    }
+}
+
+async function collectPackageDirs(): Promise<string[]> {
+    const queue = BUNDLED_PACKAGES.map((pkg) =>
+        realpathSync(resolve(ROOT, 'packages', pkg))
+    );
+    const seen = new Set(queue);
+    const thirdParty: string[] = [];
+    for (let dir = queue.pop(); dir !== undefined; dir = queue.pop()) {
+        const json = await readJson<PkgJson>(resolve(dir, 'package.json'));
+        if (!json?.name) throw new Error(`No package name in ${dir}`);
+        const isOurs =
+            BUNDLED_PACKAGES.includes(json.name) ||
+            json.name.startsWith(WORKSPACE_SCOPE);
+        if (!isOurs) thirdParty.push(dir);
+        const edges = [
+            { deps: json.dependencies, optional: false },
+            { deps: json.optionalDependencies, optional: true },
+        ];
+        for (const { deps, optional } of edges) {
+            for (const dep of Object.keys(deps ?? {})) {
+                const depDir = findInstalledDir(dep, dir);
+                if (!depDir) {
+                    if (optional) continue;
+                    throw new Error(
+                        `Package "${dep}" (required by ${json.name}) not found in node_modules - run bun install first.`
+                    );
+                }
+                if (seen.has(depDir)) continue;
+                seen.add(depDir);
+                queue.push(depDir);
+            }
         }
     }
-    return [...names].sort();
+    return thirdParty;
 }
 
-async function findPackageDir(name: string): Promise<string | null> {
-    for (const base of [
-        resolve(ROOT, 'node_modules'),
-        ...BUNDLED_PACKAGES.map((p) =>
-            resolve(ROOT, 'packages', p, 'node_modules')
-        ),
-    ]) {
-        const dir = resolve(base, name);
-        if (await Bun.file(resolve(dir, 'package.json')).exists()) return dir;
+async function readMatchingFiles(
+    dir: string,
+    pattern: RegExp
+): Promise<string | null> {
+    const names = readdirSync(dir, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && pattern.test(entry.name))
+        .map((entry) => entry.name)
+        .sort();
+    const texts: string[] = [];
+    for (const name of names) {
+        const text = (await Bun.file(resolve(dir, name)).text()).trim();
+        if (text) texts.push(names.length > 1 ? `[${name}]\n\n${text}` : text);
     }
-    return null;
+    return texts.length > 0 ? texts.join('\n\n') : null;
 }
 
-async function readLicenseText(dir: string): Promise<string | null> {
-    for (const candidate of [
-        'LICENSE',
-        'LICENSE.md',
-        'LICENSE.txt',
-        'license',
-        'License',
-        'LICENSE-MIT',
-    ]) {
-        const file = Bun.file(resolve(dir, candidate));
-        if (await file.exists()) return (await file.text()).trim();
-    }
-    return null;
-}
-
-async function readNoticeText(dir: string): Promise<string | null> {
-    for (const candidate of ['NOTICE', 'NOTICE.txt', 'NOTICE.md', 'notice']) {
-        const file = Bun.file(resolve(dir, candidate));
-        if (await file.exists()) {
-            const text = (await file.text()).trim();
-            if (text) return text;
+function declaredLicense(json: PkgJson): string | null {
+    const typeOf = (value: unknown): string | null => {
+        if (typeof value === 'string') return value;
+        if (value && typeof value === 'object' && 'type' in value) {
+            return typeof value.type === 'string' ? value.type : null;
         }
-    }
-    return null;
+        return null;
+    };
+    const single = typeOf(json.license);
+    if (single) return single;
+    if (!Array.isArray(json.licenses)) return null;
+    const types = json.licenses.flatMap((entry) => typeOf(entry) ?? []);
+    if (types.length === 0) return null;
+    return types.length === 1 ? types[0] : `(${types.join(' OR ')})`;
 }
 
 function authorName(author: PkgJson['author']): string | undefined {
@@ -173,17 +210,22 @@ function deriveCopyright(licenseText: string | null, author?: string): string {
     return 'Copyright held by the package author(s).';
 }
 
-async function buildAttribution(name: string): Promise<Attribution> {
-    const dir = await findPackageDir(name);
-    if (!dir) {
+async function buildAttribution(dir: string): Promise<Attribution> {
+    const json = (await readJson<PkgJson>(resolve(dir, 'package.json')))!;
+    const name = json.name!;
+    const licenseText = await readMatchingFiles(dir, LICENSE_FILE);
+    const declared = declaredLicense(json);
+    if (!declared) {
         throw new Error(
-            `Package "${name}" not found in node_modules - run bun install first.`
+            `Package "${name}" declares no license in its package.json.`
         );
     }
-    const json = (await readJson<PkgJson>(resolve(dir, 'package.json')))!;
-    const licenseText = await readLicenseText(dir);
-    const declared = json.license ?? 'UNKNOWN';
     const license = LICENSE_ELECTIONS[declared] ?? declared;
+    if (/\sOR\s/.test(license)) {
+        throw new Error(
+            `Package "${name}" is offered under "${declared}" - record the license we rely on in LICENSE_ELECTIONS.`
+        );
+    }
     const resolvedText = licenseText ?? KNOWN_LICENSE_TEXTS[license];
     if (!resolvedText) {
         throw new Error(
@@ -192,11 +234,35 @@ async function buildAttribution(name: string): Promise<Attribution> {
     }
     return {
         name,
+        version: json.version ?? null,
         license,
         copyright: deriveCopyright(licenseText, authorName(json.author)),
         licenseText: resolvedText,
-        notice: await readNoticeText(dir),
+        notice: await readMatchingFiles(dir, NOTICE_FILE),
     };
+}
+
+function mergeVersions(attributions: Attribution[]): Attribution[] {
+    const byName = new Map<string, Map<string, Attribution>>();
+    for (const a of attributions) {
+        const terms = JSON.stringify([
+            a.license,
+            a.copyright,
+            a.licenseText,
+            a.notice,
+        ]);
+        const distinct = byName.get(a.name) ?? new Map<string, Attribution>();
+        if (!distinct.has(terms)) distinct.set(terms, a);
+        byName.set(a.name, distinct);
+    }
+    return [...byName.values()].flatMap((distinct) =>
+        distinct.size === 1
+            ? [...distinct.values()]
+            : [...distinct.values()].map((a) => ({
+                  ...a,
+                  name: `${a.name} ${a.version}`,
+              }))
+    );
 }
 
 function render(attributions: Attribution[]): string {
@@ -205,14 +271,15 @@ function render(attributions: Attribution[]): string {
     lines.push('==============================');
     lines.push('');
     lines.push(
-        'AirmailAI bundles the following third-party software at runtime. Each'
+        'AirmailAI is built from the following third-party software: its runtime'
     );
     lines.push(
-        'entry lists the package, its copyright owner, and the license it ships'
+        'dependencies and everything they depend on in turn. Each entry lists the'
     );
     lines.push(
-        'under. The full text of each distinct license follows at the bottom.'
+        'package, its copyright owner, and the license it ships under. The full'
     );
+    lines.push('text of each distinct license follows at the bottom.');
     lines.push('');
     lines.push(
         'This file is generated by scripts/gen-third-party-licenses.ts - do not'
@@ -254,9 +321,10 @@ function render(attributions: Attribution[]): string {
 }
 
 async function main(): Promise<void> {
-    const names = await collectDepNames();
+    assertKnownFlags(args, ['--write']);
+    const dirs = await collectPackageDirs();
     const attributions = [
-        ...(await Promise.all(names.map(buildAttribution))),
+        ...mergeVersions(await Promise.all(dirs.map(buildAttribution))),
         ...VENDORED_ATTRIBUTIONS,
     ].sort((a, b) => a.name.localeCompare(b.name));
 

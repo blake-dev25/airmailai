@@ -1,4 +1,5 @@
-import { formatErr, reportAppError } from './errorStore.svelte';
+import { errorMessage } from '@airmailai/shared';
+import { reportAppError } from './errorStore.svelte';
 
 export type AsyncResourceState<T> =
     | { status: 'idle' }
@@ -35,7 +36,7 @@ export class AsyncResource<T> {
             }
         } catch (err) {
             if (generation !== this.generation) return;
-            this.state = { status: 'error', message: formatErr(err) };
+            this.state = { status: 'error', message: errorMessage(err) };
             if (report) reportAppError(report.context, report.userMessage, err);
         }
     }

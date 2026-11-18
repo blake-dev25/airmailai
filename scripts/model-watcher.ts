@@ -1,7 +1,10 @@
+import { assertKnownFlags } from './cli-flags';
 import { notify, updateEmbeds, watcherEmbeds } from './model-list/discord';
 import {
     LOCAL_MODELS_FILE,
     LOCAL_STATE_DIR,
+    SNAPSHOT_PREFIX,
+    SNAPSHOT_RETENTION_MS,
     resolveAwsConfig,
 } from './model-list/env';
 import {
@@ -9,6 +12,7 @@ import {
     s3ModelsFileTarget,
 } from './model-list/models-file';
 import { FsStateStore, S3StateStore } from './model-list/state-store';
+import { syncLocalTiersFile } from './model-list/tiers-file';
 import { assertUpdateSucceeded, runUpdate } from './model-list/update';
 import {
     acknowledgeModels,
@@ -21,6 +25,7 @@ const LOCAL = args.includes('--local');
 const UPDATE = args.includes('--update');
 
 async function main(): Promise<void> {
+    assertKnownFlags(args, ['--local', '--update']);
     const aws = resolveAwsConfig(LOCAL);
     const store = aws
         ? new S3StateStore(aws.stateBucket)
@@ -46,6 +51,7 @@ async function main(): Promise<void> {
                 refreshDocs: false,
                 refreshProbes: false,
                 retryNon200: false,
+                newIds: report.newIds,
             },
             { store, targets }
         );
@@ -58,6 +64,14 @@ async function main(): Promise<void> {
         );
         await notify(watcherEmbeds(report));
         await notify(updateEmbeds(update, 'watcher --update'));
+        await syncLocalTiersFile(update.file, true);
+        if (store instanceof FsStateStore) {
+            const pruned = await store.pruneOlderThan(
+                SNAPSHOT_PREFIX,
+                SNAPSHOT_RETENTION_MS
+            );
+            if (pruned > 0) console.log(`pruned ${pruned} expired snapshot(s)`);
+        }
         assertUpdateSucceeded(update);
     } else if (providers.length > 0) {
         console.log(

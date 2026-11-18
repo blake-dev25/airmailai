@@ -1,4 +1,4 @@
-import { non200Expired } from './probe-cache';
+import { cacheExpired } from './probe-cache';
 import type { Provider } from './shared';
 import type { StateStore } from './state-store';
 
@@ -11,6 +11,8 @@ interface DocsCacheOptions {
     refresh: boolean;
     retryNon200: boolean;
 }
+
+export const UNPARSED_DOCS_CODE = 'unparsed';
 
 interface StoredFailure {
     cacheResult: 'non-200';
@@ -78,8 +80,18 @@ export class DocsCache {
         return new DocsCache(store, sections, options);
     }
 
-    section<T>(provider: Provider): DocsCacheSection<T> {
+    section<T>(
+        provider: Provider,
+        isComplete: (value: T) => boolean = () => true
+    ): DocsCacheSection<T> {
         const store = this.sections[provider];
+        const storeFailure = (key: string, code: string) => {
+            store[key] = {
+                cacheResult: 'non-200',
+                code,
+                cachedAt: Date.now(),
+            } satisfies StoredFailure;
+        };
         return {
             keys: () => Object.keys(store),
             get: (key) => {
@@ -89,28 +101,26 @@ export class DocsCache {
                 if (isStoredFailure(stored)) {
                     if (
                         this.options.retryNon200 ||
-                        non200Expired(stored.cachedAt, Date.now())
+                        cacheExpired(stored.cachedAt, Date.now())
                     )
                         return undefined;
                     return { code: stored.code, value: null };
                 }
+                if (!isComplete(stored as T)) return undefined;
                 return { code: '200', value: stored as T };
             },
             set: (key, outcome) => {
-                if (outcome.code === '200') {
-                    if (outcome.value === null) {
-                        throw new Error(
-                            'Cannot cache a 200 docs result without data'
-                        );
-                    }
-                    store[key] = outcome.value;
+                if (outcome.code !== '200') {
+                    storeFailure(key, outcome.code);
                     return;
                 }
-                store[key] = {
-                    cacheResult: 'non-200',
-                    code: outcome.code,
-                    cachedAt: Date.now(),
-                } satisfies StoredFailure;
+                if (outcome.value === null) {
+                    throw new Error(
+                        'Cannot cache a 200 docs result without data'
+                    );
+                }
+                if (isComplete(outcome.value)) store[key] = outcome.value;
+                else storeFailure(key, UNPARSED_DOCS_CODE);
             },
         };
     }

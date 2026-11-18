@@ -99,15 +99,13 @@ export function sortProviders(providers: ProviderOption[]): ProviderOption[] {
 const FILTER_RANK: Record<VisibleModelTier, number> = {
     new: 0,
     latest: 1,
-    previous: 2,
-    legacy: 3,
+    legacy: 2,
 };
 
 const DEFAULT_RANK: Record<VisibleModelTier, number> = {
     latest: 0,
     new: 1,
-    previous: 2,
-    legacy: 3,
+    legacy: 2,
 };
 
 export function modelMatchesTier(

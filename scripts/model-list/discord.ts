@@ -57,11 +57,12 @@ export function batchDiscordEmbeds(embeds: DiscordEmbed[]): DiscordEmbed[][] {
     return batches;
 }
 
-function codeBlock(text: string): string {
+export function codeBlock(text: string): string {
+    const literal = text.replaceAll('```', "'''");
     const body =
-        text.length > DESCRIPTION_LIMIT
-            ? text.slice(0, DESCRIPTION_LIMIT - 4) + '\n...'
-            : text;
+        literal.length > DESCRIPTION_LIMIT
+            ? literal.slice(0, DESCRIPTION_LIMIT - 4) + '\n...'
+            : literal;
     return '```\n' + body + '\n```';
 }
 
@@ -78,7 +79,7 @@ export async function postDiscord(
                 'User-Agent':
                     'DiscordBot (https://github.com/blake-dev25, 0.1)',
             },
-            body: { embeds: batch },
+            body: { embeds: batch, allowed_mentions: { parse: [] } },
         });
         if (status < 200 || status >= 300) {
             throw new Error(

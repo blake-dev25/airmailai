@@ -30,8 +30,10 @@ import {
     type DerivedModel,
     type OpenRouterIndex,
     type Provider,
+    type SkippedModel,
     fetchOpenRouterIndex,
     toModelOption,
+    unpublishedNewIdWarning,
 } from './shared';
 import type { StateStore } from './state-store';
 
@@ -48,6 +50,7 @@ export interface UpdateOptions {
     refreshDocs: boolean;
     refreshProbes: boolean;
     retryNon200: boolean;
+    newIds?: Partial<Record<Provider, string[]>>;
 }
 
 export interface UpdateContext {
@@ -91,6 +94,7 @@ interface PipelineDeps {
 
 interface PipelineOutput {
     models: DerivedModel[];
+    skipped: SkippedModel[];
     warnings: string[];
 }
 
@@ -111,7 +115,11 @@ async function runProviderPipeline(
         const result = await pipelineAnthropic(deps.docsCache, deps.probeCache);
         if (deps.verbose) printAnthropicSummary('Anthropic', result.models);
         else console.log(`Got ${result.models.length} models from Anthropic`);
-        return { models: result.models, warnings: anthropicWarnings(result) };
+        return {
+            models: result.models,
+            skipped: result.skipped,
+            warnings: anthropicWarnings(result),
+        };
     }
     if (provider === 'openai') {
         const result = await pipelineOpenAI(
@@ -125,7 +133,11 @@ async function runProviderPipeline(
                 `Got ${result.models.length} models from OpenAI (${result.skipped.length} skipped)`
             );
         }
-        return { models: result.models, warnings: openaiWarnings(result) };
+        return {
+            models: result.models,
+            skipped: result.skipped,
+            warnings: openaiWarnings(result),
+        };
     }
     const result = await pipelineGoogle(
         requireOpenRouter(deps),
@@ -138,7 +150,11 @@ async function runProviderPipeline(
             `Got ${result.models.length} models from Google (${result.skipped.length} skipped)`
         );
     }
-    return { models: result.models, warnings: googleWarnings(result) };
+    return {
+        models: result.models,
+        skipped: result.skipped,
+        warnings: googleWarnings(result),
+    };
 }
 
 async function loadBase(targets: ModelsFileTarget[]): Promise<LoadedBase> {
@@ -311,13 +327,18 @@ export async function runUpdate(
         if (!opts.providers.has(provider)) continue;
         console.log(`\n=== ${provider} ===`);
         try {
-            const { models, warnings } = await runProviderPipeline(
-                provider,
-                deps
-            );
+            const output = await runProviderPipeline(provider, deps);
+            const { models } = output;
             if (models.length === 0) {
                 throw new Error('pipeline derived 0 models');
             }
+            const warnings = [
+                ...unpublishedNewIdWarning(
+                    opts.newIds?.[provider] ?? [],
+                    output.skipped
+                ),
+                ...output.warnings,
+            ];
             await writeSnapshot(ctx.store, provider, models);
             const options = models.map(toModelOption);
             validateModelsFile({

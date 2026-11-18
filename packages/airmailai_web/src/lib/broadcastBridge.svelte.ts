@@ -1,6 +1,6 @@
 import type { BroadcastEvent } from '@airmailai/shared';
 import { chatStore } from './chatStore.svelte';
-import { reportAppError } from './errorStore.svelte';
+import { errorStore, reportAppError } from './errorStore.svelte';
 import {
     type BroadcastSync,
     clearFileBlobCache,
@@ -78,11 +78,7 @@ function handleBroadcastEvent(
             chatStore.applyRemoteTurnTruncate(event.chatId, event.charLen);
             return;
         case 'turn-warning':
-            reportAppError(
-                `turn cleanup warning (chatId=${event.chatId})`,
-                event.message,
-                new Error(event.message)
-            );
+            errorStore.setAppError(event.message);
             return;
         case 'files-changed':
             clearFileBlobCache();
@@ -92,7 +88,7 @@ function handleBroadcastEvent(
             reportAppError(
                 `draft replica upload failed (chatId=${event.chatId})`,
                 `Saved ${event.filename} on this device, but couldn't copy it to ${event.provider} storage (will retry when you send)`,
-                new Error(event.message)
+                event.message
             );
             return;
         case 'meta-changed':

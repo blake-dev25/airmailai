@@ -45,7 +45,7 @@ export default defineBackground(() => {
     );
 
     chrome.runtime.onConnectExternal.addListener((port) => {
-        if (port.name === 'file-transfer') {
+        if (port.name === 'file-transfer' || port.name === 'chat-import') {
             handleFileTransferPort(port);
             return;
         }

@@ -1,9 +1,11 @@
+import { ANTHROPIC_API_VERSION } from '../../packages/shared/src/providers';
 import { requireApiKey } from './env';
 import { HttpError, httpJson, httpRequest } from './http';
 import {
     type DerivedModel,
     type DerivedThinking,
     type ModelProbeResult,
+    type SkippedModel,
     type ThinkingLevel,
     MODEL_PROBE_DELAY_MS,
     WEBPAGE_SCRAPE_DELAY_MS,
@@ -31,7 +33,6 @@ import {
 import { type ProbeCache, splitCachedProbes } from './probe-cache';
 
 const ANTHROPIC_API = 'https://api.anthropic.com/v1';
-const ANTHROPIC_VERSION = '2023-06-01';
 const ANTHROPIC_MODELS_OVERVIEW_URL =
     'https://platform.claude.com/docs/en/models/overview.md';
 const ANTHROPIC_MODEL_PAGE_BASE = 'https://platform.claude.com/docs/en/models/';
@@ -39,31 +40,54 @@ const ANTHROPIC_TOOL_REFERENCE_URL =
     'https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference.md';
 
 interface AnthropicCapability {
-    supported?: boolean;
+    supported: boolean;
+}
+
+interface AnthropicServerTools extends AnthropicCapability {
+    web_search: AnthropicCapability;
+    code_execution: AnthropicCapability;
+}
+
+interface AnthropicCapabilities {
+    citations: AnthropicCapability;
+    code_execution: AnthropicCapability;
+    effort: AnthropicCapability &
+        Record<'low' | 'medium' | 'high' | 'max', AnthropicCapability> & {
+            xhigh: AnthropicCapability | null;
+        };
+    image_input: AnthropicCapability;
+    pdf_input: AnthropicCapability;
+    server_tools: AnthropicServerTools;
+    thinking: AnthropicCapability & {
+        types: Record<
+            'adaptive' | 'between_tools' | 'disabled' | 'enabled',
+            AnthropicCapability
+        >;
+    };
 }
 
 interface AnthropicRawModel {
     id: string;
     display_name: string;
-    created_at?: string;
-    max_input_tokens?: number | null;
-    max_tokens?: number | null;
-    capabilities?: {
-        thinking?: AnthropicCapability & {
-            types?: {
-                enabled?: AnthropicCapability;
-                adaptive?: AnthropicCapability;
-            };
-        };
-        effort?: AnthropicCapability &
-            Partial<
-                Record<
-                    'low' | 'medium' | 'high' | 'xhigh' | 'max',
-                    AnthropicCapability
-                >
-            >;
-    };
+    created_at: string;
+    max_input_tokens: number | null;
+    max_tokens: number | null;
+    capabilities: AnthropicCapabilities | null;
 }
+
+const ANTHROPIC_EFFORT_LEVELS = [
+    'low',
+    'medium',
+    'high',
+    'xhigh',
+    'max',
+] as const satisfies readonly ThinkingLevel[];
+
+const ANTHROPIC_CONTENT_CAPABILITIES = [
+    'image_input',
+    'pdf_input',
+    'citations',
+] as const;
 
 interface AnthropicModelsPage {
     data?: AnthropicRawModel[];
@@ -74,7 +98,7 @@ interface AnthropicModelsPage {
 function anthropicHeaders(): Record<string, string> {
     return {
         'x-api-key': requireApiKey('ANTHROPIC_API_KEY'),
-        'anthropic-version': ANTHROPIC_VERSION,
+        'anthropic-version': ANTHROPIC_API_VERSION,
     };
 }
 
@@ -288,7 +312,10 @@ async function applyAnthropicCutoffs(
     models: DerivedModel[],
     cache: DocsCache
 ): Promise<void> {
-    const pages = cache.section<AnthropicModelPage>('anthropic');
+    const pages = cache.section<AnthropicModelPage>(
+        'anthropic',
+        (page) => !!page.id && !!page.knowledgeCutoff
+    );
     const cutoffs = new Map<string, string>();
     const { hits } = splitCached(pages.keys(), pages, (slug) => slug);
     for (const { item, parsed } of hits) addPageCutoff(cutoffs, item, parsed);
@@ -325,7 +352,10 @@ async function applyAnthropicCutoffs(
 export interface AnthropicPipelineResult {
     models: DerivedModel[];
     dead: string[];
+    skipped: SkippedModel[];
     toolVersionWarnings: string[];
+    unpinnedWithoutToolCalling: string[];
+    unsupportedContent: string[];
 }
 
 export async function pipelineAnthropic(
@@ -336,13 +366,16 @@ export async function pipelineAnthropic(
     const toolVersionWarnings = await checkAnthropicToolVersions();
     for (const w of toolVersionWarnings) console.log(`WARN ${w}`);
 
-    const out: DerivedModel[] = [];
-    for (const m of await listAnthropicModels()) {
-        const d = deriveAnthropic(m);
-        const o = ANTHROPIC_OVERRIDES[d.id];
-        if (o) applyOverride(d, o);
-        out.push(d);
-    }
+    const listed = (await listAnthropicModels()).map((raw) => {
+        const model = deriveAnthropic(raw);
+        const override = ANTHROPIC_OVERRIDES[raw.id];
+        if (override) applyOverride(model, override);
+        if (raw.capabilities) {
+            restrictToServerTools(model, raw.capabilities.server_tools);
+        }
+        return { raw, model, toolsPinned: !!override?.tools };
+    });
+    const out = listed.map(({ model }) => model);
     await applyAnthropicCutoffs(out, docsCache);
     const probeSection = probeCache.section('anthropic');
     const { hits, misses } = splitCachedProbes(
@@ -372,19 +405,50 @@ export async function pipelineAnthropic(
     for (const { item, probe } of hits) probesById.set(item.id, probe);
     for (const { model, probe } of fresh) probesById.set(model.id, probe);
 
-    const kept: DerivedModel[] = [];
+    const kept: typeof listed = [];
     const dead: string[] = [];
-    for (const model of out) {
+    const skipped: SkippedModel[] = [];
+    for (const entry of listed) {
+        const { raw, model } = entry;
         const probe = probesById.get(model.id);
         if (!probe) throw new Error(`Missing Anthropic probe for ${model.id}`);
-        if (probe.status === 'dead') dead.push(model.id);
-        else kept.push(model);
+        if (probe.status === 'dead') {
+            dead.push(model.id);
+            skipped.push({
+                id: raw.id,
+                reason: `runtime probe ${probe.code} (not available)`,
+            });
+        } else kept.push(entry);
     }
     printIdList(
         `${dead.length} Anthropic model(s) failed runtime probe - skipped:`,
         dead
     );
-    return { models: kept, dead, toolVersionWarnings };
+
+    const unpinnedWithoutToolCalling = kept
+        .filter(
+            ({ raw, toolsPinned }) =>
+                raw.capabilities &&
+                !raw.capabilities.code_execution.supported &&
+                !toolsPinned
+        )
+        .map(({ model }) => model.id);
+    const unsupportedContent = kept.flatMap(({ raw, model }) => {
+        const unsupported = raw.capabilities
+            ? unsupportedContentCapabilities(raw.capabilities)
+            : [];
+        return unsupported.length > 0
+            ? [`${model.id} (${unsupported.join(', ')})`]
+            : [];
+    });
+    return {
+        models: kept.map(({ model }) => model),
+        dead,
+        skipped,
+        toolVersionWarnings,
+        unpinnedWithoutToolCalling,
+        unsupportedContent,
+    };
 }
 
 async function probeAnthropicModel(id: string): Promise<ModelProbeResult> {
@@ -413,61 +477,82 @@ async function probeAnthropicModel(id: string): Promise<ModelProbeResult> {
     }
 }
 
+function unsupportedContentCapabilities(cap: AnthropicCapabilities): string[] {
+    return ANTHROPIC_CONTENT_CAPABILITIES.filter((key) => !cap[key].supported);
+}
+
+function restrictToServerTools(
+    model: DerivedModel,
+    serverTools: AnthropicServerTools
+): void {
+    if (!model.tools) return;
+    const { webSearch, codeExecution, ...rest } = model.tools;
+    model.tools = {
+        ...rest,
+        ...(serverTools.web_search.supported ? { webSearch } : {}),
+        ...(serverTools.code_execution.supported ? { codeExecution } : {}),
+    };
+}
+
+function deriveAnthropicThinking(
+    cap: AnthropicCapabilities
+): DerivedThinking | undefined {
+    if (!cap.thinking.supported) return undefined;
+    const types = cap.thinking.types;
+    const efforts: ThinkingLevel[] = ANTHROPIC_EFFORT_LEVELS.filter(
+        (level) => cap.effort[level]?.supported
+    );
+    if (efforts.length === 0) {
+        return types.enabled.supported
+            ? {
+                  levels: ['none', 'low', 'medium', 'high'],
+                  defaultLevel: 'none',
+              }
+            : undefined;
+    }
+
+    const offLevels: ThinkingLevel[] = types.disabled.supported
+        ? ['none']
+        : types.between_tools.supported
+          ? ['minimal']
+          : [];
+    let adaptive: 'optional' | 'required' | undefined;
+    if (types.adaptive.supported) {
+        adaptive = types.enabled.supported ? 'optional' : 'required';
+    }
+    const defaultLevel: ThinkingLevel = efforts.includes('high')
+        ? 'high'
+        : efforts.includes('medium')
+          ? 'medium'
+          : efforts[0];
+    return {
+        levels: sortLevels([...offLevels, ...efforts]),
+        defaultLevel,
+        adaptive,
+    };
+}
+
 function deriveAnthropic(m: AnthropicRawModel): DerivedModel {
     const notes: string[] = [];
     const cap = m.capabilities;
-
-    let thinking: DerivedThinking | undefined;
-    if (cap?.thinking?.supported) {
-        const effort = cap.effort;
-        const efforts: ThinkingLevel[] = [];
-        if (effort?.low?.supported) efforts.push('low');
-        if (effort?.medium?.supported) efforts.push('medium');
-        if (effort?.high?.supported) efforts.push('high');
-        if (effort?.xhigh?.supported) efforts.push('xhigh');
-        if (effort?.max?.supported) efforts.push('max');
-
-        if (efforts.length > 0) {
-            const levels: ThinkingLevel[] = sortLevels(['none', ...efforts]);
-
-            const enabledSupported = cap.thinking.types?.enabled?.supported;
-            const adaptiveSupported = cap.thinking.types?.adaptive?.supported;
-            let adaptive: 'optional' | 'required' | undefined;
-            if (adaptiveSupported && enabledSupported) adaptive = 'optional';
-            else if (adaptiveSupported && !enabledSupported)
-                adaptive = 'required';
-
-            const defaultLevel: ThinkingLevel = levels.includes('high')
-                ? 'high'
-                : levels.includes('medium')
-                  ? 'medium'
-                  : (levels[1] ?? 'none');
-
-            thinking = { levels, defaultLevel, adaptive };
-        } else if (cap.thinking.types?.enabled?.supported) {
-            thinking = {
-                levels: ['none', 'low', 'medium', 'high'],
-                defaultLevel: 'none',
-            };
+    if (!cap) notes.push('capabilities missing');
+    else {
+        const unsupported = unsupportedContentCapabilities(cap);
+        if (unsupported.length > 0) {
+            notes.push(`unsupported: ${unsupported.join(', ')}`);
         }
     }
-
     if (m.max_input_tokens == null) notes.push('max_input_tokens missing');
     if (m.max_tokens == null) notes.push('max_tokens missing');
-
-    const samplingParamsRemoved = thinking?.adaptive === 'required';
 
     return {
         id: m.id,
         name: m.display_name,
-        contextWindow: m.max_input_tokens ?? null,
-        maxOutputTokens: m.max_tokens ?? null,
-        thinking,
-        ...(samplingParamsRemoved
-            ? {}
-            : { temperatureMax: 1, defaultTemperature: 1 }),
+        contextWindow: m.max_input_tokens,
+        maxOutputTokens: m.max_tokens,
+        thinking: cap ? deriveAnthropicThinking(cap) : undefined,
         tools: ANTHROPIC_TOOLS_LATEST,
-        created: m.created_at ? Date.parse(m.created_at) / 1000 : undefined,
+        created: Date.parse(m.created_at) / 1000,
         notes,
     };
 }
@@ -490,6 +575,14 @@ export function anthropicWarnings(r: AnthropicPipelineResult): string[] {
     const missing = r.models.filter((m) => !m.knowledgeCutoff).map((m) => m.id);
     return [
         ...r.toolVersionWarnings,
+        ...idListWarning(
+            `${r.unpinnedWithoutToolCalling.length} model(s) lack programmatic tool calling but use ANTHROPIC_TOOLS_LATEST - pin supported tool versions in ANTHROPIC_OVERRIDES:`,
+            r.unpinnedWithoutToolCalling
+        ),
+        ...idListWarning(
+            `${r.unsupportedContent.length} model(s) report unsupported image/PDF/citations - the Anthropic file policy assumes support:`,
+            r.unsupportedContent
+        ),
         ...idListWarning(
             `${missing.length} model(s) missing knowledgeCutoff - add to ANTHROPIC_OVERRIDES if desired:`,
             missing

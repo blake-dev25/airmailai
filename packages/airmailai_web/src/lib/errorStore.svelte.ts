@@ -1,3 +1,4 @@
+import { errorMessage } from '@airmailai/shared';
 import { log } from './log';
 
 export type AppWarning = { kind: 'model-unavailable'; modelId: string };
@@ -27,16 +28,16 @@ class ErrorStore {
 
 export const errorStore = new ErrorStore();
 
-export function formatErr(err: unknown): string {
-    if (err instanceof Error) return err.message;
-    return String(err);
-}
-
 export function reportAppError(
     context: string,
     userMessage: string,
-    err: unknown
+    detail?: unknown
 ): void {
-    log.error(context, err);
-    errorStore.setAppError(`${userMessage}: ${formatErr(err)}`);
+    if (detail === undefined) {
+        log.error(context);
+        errorStore.setAppError(userMessage);
+        return;
+    }
+    log.error(context, detail);
+    errorStore.setAppError(`${userMessage}: ${errorMessage(detail)}`);
 }

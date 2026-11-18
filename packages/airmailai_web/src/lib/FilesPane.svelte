@@ -1,5 +1,10 @@
 <script lang="ts">
-    import type { LocalFileInfo, ProviderFileInfo } from '@airmailai/shared';
+    import type {
+        LocalFileInfo,
+        ProviderFileInfo,
+        ProviderId,
+    } from '@airmailai/shared';
+    import { PROVIDER_IDS } from '@airmailai/shared';
     import { onMount } from 'svelte';
     import { appLifecycle } from './appLifecycle.svelte';
     import { AsyncResource } from './asyncResource.svelte';
@@ -17,7 +22,6 @@
     import Icon from './Icon.svelte';
     import { providersStore } from './providersStore.svelte';
 
-    const FILES_API_PROVIDERS = new Set(['anthropic', 'google', 'openai']);
     const GB = 1024 ** 3;
     const PROVIDER_STORAGE_MAX_BYTES: Record<string, number> = {
         anthropic: 500 * GB,
@@ -37,10 +41,7 @@
         string,
         AsyncResource<ProviderFileInfo[]> | undefined
     > = Object.fromEntries(
-        [...FILES_API_PROVIDERS].map((id) => [
-            id,
-            new AsyncResource<ProviderFileInfo[]>(),
-        ])
+        PROVIDER_IDS.map((id) => [id, new AsyncResource<ProviderFileInfo[]>()])
     );
     let busyKey = $state<string | null>(null);
 
@@ -68,13 +69,13 @@
 
     async function loadProviders() {
         await providersStore.refreshSavedKeys();
-        for (const providerId of FILES_API_PROVIDERS) {
+        for (const providerId of PROVIDER_IDS) {
             if (!providersStore.hasSavedKey(providerId)) continue;
             void loadProviderFiles(providerId);
         }
     }
 
-    async function loadProviderFiles(providerId: string) {
+    async function loadProviderFiles(providerId: ProviderId) {
         await providerFiles[providerId]?.load(
             () => listProviderFiles(providerId),
             {
@@ -97,7 +98,7 @@
                 reportAppError(
                     `local file blob missing (hash=${file.hash})`,
                     `Couldn't download ${file.filename}`,
-                    new Error('file not found in storage')
+                    'file not found in storage'
                 );
                 return;
             }
@@ -154,7 +155,10 @@
         }
     }
 
-    async function deleteProvider(providerId: string, file: ProviderFileInfo) {
+    async function deleteProvider(
+        providerId: ProviderId,
+        file: ProviderFileInfo
+    ) {
         if (busyKey) return;
         busyKey = file.fileId;
         try {
@@ -176,13 +180,16 @@
         }
     }
 
-    async function deleteAllProvider(providerId: string, providerName: string) {
+    async function deleteAllProvider(
+        providerId: ProviderId,
+        providerName: string
+    ) {
         const files = providerFiles[providerId]?.value ?? [];
         if (busyKey || !files.length) return;
         const label = files.length === 1 ? 'file' : 'files';
         if (
             !confirm(
-                `Delete all ${files.length} ${label} stored with ${providerName}? Cannot be undone.`
+                `Delete all ${files.length} ${label} stored with ${providerName}? This includes files uploaded by other apps using this API key. Cannot be undone.`
             )
         )
             return;

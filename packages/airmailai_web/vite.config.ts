@@ -57,7 +57,7 @@ function readLegalVersion(): string {
 const verbose = !!process.env.BUILD_VERBOSE;
 
 export default defineConfig(({ isPreview }) => ({
-    logLevel: verbose || isPreview ? 'info' : 'error',
+    logLevel: verbose || isPreview ? 'info' : 'warn',
     publicDir: 'static',
     define: {
         __APP_VERSION__: JSON.stringify(readVersion()),
@@ -71,7 +71,6 @@ export default defineConfig(({ isPreview }) => ({
     build: {
         sourcemap: true,
         rollupOptions: {
-            ...(verbose ? {} : { onwarn: () => {} }),
             input: {
                 main: resolve(import.meta.dirname, 'index.html'),
                 app: resolve(import.meta.dirname, 'app/index.html'),

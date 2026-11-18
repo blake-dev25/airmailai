@@ -102,6 +102,7 @@
     {/if}
 
     {#if settingsStore.brandingMode === 'on'}
+        <!-- ***Fixed px text size: the logo header intentionally ignores the text-size setting. -->
         <div
             class="flex shrink-0 items-center justify-center gap-2 px-4 py-4.5 text-fg border-b border-border"
         >
@@ -149,14 +150,14 @@
                 bind:value={searchValue}
                 onkeydown={(e) => {
                     if (e.key === 'Enter' && searchValue.trim())
-                        chatStore.search(searchValue.trim());
+                        chatStore.search.run(searchValue.trim());
                     if (e.key === 'Escape') {
                         searchValue = '';
-                        chatStore.clearSearch();
+                        chatStore.search.clear();
                     }
                 }}
                 oninput={() => {
-                    if (!searchValue) chatStore.clearSearch();
+                    if (!searchValue) chatStore.search.clear();
                 }}
             />
             {#if searchValue}
@@ -165,7 +166,7 @@
                     class="shrink-0 flex items-center justify-center w-4 h-4 p-0 bg-transparent border-0 rounded-[3px] text-fg-muted cursor-pointer opacity-60 transition-opacity duration-100 hover:opacity-100"
                     onclick={() => {
                         searchValue = '';
-                        chatStore.clearSearch();
+                        chatStore.search.clear();
                     }}
                     aria-label="Clear search"
                 >
@@ -186,8 +187,8 @@
         </button>
     </div>
 
-    {#if chatStore.searchState.kind !== 'inactive'}
-        {@const search = chatStore.searchState}
+    {#if chatStore.search.state.kind !== 'inactive'}
+        {@const search = chatStore.search.state}
         <nav
             class={[
                 'history search-mode flex-1 min-h-0 overflow-y-auto px-2 py-1',
@@ -204,18 +205,18 @@
                     ? ''
                     : 's'}
             </p>
-            {#if chatStore.unsearchedChatCount > 0 || search.kind === 'loading-all'}
+            {#if chatStore.search.unsearchedChatCount > 0 || search.kind === 'loading-all'}
                 <button
                     type="button"
                     class="flex items-center justify-center gap-1.5 w-full px-2.5 py-1.5 mb-1 bg-transparent border border-border rounded-md text-xs text-fg-muted cursor-pointer transition-[background-color,color] duration-100 hover:bg-surface-raised hover:text-fg disabled:cursor-default"
                     disabled={search.kind === 'loading-all'}
-                    onclick={() => chatStore.searchAllChats()}
+                    onclick={() => chatStore.search.searchAllChats()}
                 >
                     {#if search.kind === 'loading-all'}
                         <Icon name="spinner" />
                         Searching all chats...
                     {:else}
-                        Search all chats ({chatStore.unsearchedChatCount} more)
+                        Search all chats ({chatStore.search.unsearchedChatCount} more)
                     {/if}
                 </button>
             {/if}
@@ -288,13 +289,11 @@
             >
                 Recent Chats
             </p>
-            {#if appLifecycle.bootPhase !== 'ready'}
-                <!-- Blank until extension responds - avoids "No conversations yet" flash on refresh. -->
-            {:else if chatStore.chats.length === 0}
+            {#if appLifecycle.bootPhase === 'ready' && chatStore.chats.length === 0}
                 <p class="px-2 pt-2 pb-5 text-sm text-fg text-center m-0">
                     No conversations yet
                 </p>
-            {:else}
+            {:else if appLifecycle.bootPhase === 'ready'}
                 <div class="flex-1 min-h-0">
                     <VList
                         data={chatStore.sortedChats}

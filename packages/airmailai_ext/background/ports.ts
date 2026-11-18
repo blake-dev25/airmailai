@@ -3,16 +3,16 @@ import { log } from '../debug';
 
 const broadcastPorts = new Map<chrome.runtime.Port, string | undefined>();
 
-const streamPorts = new Set<chrome.runtime.Port>();
+const extensionUpdateHolds = new Set<object>();
 export const activeTurns = new Map<string, string>();
 let pendingUpdateVersion: string | null = null;
 
-export function trackStreamPort(port: chrome.runtime.Port): void {
-    streamPorts.add(port);
+export function holdExtensionUpdate(holder: object): void {
+    extensionUpdateHolds.add(holder);
 }
 
-export function releaseStreamPort(port: chrome.runtime.Port): void {
-    streamPorts.delete(port);
+export function releaseExtensionUpdate(holder: object): void {
+    extensionUpdateHolds.delete(holder);
     maybeApplyPendingUpdate();
 }
 
@@ -23,7 +23,7 @@ export function queuePendingUpdate(version: string): void {
 
 function maybeApplyPendingUpdate(): void {
     if (pendingUpdateVersion === null) return;
-    if (streamPorts.size > 0) return;
+    if (extensionUpdateHolds.size > 0) return;
     log.info('applying pending extension update', pendingUpdateVersion);
     chrome.runtime.reload();
 }
@@ -73,9 +73,7 @@ export function handleBroadcastPort(port: chrome.runtime.Port): void {
             } catch {
                 broadcastPorts.delete(port);
             }
-            return;
         }
-        if (msg.type === 'keepalive') return;
     });
     port.onDisconnect.addListener(() => {
         const reason = chrome.runtime.lastError?.message;

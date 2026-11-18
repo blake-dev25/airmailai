@@ -1,3 +1,4 @@
+import { assertKnownFlags, flagValue } from './cli-flags';
 import {
     modelTestAnthropic,
     parseAnthropicModelPage,
@@ -7,6 +8,8 @@ import { notify, updateEmbeds } from './model-list/discord';
 import {
     LOCAL_MODELS_FILE,
     LOCAL_STATE_DIR,
+    SNAPSHOT_PREFIX,
+    SNAPSHOT_RETENTION_MS,
     resolveAwsConfig,
 } from './model-list/env';
 import {
@@ -33,12 +36,25 @@ import {
     runUpdate,
 } from './model-list/update';
 
+const KNOWN_FLAGS = [
+    '--write',
+    '--verbose',
+    '--local',
+    '--refresh-docs',
+    '--refresh-probes',
+    '--retry-non-200',
+    '--show-md',
+    ...ALL_PROVIDERS.map((p) => `--${p}`),
+    '--model-test',
+    '--scrape-test',
+    '--google-scrape-test',
+    '--anthropic-scrape-test',
+];
+
 const args = process.argv.slice(2);
 const has = (flag: string): boolean => args.includes(flag);
-const valueAfter = (flag: string, offset = 1): string | undefined => {
-    const idx = args.indexOf(flag);
-    return idx >= 0 ? args[idx + offset] : undefined;
-};
+const valueAfter = (flag: string, offset = 1): string | undefined =>
+    flagValue(args, flag, offset);
 
 const WRITE = has('--write');
 const VERBOSE = has('--verbose');
@@ -54,6 +70,7 @@ const PROVIDERS = new Set<Provider>(
 );
 
 async function main(): Promise<void> {
+    assertKnownFlags(args, KNOWN_FLAGS);
     if (has('--model-test')) {
         const provider = valueAfter('--model-test');
         const model = valueAfter('--model-test', 2);
@@ -133,8 +150,6 @@ async function main(): Promise<void> {
         );
     }
 
-    await syncLocalTiersFile(report.file, WRITE);
-
     if (WRITE) {
         await notify(
             updateEmbeds(
@@ -142,7 +157,18 @@ async function main(): Promise<void> {
                 aws ? 'manual run, aws mode' : 'manual run, local mode'
             )
         );
-    } else {
+    }
+
+    await syncLocalTiersFile(report.file, WRITE);
+    if (store instanceof FsStateStore) {
+        const pruned = await store.pruneOlderThan(
+            SNAPSHOT_PREFIX,
+            SNAPSHOT_RETENTION_MS
+        );
+        if (pruned > 0) console.log(`pruned ${pruned} expired snapshot(s)`);
+    }
+
+    if (!WRITE) {
         console.log('\n(dry run - pass --write to publish models.json)');
     }
 

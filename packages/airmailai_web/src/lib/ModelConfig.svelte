@@ -1,4 +1,5 @@
 <script lang="ts">
+    import type { ProviderId } from '@airmailai/shared';
     import { untrack } from 'svelte';
     import { appLifecycle } from './appLifecycle.svelte';
     import { chatStore } from './chatStore.svelte';
@@ -16,18 +17,13 @@
     import CustomModelConfig from './CustomModelConfig.svelte';
     import { providersStore } from './providersStore.svelte';
     import { settingsStore } from './settingsStore.svelte';
+    import ToggleSwitch from './ToggleSwitch.svelte';
     import Stripes from './Stripes.svelte';
 
-    const TIER_ORDER: VisibleModelTier[] = [
-        'new',
-        'latest',
-        'previous',
-        'legacy',
-    ];
+    const TIER_ORDER: VisibleModelTier[] = ['new', 'latest', 'legacy'];
     const TIER_LABELS: Record<VisibleModelTier, string> = {
         new: 'New',
         latest: 'Latest',
-        previous: 'Previous',
         legacy: 'Legacy',
     };
     const OPENROUTER_EMPTY_LABEL =
@@ -251,7 +247,7 @@
         return level.charAt(0).toUpperCase() + level.slice(1);
     }
 
-    function onProviderChange(id: string) {
+    function onProviderChange(id: ProviderId) {
         settingsStore.providerId = id;
         if (id === 'openrouter') providersStore.ensureOpenRouterCatalog();
         if (settingsStore.customModel) {
@@ -309,10 +305,9 @@
     let linkedWebOn = $derived(
         settingsStore.webSearch && settingsStore.webFetch
     );
-    function toggleLinkedWeb() {
-        const next = !linkedWebOn;
-        settingsStore.webSearch = next;
-        settingsStore.webFetch = next;
+    function setLinkedWeb(enabled: boolean) {
+        settingsStore.webSearch = enabled;
+        settingsStore.webFetch = enabled;
     }
 
     $effect(() => {
@@ -492,29 +487,19 @@
                         <label for="adaptive-thinking" class={labelClass}
                             >Adaptive Thinking</label
                         >
-                        <button
+                        <ToggleSwitch
                             id="adaptive-thinking"
-                            type="button"
-                            class={[
-                                'toggle-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
-                                locked && 'cursor-not-allowed opacity-60',
-                                settingsStore.adaptiveThinking && 'on',
-                            ]}
-                            role="switch"
-                            aria-checked={settingsStore.adaptiveThinking}
-                            aria-label="Adaptive Thinking"
+                            checked={settingsStore.adaptiveThinking}
+                            label="Adaptive Thinking"
                             disabled={locked}
+                            class={locked ? 'opacity-60' : undefined}
                             title={locked
                                 ? 'This model only supports adaptive thinking.'
                                 : undefined}
-                            onclick={() => {
-                                if (!locked)
-                                    settingsStore.adaptiveThinking =
-                                        !settingsStore.adaptiveThinking;
+                            onchange={(checked) => {
+                                settingsStore.adaptiveThinking = checked;
                             }}
-                        >
-                            <span class="toggle-switch-thumb"></span>
-                        </button>
+                        />
                     </div>
                 </div>
             {/if}
@@ -585,20 +570,12 @@
                                 >
                             </span>
                         </div>
-                        <button
+                        <ToggleSwitch
                             id="web-linked"
-                            type="button"
-                            class={[
-                                'toggle-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
-                                linkedWebOn && 'on',
-                            ]}
-                            role="switch"
-                            aria-checked={linkedWebOn}
-                            aria-label="Web search and fetch"
-                            onclick={toggleLinkedWeb}
-                        >
-                            <span class="toggle-switch-thumb"></span>
-                        </button>
+                            checked={linkedWebOn}
+                            label="Web search and fetch"
+                            onchange={setLinkedWeb}
+                        />
                     </div>
                 </div>
             {/if}
@@ -646,23 +623,14 @@
                                 </span>
                             {/if}
                         </div>
-                        <button
+                        <ToggleSwitch
                             id="web-search"
-                            type="button"
-                            class={[
-                                'toggle-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
-                                settingsStore.webSearch && 'on',
-                            ]}
-                            role="switch"
-                            aria-checked={settingsStore.webSearch}
-                            aria-label="Web Search"
-                            onclick={() => {
-                                settingsStore.webSearch =
-                                    !settingsStore.webSearch;
+                            checked={settingsStore.webSearch}
+                            label="Web Search"
+                            onchange={(checked) => {
+                                settingsStore.webSearch = checked;
                             }}
-                        >
-                            <span class="toggle-switch-thumb"></span>
-                        </button>
+                        />
                     </div>
                 </div>
             {/if}
@@ -673,23 +641,14 @@
                         <label for="web-fetch" class={labelClass}
                             >Web Fetch</label
                         >
-                        <button
+                        <ToggleSwitch
                             id="web-fetch"
-                            type="button"
-                            class={[
-                                'toggle-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
-                                settingsStore.webFetch && 'on',
-                            ]}
-                            role="switch"
-                            aria-checked={settingsStore.webFetch}
-                            aria-label="Web Fetch"
-                            onclick={() => {
-                                settingsStore.webFetch =
-                                    !settingsStore.webFetch;
+                            checked={settingsStore.webFetch}
+                            label="Web Fetch"
+                            onchange={(checked) => {
+                                settingsStore.webFetch = checked;
                             }}
-                        >
-                            <span class="toggle-switch-thumb"></span>
-                        </button>
+                        />
                     </div>
                 </div>
             {/if}
@@ -700,23 +659,14 @@
                         <label for="code-execution" class={labelClass}
                             >Code Execution</label
                         >
-                        <button
+                        <ToggleSwitch
                             id="code-execution"
-                            type="button"
-                            class={[
-                                'toggle-switch shrink-0 relative w-8.5 h-5 p-0 rounded-full cursor-pointer transition-[background-color,border-color] duration-200',
-                                settingsStore.codeExecution && 'on',
-                            ]}
-                            role="switch"
-                            aria-checked={settingsStore.codeExecution}
-                            aria-label="Code Execution"
-                            onclick={() => {
-                                settingsStore.codeExecution =
-                                    !settingsStore.codeExecution;
+                            checked={settingsStore.codeExecution}
+                            label="Code Execution"
+                            onchange={(checked) => {
+                                settingsStore.codeExecution = checked;
                             }}
-                        >
-                            <span class="toggle-switch-thumb"></span>
-                        </button>
+                        />
                     </div>
                 </div>
             {/if}
@@ -775,6 +725,7 @@
     {/if}
 
     {#if settingsStore.brandingMode === 'on'}
+        <!-- ***Fixed px text size: the "made with" banner intentionally ignores the text-size setting. -->
         <div
             class={[
                 'py-2 text-[12px] text-fg opacity-40 text-center border-t border-border',

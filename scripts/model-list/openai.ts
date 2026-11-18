@@ -6,6 +6,7 @@ import {
     type ModelProbeResult,
     type OpenRouterIndex,
     type OpenRouterModelInfo,
+    type SkippedModel,
     type ThinkingLevel,
     MODEL_PROBE_DELAY_MS,
     WEBPAGE_SCRAPE_DELAY_MS,
@@ -30,26 +31,17 @@ import { type ProbeCache, splitCachedProbes } from './probe-cache';
 const OPENAI_API = 'https://api.openai.com/v1';
 const OPENAI_MODELS_INDEX_URL = 'https://developers.openai.com/api/docs/models';
 
-interface OpenAIRawModel {
-    id: string;
-    created: number;
-    owned_by: string;
-    shutdown_date?: string | null;
-}
-
 interface OpenAIRaw {
     id: string;
     created: number;
-    ownedBy: string;
-    shutdownDate?: string;
 }
 
 function openaiHeaders(): Record<string, string> {
     return { Authorization: `Bearer ${requireApiKey('OPENAI_API_KEY')}` };
 }
 
-async function listOpenAIModels(): Promise<OpenAIRawModel[]> {
-    const res = await httpJson<{ data?: OpenAIRawModel[] }>({
+async function listOpenAIModels(): Promise<OpenAIRaw[]> {
+    const res = await httpJson<{ data?: OpenAIRaw[] }>({
         url: `${OPENAI_API}/models`,
         label: 'OpenAI /v1/models',
         headers: openaiHeaders(),
@@ -66,8 +58,6 @@ async function fetchOpenAI(): Promise<OpenAIRaw[]> {
     const out: OpenAIRaw[] = (await listOpenAIModels()).map((m) => ({
         id: m.id,
         created: m.created,
-        ownedBy: m.owned_by,
-        ...(m.shutdown_date ? { shutdownDate: m.shutdown_date } : {}),
     }));
     out.sort((a, b) => b.created - a.created);
     return out;
@@ -96,46 +86,45 @@ function dedupeOpenAIToAliases(raws: OpenAIRaw[]): OpenAIRaw[] {
     return out;
 }
 
+function findOpenAIOpenRouter(
+    openrouter: OpenRouterIndex,
+    id: string
+): OpenRouterModelInfo | undefined {
+    return findOpenRouter(
+        openrouter,
+        'openai',
+        id,
+        OPENAI_OVERRIDES[id]?.openRouterId
+    );
+}
+
+function openAIThinking(
+    levels: ThinkingLevel[],
+    documentedDefault: ThinkingLevel | undefined,
+    info: OpenRouterModelInfo | undefined
+): DerivedThinking {
+    const sorted = sortLevels(levels);
+    if (documentedDefault) {
+        return { levels: sorted, defaultLevel: documentedDefault };
+    }
+    const openRouterDefault = info?.defaultReasoningEffort;
+    if (openRouterDefault && sorted.includes(openRouterDefault)) {
+        return { levels: sorted, defaultLevel: openRouterDefault };
+    }
+    return { levels: sorted, defaultLevel: sorted[0], defaultGuessed: true };
+}
+
 function inferOpenAIThinking(
     id: string,
     info: OpenRouterModelInfo | undefined
 ): DerivedThinking | undefined {
-    if (!supportsOpenRouterParam(info, 'reasoning')) return undefined;
+    if (!info || !supportsOpenRouterParam(info, 'reasoning')) return undefined;
     if (/-chat(?:-latest)?$/.test(id) || id.includes('search-preview')) {
         return undefined;
     }
     if (!id.startsWith('gpt-')) return undefined;
-    if (id.includes('-pro')) {
-        return {
-            levels: ['medium', 'high', 'xhigh'],
-            defaultLevel: 'medium',
-        };
-    }
-    if (/^gpt-5\.5(?:-|$)/.test(id)) {
-        return {
-            levels: ['none', 'low', 'medium', 'high', 'xhigh'],
-            defaultLevel: 'medium',
-        };
-    }
-    if (/^gpt-5\.[2-4](?:-|$)/.test(id)) {
-        return {
-            levels: ['none', 'low', 'medium', 'high', 'xhigh'],
-            defaultLevel: 'none',
-        };
-    }
-    if (/^gpt-5\.1(?:-|$)/.test(id)) {
-        return {
-            levels: ['none', 'low', 'medium', 'high'],
-            defaultLevel: 'none',
-        };
-    }
-    if (/^gpt-5(?:-|$)/.test(id)) {
-        return {
-            levels: ['minimal', 'low', 'medium', 'high'],
-            defaultLevel: 'minimal',
-        };
-    }
-    return undefined;
+    if (info.reasoningEfforts.length === 0) return undefined;
+    return openAIThinking(info.reasoningEfforts, undefined, info);
 }
 
 function inferOpenAIKnowledgeCutoff(
@@ -215,7 +204,10 @@ export function parseOpenAIModelsIndex(
     return levelsById;
 }
 
-async function applyOpenAIIndexLevels(models: DerivedModel[]): Promise<void> {
+async function applyOpenAIIndexLevels(
+    models: DerivedModel[],
+    openrouter: OpenRouterIndex
+): Promise<void> {
     console.log('scraping OpenAI models index for reasoning levels');
     const { status, markdown } = await scrapeDocsRaw(OPENAI_MODELS_INDEX_URL);
     if (!markdown) {
@@ -237,10 +229,11 @@ async function applyOpenAIIndexLevels(models: DerivedModel[]): Promise<void> {
         }
         const levels = levelsById.get(model.id);
         if (!levels) continue;
-        model.thinking = {
-            levels: sortLevels(levels),
-            defaultLevel: levels.includes('none') ? 'none' : levels[0],
-        };
+        model.thinking = openAIThinking(
+            levels,
+            undefined,
+            findOpenAIOpenRouter(openrouter, model.id)
+        );
         model.notes = model.notes.filter(
             (n) => !n.includes('reasoning supported')
         );
@@ -257,7 +250,7 @@ interface ScrapedOpenAI {
         | {
               kind: 'levels-known';
               levels: ThinkingLevel[];
-              defaultLevel: ThinkingLevel;
+              defaultLevel?: ThinkingLevel;
           }
         | { kind: 'levels-unknown' };
 }
@@ -318,7 +311,7 @@ function parseReasoningEffort(raw: string): ScrapedOpenAI['reasoning'] {
     return {
         kind: 'levels-known',
         levels,
-        defaultLevel: defaultLevel ?? levels[0],
+        ...(defaultLevel ? { defaultLevel } : {}),
     };
 }
 
@@ -352,9 +345,13 @@ export function parseOpenAIDoc(id: string, md: string): ScrapedOpenAI {
 
 async function applyOpenAIDocFallback(
     models: DerivedModel[],
-    cache: DocsCache
+    cache: DocsCache,
+    openrouter: OpenRouterIndex
 ): Promise<void> {
-    const pages = cache.section<ScrapedOpenAI>('openai');
+    const pages = cache.section<ScrapedOpenAI>(
+        'openai',
+        (doc) => doc.contextWindow !== null || doc.maxOutputTokens !== null
+    );
     const { hits, failures, misses } = splitCached(models, pages, (m) => m.id);
     printPollingCacheSummary(
         'OpenAI docs polling',
@@ -380,20 +377,31 @@ async function applyOpenAIDocFallback(
     for (const model of models) {
         const parsed = parsedById.get(model.id);
         if (!parsed) continue;
+        const pinned = OPENAI_OVERRIDES[model.id];
         if (model.name === model.id && parsed.displayName) {
             model.name = parsed.displayName;
         }
-        model.contextWindow = parsed.contextWindow ?? model.contextWindow;
-        model.maxOutputTokens = parsed.maxOutputTokens ?? model.maxOutputTokens;
-        model.knowledgeCutoff = parsed.knowledgeCutoff ?? model.knowledgeCutoff;
+        model.contextWindow =
+            pinned?.contextWindow ??
+            parsed.contextWindow ??
+            model.contextWindow;
+        model.maxOutputTokens =
+            pinned?.maxOutputTokens ??
+            parsed.maxOutputTokens ??
+            model.maxOutputTokens;
+        model.knowledgeCutoff =
+            pinned?.knowledgeCutoff ??
+            parsed.knowledgeCutoff ??
+            model.knowledgeCutoff;
         if (
             !model.thinkingPinned &&
             parsed.reasoning?.kind === 'levels-known'
         ) {
-            model.thinking = {
-                levels: sortLevels(parsed.reasoning.levels),
-                defaultLevel: parsed.reasoning.defaultLevel,
-            };
+            model.thinking = openAIThinking(
+                parsed.reasoning.levels,
+                parsed.reasoning.defaultLevel,
+                findOpenAIOpenRouter(openrouter, model.id)
+            );
             model.notes = model.notes.filter(
                 (n) => !n.includes('reasoning supported')
             );
@@ -422,9 +430,10 @@ async function probeOpenAIModel(id: string): Promise<ModelProbeResult> {
         if (
             e instanceof HttpError &&
             (e.status === 404 ||
-                /model not found|not found .*model|unsupported|not supported/i.test(
-                    e.body
-                ))
+                (e.status === 400 &&
+                    /model not found|not found .*model|unsupported|not supported/i.test(
+                        e.body
+                    )))
         ) {
             return { status: 'dead', code };
         }
@@ -434,7 +443,7 @@ async function probeOpenAIModel(id: string): Promise<ModelProbeResult> {
 
 async function probeOpenAIModels(
     models: DerivedModel[],
-    skipped: Array<{ id: string; reason: string }>,
+    skipped: SkippedModel[],
     cache: ProbeCache
 ): Promise<DerivedModel[]> {
     const section = cache.section('openai');
@@ -484,10 +493,10 @@ async function probeOpenAIModels(
 
 export interface OpenAIPipelineResult {
     models: DerivedModel[];
-    skipped: Array<{ id: string; reason: string }>;
+    skipped: SkippedModel[];
     needsLevels: string[];
+    guessedDefaultLevel: string[];
     missingCutoff: string[];
-    scheduledShutdown: Array<{ id: string; date: string }>;
 }
 
 function deriveOpenAI(
@@ -495,7 +504,7 @@ function deriveOpenAI(
     openrouter: OpenRouterIndex
 ): DerivedModel {
     const o = OPENAI_OVERRIDES[raw.id];
-    const info = findOpenRouter(openrouter, 'openai', raw.id, o?.openRouterId);
+    const info = findOpenAIOpenRouter(openrouter, raw.id);
 
     const contextWindow = o?.contextWindow ?? info?.contextWindow ?? null;
     const maxOutputTokens = o?.maxOutputTokens ?? info?.maxOutputTokens ?? null;
@@ -542,7 +551,6 @@ function deriveOpenAI(
             : undefined,
         tools: o?.tools,
         created: raw.created,
-        shutdownDate: raw.shutdownDate,
         notes,
     };
 }
@@ -553,19 +561,28 @@ export async function pipelineOpenAI(
     probeCache: ProbeCache
 ): Promise<OpenAIPipelineResult> {
     const raws = await fetchOpenAI();
-    const aliases = dedupeOpenAIToAliases(raws).filter((r) =>
-        isOpenAIChatCandidate(r.id)
-    );
-
+    const listedIdsByAlias = new Map<string, string[]>();
+    for (const { id } of raws) {
+        const alias = openaiAliasId(id);
+        listedIdsByAlias.set(alias, [
+            ...(listedIdsByAlias.get(alias) ?? []),
+            id,
+        ]);
+    }
     const models: DerivedModel[] = [];
-    const skipped: Array<{ id: string; reason: string }> = [];
+    const skipped: SkippedModel[] = [];
+    const aliases = dedupeOpenAIToAliases(raws).filter((r) => {
+        if (isOpenAIChatCandidate(r.id)) return true;
+        skipped.push({ id: r.id, reason: 'not a chat model id' });
+        return false;
+    });
 
     for (const raw of aliases) {
         models.push(deriveOpenAI(raw, openrouter));
     }
 
-    await applyOpenAIDocFallback(models, docsCache);
-    await applyOpenAIIndexLevels(models);
+    await applyOpenAIDocFallback(models, docsCache, openrouter);
+    await applyOpenAIIndexLevels(models, openrouter);
     const fallbackThinkingIds = new Set<string>();
     for (const model of models) {
         if (model.notes.some((n) => n.includes('reasoning supported'))) {
@@ -595,18 +612,23 @@ export async function pipelineOpenAI(
     const needsLevels = probedModels
         .filter((m) => fallbackThinkingIds.has(m.id))
         .map((m) => m.id);
+    const guessedDefaultLevel = probedModels
+        .filter((m) => m.thinking?.defaultGuessed)
+        .map((m) => `${m.id} (${m.thinking?.defaultLevel})`);
     const missingCutoff = probedModels
         .filter((m) => !m.knowledgeCutoff)
         .map((m) => m.id);
-    const scheduledShutdown = probedModels
-        .filter((m) => m.shutdownDate)
-        .map((m) => ({ id: m.id, date: m.shutdownDate! }));
     return {
         models: probedModels,
-        skipped,
+        skipped: skipped.flatMap(({ id, reason }) =>
+            (listedIdsByAlias.get(id) ?? [id]).map((listedId) => ({
+                id: listedId,
+                reason,
+            }))
+        ),
         needsLevels,
+        guessedDefaultLevel,
         missingCutoff,
-        scheduledShutdown,
     };
 }
 
@@ -634,12 +656,12 @@ export function openaiWarnings(r: OpenAIPipelineResult): string[] {
             r.needsLevels
         ),
         ...idListWarning(
-            `${r.missingCutoff.length} model(s) missing knowledgeCutoff - add to OPENAI_OVERRIDES if desired:`,
-            r.missingCutoff
+            `${r.guessedDefaultLevel.length} model(s) have no documented or OpenRouter default thinking level - lowest level used, add to OPENAI_OVERRIDES if desired:`,
+            r.guessedDefaultLevel
         ),
         ...idListWarning(
-            `${r.scheduledShutdown.length} model(s) have an OpenAI shutdown date - consider retiring from models.json:`,
-            r.scheduledShutdown.map((s) => `${s.id} (${s.date})`)
+            `${r.missingCutoff.length} model(s) missing knowledgeCutoff - add to OPENAI_OVERRIDES if desired:`,
+            r.missingCutoff
         ),
         ...idListWarning(
             'stale OPENAI_OVERRIDES entry/entries - model not in current list, consider removing:',

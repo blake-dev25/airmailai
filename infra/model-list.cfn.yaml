@@ -42,10 +42,10 @@ Resources:
                       Prefix: snapshots/
                       ExpirationInDays: 30
 
-    LambdaRole:
+    WatcherRole:
         Type: AWS::IAM::Role
         Properties:
-            RoleName: airmailai-model-list-lambda
+            RoleName: airmailai-model-list-watcher
             AssumeRolePolicyDocument:
                 Version: '2012-10-17'
                 Statement:
@@ -56,7 +56,44 @@ Resources:
             ManagedPolicyArns:
                 - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
             Policies:
-                - PolicyName: model-list-access
+                - PolicyName: model-list-watcher-access
+                  PolicyDocument:
+                      Version: '2012-10-17'
+                      Statement:
+                          - Effect: Allow
+                            Action: s3:ListBucket
+                            Resource: !Sub arn:aws:s3:::${StateBucketName}
+                          - Effect: Allow
+                            Action: s3:GetObject
+                            Resource: !Sub arn:aws:s3:::${StateBucketName}/watcher-state.json
+                          - Effect: Allow
+                            Action: ssm:GetParametersByPath
+                            Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}*
+                          - Effect: Allow
+                            Action: kms:Decrypt
+                            Resource: '*'
+                            Condition:
+                                StringEquals:
+                                    kms:ViaService: !Sub ssm.${AWS::Region}.amazonaws.com
+                          - Effect: Allow
+                            Action: lambda:InvokeFunction
+                            Resource: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:airmailai-model-list-updater
+
+    UpdaterRole:
+        Type: AWS::IAM::Role
+        Properties:
+            RoleName: airmailai-model-list-updater
+            AssumeRolePolicyDocument:
+                Version: '2012-10-17'
+                Statement:
+                    - Effect: Allow
+                      Principal:
+                          Service: lambda.amazonaws.com
+                      Action: sts:AssumeRole
+            ManagedPolicyArns:
+                - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+            Policies:
+                - PolicyName: model-list-updater-access
                   PolicyDocument:
                       Version: '2012-10-17'
                       Statement:
@@ -71,9 +108,6 @@ Resources:
                           - Effect: Allow
                             Action: s3:ListBucket
                             Resource: !Sub arn:aws:s3:::${WwwBucketName}
-                            Condition:
-                                StringEquals:
-                                    s3:prefix: models.json
                           - Effect: Allow
                             Action:
                                 - s3:GetObject
@@ -91,9 +125,6 @@ Resources:
                             Condition:
                                 StringEquals:
                                     kms:ViaService: !Sub ssm.${AWS::Region}.amazonaws.com
-                          - Effect: Allow
-                            Action: lambda:InvokeFunction
-                            Resource: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:airmailai-model-list-updater
 
     WatcherLogGroup:
         Type: AWS::Logs::LogGroup
@@ -118,8 +149,8 @@ Resources:
                 - arm64
             Handler: index.watcherHandler
             MemorySize: 256
-            Timeout: 120
-            Role: !GetAtt LambdaRole.Arn
+            Timeout: 600
+            Role: !GetAtt WatcherRole.Arn
             Environment:
                 Variables:
                     AIRMAILAI_WEB_S3_BUCKET: !Ref WwwBucketName
@@ -146,7 +177,7 @@ Resources:
             Handler: index.updaterHandler
             MemorySize: 1024
             Timeout: 900
-            Role: !GetAtt LambdaRole.Arn
+            Role: !GetAtt UpdaterRole.Arn
             Environment:
                 Variables:
                     AIRMAILAI_WEB_S3_BUCKET: !Ref WwwBucketName
@@ -159,6 +190,20 @@ Resources:
                       throw new Error('placeholder code - run: bun run deploy:model-list');
                     };
                     exports.watcherHandler = exports.updaterHandler;
+
+    WatcherInvokeConfig:
+        Type: AWS::Lambda::EventInvokeConfig
+        Properties:
+            FunctionName: !Ref WatcherFunction
+            Qualifier: $LATEST
+            MaximumRetryAttempts: 0
+
+    UpdaterInvokeConfig:
+        Type: AWS::Lambda::EventInvokeConfig
+        Properties:
+            FunctionName: !Ref UpdaterFunction
+            Qualifier: $LATEST
+            MaximumRetryAttempts: 2
 
     HourlyRule:
         Type: AWS::Events::Rule

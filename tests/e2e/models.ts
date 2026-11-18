@@ -94,7 +94,7 @@ export const OPENROUTER_CACHE_MODELS: OpenRouterModel[] = [
         vendor: '~anthropic',
         contextWindow: 200_000,
         maxOutputTokens: 8192,
-        inputModalities: ['text', 'image'],
+        inputModalities: ['text', 'image', 'file'],
         supportedParams: ['tools', 'reasoning', 'max_tokens'],
         free: false,
         created: 1_730_000_000,

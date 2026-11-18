@@ -1,33 +1,32 @@
 import type {
+    ChatConfig,
     ChatMeta,
-    CustomModelConfig,
     AirmailAIChunk,
     AirmailAIMessage,
     DraftAttachment,
     DraftAttachmentMeta,
+    ProviderId,
+    SiteChatMeta,
     StoredChat,
-    StoredMessage,
     StreamErrorSource,
 } from '@airmailai/shared';
 import { SvelteMap } from 'svelte/reactivity';
 import { appMode } from './appMode.svelte';
+import { exportChat } from './chatExport';
+import { importChatsFromFile } from './chatImport';
 import {
-    backupFilename,
-    buildBackupExport,
-    buildAirmailAIJsonExport,
-    buildJsonExport,
-    buildMarkdownExport,
-    buildSillyTavernExport,
-    cleanInline,
-    exportFilename,
-    MAX_IMPORT_FILE_BYTES,
-    parseChatTransferFile,
-    sillyTavernFilename,
-    type ChatExportFormat,
-    type ChatTransferParseResult,
-    type ImportedChat,
-    type TransferChatInfo,
-} from './chatTransfer';
+    buildAssistantPlaceholder,
+    buildUserMessage,
+    chatFromMeta,
+    chatTitleFor,
+    chatToMeta,
+    removeMessageById,
+    snapshotChat,
+    storedToMessages,
+    toStoredMessage,
+} from './chatRecords';
+import { ChatSearch } from './chatSearch.svelte';
+import type { ChatExportFormat } from './chatTransfer';
 import {
     isTurnBusy,
     isTurnRemote,
@@ -41,7 +40,6 @@ import {
     clearFileBlobCache,
     deleteChat,
     deleteMessage,
-    importChats,
     loadChat,
     loadChatMetas,
     loadChatsByIds,
@@ -52,79 +50,17 @@ import {
     saveMeta,
     sendToExtension,
     stageDraftAttachment,
-    tabId,
 } from './extension';
-import { triggerBlobDownload } from './files';
+import { log } from './log';
 import { providersStore } from './providersStore.svelte';
-import { customModelTools } from './models/custom';
 import { validateModelRequest } from './modelValidation';
 import { settingsStore } from './settingsStore.svelte';
+import { buildTurnRequest, resolveWireTools } from './turnRequest';
+import type { Chat } from './types';
 import { versionCheck } from './versionCheck.svelte';
-import {
-    messageText,
-    type Chat,
-    type Message,
-    type SearchResult,
-} from './types';
-
-import { log } from './log';
-const IMPORT_BATCH_CHARS = 4 * 1024 * 1024;
 
 function formatStreamError(message: string, source: StreamErrorSource): string {
     return `${source === 'extension' ? 'Ext' : 'API'} Error: ${message}`;
-}
-
-const AUTO_TITLE_CHARS = 40;
-
-function chatTitleFor(content: string, attachments: DraftAttachment[]): string {
-    return (
-        cleanInline(content.replace(/\s+/g, ' '), AUTO_TITLE_CHARS) ||
-        cleanInline(attachments[0]?.name, AUTO_TITLE_CHARS) ||
-        'Empty chat'
-    );
-}
-
-function buildUserMessage(
-    id: string,
-    createdAt: number,
-    content: string,
-    attachments?: DraftAttachment[]
-): AirmailAIMessage {
-    const parts: AirmailAIMessage['parts'] = [];
-    if (content) {
-        parts.push({ type: 'text', text: content, state: 'done' });
-    }
-    for (const att of attachments ?? []) {
-        parts.push({
-            type: 'file',
-            filename: att.name,
-            mediaType: att.mediaType,
-            sizeBytes: att.sizeBytes,
-            hash: att.hash,
-        });
-    }
-    return {
-        id,
-        role: 'user',
-        parts,
-        metadata: { createdAt },
-    };
-}
-
-function buildAssistantPlaceholder(
-    id: string,
-    createdAt: number
-): AirmailAIMessage {
-    return {
-        id,
-        role: 'assistant',
-        parts: [],
-        metadata: { createdAt },
-    };
-}
-
-function toStoredMessage(chatId: string, msg: AirmailAIMessage): StoredMessage {
-    return { chatId, message: msg };
 }
 
 function chatSortKey(c: { createdAt: number; lastMessageAt?: number }): number {
@@ -133,67 +69,12 @@ function chatSortKey(c: { createdAt: number; lastMessageAt?: number }): number {
         : (c.lastMessageAt ?? c.createdAt);
 }
 
-function chatToMeta(chat: Chat): ChatMeta {
-    return {
-        customModel: chat.customModel ? { ...chat.customModel } : null,
-        id: chat.id,
-        title: chat.title,
-        createdAt: chat.createdAt,
-        ...(chat.lastMessageAt !== undefined
-            ? { lastMessageAt: chat.lastMessageAt }
-            : {}),
-        providerId: chat.providerId,
-        modelId: chat.modelId,
-        temperature: chat.temperature,
-        maxTokens: chat.maxTokens,
-        thinkingLevel: chat.thinkingLevel,
-        adaptiveThinking: chat.adaptiveThinking,
-        webSearch: chat.webSearch,
-        webFetch: chat.webFetch,
-        codeExecution: chat.codeExecution,
-        systemPrompt: chat.systemPrompt,
-    };
-}
-
-function chatFromMeta(meta: ChatMeta): Chat {
-    return { ...meta, messages: [], loadState: 'unloaded' };
-}
-
-function snapshotChat(chat: Chat): Chat {
-    return {
-        ...chat,
-        messages: [...chat.messages],
-        draftAttachments: [...(chat.draftAttachments ?? [])],
-    };
-}
-
-function storedToMessages(stored: StoredMessage[]): Message[] {
-    return stored.map((s) => s.message);
-}
-
-type SearchState =
-    | { kind: 'inactive' }
-    | { kind: 'results'; query: string; results: SearchResult[] }
-    | { kind: 'loading-all'; query: string; results: SearchResult[] };
-
-function removeMessageById(chat: Chat, messageId: string): void {
-    const index = chat.messages.findIndex((m) => m.id === messageId);
-    if (index >= 0) chat.messages.splice(index, 1);
-}
-
 class ChatStore {
     chats = $state<Chat[]>([]);
     activeChatId = $state<string | null>(null);
     private turns = new SvelteMap<string, TurnState>();
-    searchState = $state.raw<SearchState>({ kind: 'inactive' });
-    highlightMessageIndex = $state<number | null>(null);
+    readonly search = new ChatSearch(() => this.chats);
     fileStatusVersion = $state(0);
-    private searchCache = new SvelteMap<string, Message[]>();
-    unsearchedChatCount = $derived(
-        this.chats.filter(
-            (c) => c.loadState !== 'loaded' && !this.searchCache.has(c.id)
-        ).length
-    );
     sortedChats = $derived(
         [...this.chats].sort((a, b) => chatSortKey(b) - chatSortKey(a))
     );
@@ -271,132 +152,10 @@ class ChatStore {
     }
 
     loadDemo(): void {
-        const demoChats = buildDemoChats({
-            customModel: settingsStore.customModel
-                ? { ...settingsStore.customModel }
-                : null,
-            providerId: settingsStore.providerId,
-            modelId: settingsStore.modelId,
-            temperature: settingsStore.temperature,
-            maxTokens: settingsStore.maxTokens,
-            thinkingLevel: settingsStore.thinkingLevel,
-            adaptiveThinking: settingsStore.adaptiveThinking,
-            webSearch: settingsStore.webSearch,
-            webFetch: settingsStore.webFetch,
-            codeExecution: settingsStore.codeExecution,
-        });
+        const demoChats = buildDemoChats(settingsStore.snapshotChatConfig());
         this.chats = demoChats;
         this.activeChatId = demoChats[0].id;
         log.info('entered demo mode');
-    }
-
-    private matchChat(
-        id: string,
-        title: string,
-        messages: Message[],
-        q: string
-    ): SearchResult | null {
-        for (let i = 0; i < messages.length; i++) {
-            const content = messageText(messages[i]);
-            const idx = content.toLowerCase().indexOf(q);
-            if (idx !== -1) {
-                const start = Math.max(0, idx - 40);
-                const end = Math.min(content.length, idx + q.length + 60);
-                const snippet =
-                    (start > 0 ? '...' : '') +
-                    content.slice(start, end) +
-                    (end < content.length ? '...' : '');
-                return { id, title, snippet, matchIndex: i };
-            }
-        }
-        if (title.toLowerCase().includes(q)) {
-            const firstMsg = messages.find((m) => messageText(m).length > 0);
-            const firstText = firstMsg ? messageText(firstMsg) : '';
-            const snippet = firstText
-                ? firstText.slice(0, 100) +
-                  (firstText.length > 100 ? '...' : '')
-                : '';
-            return { id, title, snippet, matchIndex: null };
-        }
-        return null;
-    }
-
-    private matchAll(query: string): SearchResult[] {
-        const q = query.toLowerCase();
-        const results: SearchResult[] = [];
-        for (const chat of this.chats) {
-            const messages =
-                chat.loadState === 'loaded'
-                    ? chat.messages
-                    : this.searchCache.get(chat.id);
-            if (!messages) continue;
-            const result = this.matchChat(chat.id, chat.title, messages, q);
-            if (result) results.push(result);
-        }
-        return results;
-    }
-
-    search(query: string): void {
-        this.highlightMessageIndex = null;
-        this.searchState = {
-            kind:
-                this.searchState.kind === 'loading-all'
-                    ? 'loading-all'
-                    : 'results',
-            query,
-            results: this.matchAll(query),
-        };
-    }
-
-    private refreshSearchResults(): void {
-        if (this.searchState.kind === 'inactive') return;
-        this.searchState = {
-            ...this.searchState,
-            results: this.matchAll(this.searchState.query),
-        };
-    }
-
-    clearSearch(): void {
-        this.searchState = { kind: 'inactive' };
-        this.highlightMessageIndex = null;
-        this.searchCache.clear();
-    }
-
-    async searchAllChats(): Promise<void> {
-        if (this.searchState.kind !== 'results') return;
-        const unsearchedIds = this.chats
-            .filter(
-                (c) => c.loadState !== 'loaded' && !this.searchCache.has(c.id)
-            )
-            .map((c) => c.id);
-        if (unsearchedIds.length === 0) return;
-        this.searchState = { ...this.searchState, kind: 'loading-all' };
-        let fullChats: StoredChat[];
-        try {
-            fullChats = await loadChatsByIds(unsearchedIds);
-        } catch (err) {
-            if (this.searchState.kind === 'loading-all')
-                this.searchState = { ...this.searchState, kind: 'results' };
-            reportAppError(
-                'searchAllChats failed',
-                "Couldn't load all chats for search",
-                err
-            );
-            return;
-        }
-        if (this.searchState.kind !== 'loading-all') return;
-        const loaded = new Map(
-            fullChats.map((s) => [s.id, storedToMessages(s.messages)])
-        );
-        for (const id of unsearchedIds) {
-            this.searchCache.set(id, loaded.get(id) ?? []);
-        }
-        log.info('search cache built', `${fullChats.length} chats`);
-        this.searchState = {
-            kind: 'results',
-            query: this.searchState.query,
-            results: this.matchAll(this.searchState.query),
-        };
     }
 
     resetLocal(): void {
@@ -404,7 +163,7 @@ class ChatStore {
         for (const chatId of [...this.turns.keys()]) this.endTurn(chatId);
         this.chats = [];
         this.activeChatId = null;
-        this.clearSearch();
+        this.search.clear();
         clearFileBlobCache();
         settingsStore.systemPrompt = '';
         settingsStore.applyToolDefaults(providersStore.selectedModel);
@@ -436,7 +195,7 @@ class ChatStore {
     }
 
     async activate(id: string, matchIndex?: number | null): Promise<void> {
-        this.highlightMessageIndex = matchIndex ?? null;
+        this.search.highlightMessageIndex = matchIndex ?? null;
         log.info('select chat', id);
         this.activeChatId = id;
         errorStore.clearAppWarning();
@@ -509,7 +268,7 @@ class ChatStore {
 
     applyRemoteChatsImported(metas: ChatMeta[]): void {
         for (const meta of metas) {
-            this.searchCache.delete(meta.id);
+            this.search.forgetChat(meta.id);
             const chat = this.findChat(meta.id);
             if (chat?.loadState === 'loaded') {
                 void this.refreshChatFromIDB(meta.id, {
@@ -526,7 +285,7 @@ class ChatStore {
         messageId: string,
         revision: number
     ): Promise<void> {
-        this.searchCache.delete(chatId);
+        this.search.forgetChat(chatId);
         const chat = this.findChat(chatId);
         if (chat?.loadState !== 'loaded' || this.isChatBusy(chatId)) return;
         if (revision <= (chat.revision ?? 0)) return;
@@ -566,7 +325,7 @@ class ChatStore {
                 );
             }
             chat.revision = revision;
-            this.refreshSearchResults();
+            this.search.refreshResults();
         } catch (error) {
             reportAppError(
                 'message synchronization failed',
@@ -591,246 +350,21 @@ class ChatStore {
             });
     }
 
-    private transferInfo(meta: TransferChatInfo): TransferChatInfo {
-        return {
-            customModel: meta.customModel ? { ...meta.customModel } : null,
-            title: meta.title,
-            createdAt: meta.createdAt,
-            systemPrompt: meta.systemPrompt,
-            providerId: meta.providerId,
-            modelId: meta.modelId,
-        };
-    }
-
     async export(id: string, format: ChatExportFormat): Promise<void> {
         const chat = this.findChat(id);
-        if (!chat) return;
-
-        let messages = chat.messages;
-        if (chat.loadState !== 'loaded') {
-            try {
-                const full = await loadChat(id);
-                if (full) messages = storedToMessages(full.messages);
-            } catch (err) {
-                reportAppError(
-                    `export: loadChat failed (id=${id})`,
-                    "Couldn't load chat for export",
-                    err
-                );
-                return;
-            }
-        }
-
-        const info = this.transferInfo(chat);
-        let content: string;
-        let filename: string;
-        let mimeType: string;
-        if (format === 'airmailai') {
-            content = buildAirmailAIJsonExport(info, messages);
-            filename = exportFilename(chat.title, chat.createdAt, '.json');
-            mimeType = 'application/json';
-        } else if (format === 'lmstudio') {
-            content = buildJsonExport(info, messages);
-            filename = `${chat.createdAt}.conversation.json`;
-            mimeType = 'application/json';
-        } else if (format === 'sillytavern') {
-            content = buildSillyTavernExport(info, messages);
-            filename = sillyTavernFilename(chat.title, chat.createdAt);
-            mimeType = 'text/plain';
-        } else {
-            content = buildMarkdownExport(info, messages);
-            filename = exportFilename(chat.title, chat.createdAt, '.md');
-            mimeType = 'text/markdown';
-        }
-        triggerBlobDownload(filename, new Blob([content], { type: mimeType }));
-        log.info('exported chat', id, filename);
-    }
-
-    async exportAllChats(): Promise<void> {
-        let metas: ChatMeta[];
-        try {
-            metas = await loadChatMetas();
-        } catch (err) {
-            reportAppError(
-                'exportAllChats: metas failed',
-                "Couldn't load chat list for backup",
-                err
-            );
-            return;
-        }
-        if (metas.length === 0) {
-            reportAppError(
-                'exportAllChats: nothing to export',
-                'There are no chats to back up',
-                new Error('no chats')
-            );
-            return;
-        }
-        const sorted = metas.slice().sort((a, b) => a.createdAt - b.createdAt);
-        const parts: Blob[] = [];
-        let exported = 0;
-        try {
-            for (const meta of sorted) {
-                const stored = await loadChat(meta.id);
-                if (!stored) {
-                    throw new Error(
-                        `Conversation "${meta.title}" was deleted during backup. Please try again.`
-                    );
-                }
-                const content = buildBackupExport([
-                    {
-                        info: this.transferInfo(meta),
-                        messages: storedToMessages(stored.messages),
-                    },
-                ]);
-                parts.push(new Blob([exported ? '---\n' : '', content]));
-                exported++;
-            }
-        } catch (err) {
-            reportAppError(
-                'exportAllChats: chats failed',
-                "Couldn't load chats for backup",
-                err
-            );
-            return;
-        }
-        triggerBlobDownload(
-            backupFilename(new Date()),
-            new Blob(parts, {
-                type: 'application/yaml',
-            })
-        );
-        log.info('exported backup', `${exported} chats`);
-    }
-
-    private resolveImportedModel(
-        model: string | null,
-        custom: boolean
-    ): { providerId: string; modelId: string } | null {
-        if (!model) return null;
-        const slash = model.indexOf('/');
-        if (slash <= 0) return null;
-        const providerId = model.slice(0, slash);
-        const modelId = model.slice(slash + 1);
-        const provider = providersStore.providers.find(
-            (p) => p.id === providerId
-        );
-        if (!provider) return null;
-        if (!custom && !provider.models.some((m) => m.id === modelId))
-            return null;
-        return { providerId, modelId };
-    }
-
-    private buildImportedChat(imp: ImportedChat): Chat {
-        const createdAt = imp.createdAt || Date.now();
-        const resolved = this.resolveImportedModel(
-            imp.model,
-            !!imp.customModel
-        );
-        const messages: Message[] = imp.messages.map((m, i) => ({
-            id: crypto.randomUUID(),
-            role: m.role,
-            parts: [{ type: 'text', text: m.text, state: 'done' }],
-            metadata: { createdAt: createdAt + i },
-        }));
-        return {
-            id: crypto.randomUUID(),
-            title: imp.title || 'Imported Chat',
-            messages,
-            loadState: 'loaded',
-            createdAt,
-            lastMessageAt: messages.length
-                ? messages[messages.length - 1].metadata.createdAt
-                : createdAt,
-            ...settingsStore.snapshotChatConfig(),
-            ...(resolved
-                ? {
-                      ...resolved,
-                      customModel: imp.customModel
-                          ? { ...imp.customModel }
-                          : null,
-                  }
-                : {}),
-            systemPrompt: imp.systemPrompt,
-        };
-    }
-
-    private async persistImportedChats(chats: Chat[]): Promise<Chat[]> {
-        if (appMode.isDemo) return chats;
-        const saved: Chat[] = [];
-        let batch: Chat[] = [];
-        let batchChars = 0;
-        const flush = async () => {
-            if (batch.length === 0) return;
-            const entries = batch.map((chat) => ({
-                meta: chatToMeta(chat),
-                messages: chat.messages,
-            }));
-            try {
-                await importChats(entries);
-                saved.push(...batch);
-            } catch (err) {
-                reportAppError(
-                    `import: save failed (${batch.length} chats)`,
-                    `Couldn't save ${batch.length} imported chat${batch.length === 1 ? '' : 's'}`,
-                    err
-                );
-            }
-            batch = [];
-            batchChars = 0;
-        };
-        for (const chat of chats) {
-            const chars = chat.messages.reduce(
-                (total, m) => total + messageText(m).length,
-                0
-            );
-            if (batch.length > 0 && batchChars + chars > IMPORT_BATCH_CHARS) {
-                await flush();
-            }
-            batch.push(chat);
-            batchChars += chars;
-        }
-        await flush();
-        return saved;
+        if (chat) await exportChat(chat, format);
     }
 
     async importChatFile(file: File): Promise<number> {
-        if (file.size > MAX_IMPORT_FILE_BYTES) {
-            reportAppError(
-                `import: file too large (${file.name})`,
-                `Couldn't import ${file.name}`,
-                new Error(`file is too large (${file.size} bytes)`)
-            );
-            return 0;
-        }
-        let result: ChatTransferParseResult;
-        try {
-            const text = await file.text();
-            result = parseChatTransferFile(file.name, text);
-        } catch (err) {
-            reportAppError(
-                `import: parse failed (${file.name})`,
-                `Couldn't import ${file.name}`,
-                err
-            );
-            return 0;
-        }
-        if (result.skipped.length) {
-            reportAppError(
-                `import: skipped records (${file.name})`,
-                `Skipped ${result.skipped.length} unreadable chat${result.skipped.length === 1 ? '' : 's'} in ${file.name}`,
-                new Error(result.skipped.join('; '))
-            );
-        }
-        const saved = await this.persistImportedChats(
-            result.chats.map((chat) => this.buildImportedChat(chat))
-        );
-        this.chats.push(...saved);
-        if (saved.length === 1) {
-            await this.activate(saved[0].id);
-        }
-        log.info('imported chats', `${saved.length} from ${file.name}`);
-        return saved.length;
+        let count = 0;
+        let lastId = '';
+        await importChatsFromFile(file, (chats) => {
+            this.chats.push(...chats);
+            count += chats.length;
+            lastId = chats[chats.length - 1].id;
+        });
+        if (count === 1) await this.activate(lastId);
+        return count;
     }
 
     editMessage(index: number, content: string): void {
@@ -948,7 +482,7 @@ class ChatStore {
 
     async addDraftAttachment(
         chatId: string,
-        replicateTo: string | undefined,
+        replicateTo: ProviderId | undefined,
         attachment: DraftAttachmentMeta,
         file: File,
         onProgress?: (progress: number) => void
@@ -997,11 +531,10 @@ class ChatStore {
     }
 
     private validateModelConfig(
-        config: {
-            providerId: string;
-            modelId: string;
-            customModel: CustomModelConfig | null;
-        } = settingsStore
+        config: Pick<
+            ChatConfig,
+            'providerId' | 'modelId' | 'customModel'
+        > = settingsStore
     ): boolean {
         try {
             validateModelRequest(
@@ -1058,11 +591,9 @@ class ChatStore {
                 reportAppError(
                     `sendMessage: chat not loaded (id=${chatId})`,
                     'This chat is still loading, try again in a moment',
-                    new Error(
-                        existing
-                            ? 'active chat messages not loaded yet'
-                            : 'active chat missing from memory'
-                    )
+                    existing
+                        ? 'active chat messages not loaded yet'
+                        : 'active chat missing from memory'
                 );
                 return false;
             }
@@ -1087,9 +618,10 @@ class ChatStore {
             existingChat: chatId,
         });
 
+        const lastMessage = chat.messages[chat.messages.length - 1];
         const userMsg = buildUserMessage(
             crypto.randomUUID(),
-            Date.now(),
+            Math.max(Date.now(), (lastMessage?.metadata.createdAt ?? 0) + 1),
             content,
             draftAttachments
         );
@@ -1206,6 +738,7 @@ class ChatStore {
             return;
         }
         if (turn?.kind !== 'local-streaming') return;
+        this.turns.set(chatId, { ...turn, stopRequested: true });
         turn.handle.stop(visibleChars);
         turn.pipeline.truncate(visibleChars);
     }
@@ -1222,97 +755,42 @@ class ChatStore {
             return;
         }
 
-        const selectedModel = providersStore.providers
-            .find((p) => p.id === chat.providerId)
-            ?.models.find((m) => m.id === chat.modelId);
-        const modelParams = selectedModel?.params;
-        const wireTools: Record<string, string | boolean> = {};
-        const modelTools = chat.customModel
-            ? customModelTools(chat.providerId, chat.customModel)
-            : selectedModel?.tools;
-        const toolConfig = chat.customModel ?? chat;
-        if (
-            modelTools?.webSearch &&
-            settingsStore.enableWebSearch &&
-            toolConfig.webSearch
-        ) {
-            wireTools.webSearch = modelTools.webSearch;
-        }
-        if (
-            modelTools?.webFetch &&
-            settingsStore.enableWebFetch &&
-            toolConfig.webFetch
-        ) {
-            wireTools.webFetch = modelTools.webFetch;
-        }
-        if (
-            modelTools?.codeExecution &&
-            settingsStore.enableCodeExecution &&
-            toolConfig.codeExecution
-        ) {
-            wireTools.codeExecution = modelTools.codeExecution;
-        }
+        const wireTools = resolveWireTools(chat);
         const mayHaveContainerOutputs =
             chat.providerId === 'openai' && !!wireTools.codeExecution;
         const assistantRef = chat.messages[chat.messages.length - 1];
         const pipeline = new StreamPipeline(chat, assistantRef);
-        const isCurrentTurn = () => {
+        const currentTurn = () => {
             const turn = this.turns.get(chatId);
-            return (
-                turn?.kind === 'local-streaming' && turn.pipeline === pipeline
-            );
+            return turn?.kind === 'local-streaming' &&
+                turn.pipeline === pipeline
+                ? turn
+                : undefined;
         };
 
         const handle = sendToExtension(
-            {
-                chatId,
-                sourceTabId: tabId,
-                provider: chat.providerId,
-                model: chat.modelId,
-                ...(chat.systemPrompt.trim()
-                    ? { system: chat.systemPrompt }
-                    : {}),
-                params: {
-                    ...(chat.customModel
-                        ? { customModel: { ...chat.customModel } }
-                        : {
-                              ...(modelParams?.temperatureMax !== undefined
-                                  ? { temperature: chat.temperature }
-                                  : {}),
-                              maxTokens: chat.maxTokens,
-                              ...(modelParams?.thinking
-                                  ? {
-                                        thinkingLevel: chat.thinkingLevel,
-                                        adaptiveThinking: chat.adaptiveThinking,
-                                    }
-                                  : {}),
-                          }),
-                    tools: wireTools,
-                    tagOpenRouterRequests: settingsStore.tagOpenRouterRequests,
-                    openRouterPdfEngine: settingsStore.openRouterPdfEngine,
-                },
-                meta: chatToMeta(chat),
-                assistantMessageId: assistantId,
-                assistantCreatedAt: assistantRef.metadata.createdAt,
-            },
+            buildTurnRequest(chat, assistantId, assistantRef, wireTools),
             {
                 onChunk: (chunk) => {
-                    if (isCurrentTurn()) pipeline.push(chunk);
+                    if (currentTurn()) pipeline.push(chunk);
                 },
                 onDone: (revision) => {
-                    if (!isCurrentTurn()) return;
+                    const turn = currentTurn();
+                    if (!turn) return;
                     chat.revision = revision;
                     this.endTurn(chatId);
                     versionCheck.maybeCheckWebVersion();
-                    if (mayHaveContainerOutputs) {
+                    if (!assistantRef.parts.length)
+                        removeMessageById(chat, assistantId);
+                    if (mayHaveContainerOutputs || turn.stopRequested) {
                         void this.refreshChatFromIDB(chatId, {
-                            context: 'onDone: refresh after file capture',
+                            context: 'onDone: refresh saved response',
                             userMessage: "Couldn't refresh chat from storage",
                         });
                     }
                 },
                 onError: (msg, source, revision) => {
-                    if (!isCurrentTurn()) return;
+                    if (!currentTurn()) return;
                     if (revision !== undefined) chat.revision = revision;
                     this.endTurn(chatId, formatStreamError(msg, source));
                     versionCheck.maybeCheckWebVersion();
@@ -1321,12 +799,17 @@ class ChatStore {
                 },
             }
         );
-        this.turns.set(chatId, { kind: 'local-streaming', handle, pipeline });
+        this.turns.set(chatId, {
+            kind: 'local-streaming',
+            handle,
+            pipeline,
+            stopRequested: false,
+        });
     }
 
     applyRemoteTurnStart(
         chatId: string,
-        meta: ChatMeta,
+        meta: SiteChatMeta,
         assistantMessageId: string,
         assistantCreatedAt: number
     ): void {
@@ -1403,7 +886,11 @@ class ChatStore {
         try {
             turn.pipeline.push(chunk);
         } catch (e) {
-            log.warn('remote chunk apply failed', e);
+            reportAppError(
+                'remote chunk apply failed',
+                "Couldn't display a streamed update from another tab",
+                e
+            );
         }
     }
 

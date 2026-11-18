@@ -4,6 +4,7 @@ import {
     parseAssetRetentionManifest,
     planAssetRetention,
 } from './asset-retention';
+import { assertKnownFlags } from './cli-flags';
 
 function requireEnv(name: string): string {
     const value = process.env[name]?.trim();
@@ -16,10 +17,62 @@ const DIST_ID = requireEnv('AIRMAILAI_WEB_CLOUDFRONT_DISTRIBUTION_ID');
 process.env.AWS_PROFILE = requireEnv('AIRMAILAI_WEB_AWS_PROFILE');
 const SHORT_CACHE = 'public, max-age=300, must-revalidate';
 const LONG_CACHE = 'public, max-age=31536000, immutable';
+const SITE_ORIGIN = 'https://airmailai.net';
+const SECURITY_HEADER_PATHS = ['/', '/app/'];
+const EXPECTED_SECURITY_HEADERS: Record<string, string> = {
+    'Content-Security-Policy':
+        "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+    'Strict-Transport-Security': 'max-age=63072000; includeSubDomains',
+    'X-Frame-Options': 'DENY',
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer',
+    'Cross-Origin-Opener-Policy': 'same-origin',
+    'Permissions-Policy':
+        'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()',
+};
+
+async function verifySecurityHeaders(): Promise<void> {
+    const problems: string[] = [];
+    for (const path of SECURITY_HEADER_PATHS) {
+        const response = await fetch(`${SITE_ORIGIN}${path}`, {
+            method: 'HEAD',
+            cache: 'no-store',
+        });
+        if (!response.ok) {
+            problems.push(`${path}: HTTP ${response.status}`);
+            continue;
+        }
+        for (const [name, expected] of Object.entries(
+            EXPECTED_SECURITY_HEADERS
+        )) {
+            const actual = response.headers.get(name);
+            if (actual === expected) continue;
+            problems.push(
+                actual === null
+                    ? `${path}: ${name} is missing`
+                    : `${path}: ${name} is "${actual}", expected "${expected}"`
+            );
+        }
+    }
+    if (problems.length > 0) {
+        throw new Error(
+            `The deploy finished, but the live security headers do not match the expected CloudFront response headers policy:\n${problems.join('\n')}`
+        );
+    }
+}
 
 const root = join(import.meta.dirname, '..');
 const dist = join(root, 'packages/airmailai_web/dist');
 const retentionKey = 'deploy-metadata/asset-retention.json';
+
+const args = process.argv.slice(2);
+assertKnownFlags(args, ['--allow-dirty']);
+const uncommitted = (await $`git status --porcelain`.cwd(root).text()).trim();
+if (uncommitted && !args.includes('--allow-dirty')) {
+    throw new Error(
+        `Refusing to deploy with uncommitted changes - commit them or pass --allow-dirty:\n${uncommitted}`
+    );
+}
 
 console.log(
     `> Verifying AWS credentials (profile ${process.env.AWS_PROFILE})...`
@@ -70,17 +123,22 @@ if (!currentAssets.length) throw new Error('No built assets found.');
 console.log('\n> S3 sync /assets/* (immutable long cache)...');
 await $`aws s3 sync ${dist}/assets/ s3://${BUCKET}/assets/ --cache-control ${LONG_CACHE} --no-progress`;
 
-console.log('\n> S3 cp /legal/* (text/markdown)...');
-await $`aws s3 cp ${dist}/legal/ s3://${BUCKET}/legal/ --recursive --cache-control ${SHORT_CACHE} --content-type "text/markdown; charset=utf-8" --no-progress`;
+console.log('\n> S3 cp /legal/*.md (text/markdown)...');
+await $`aws s3 cp ${dist}/legal/ s3://${BUCKET}/legal/ --recursive --exclude "*" --include "*.md" --cache-control ${SHORT_CACHE} --content-type "text/markdown; charset=utf-8" --no-progress`;
+
+console.log('\n> S3 cp /legal/*.txt (text/plain)...');
+await $`aws s3 cp ${dist}/legal/ s3://${BUCKET}/legal/ --recursive --exclude "*" --include "*.txt" --cache-control ${SHORT_CACHE} --content-type "text/plain; charset=utf-8" --no-progress`;
 
 console.log('\n> S3 cp /changelog.md (text/markdown)...');
 await $`aws s3 cp ${dist}/changelog.md s3://${BUCKET}/changelog.md --cache-control ${SHORT_CACHE} --content-type "text/markdown; charset=utf-8" --no-progress`;
 
-console.log('\n> S3 cp /security.txt (text/plain)...');
-await $`aws s3 cp ${dist}/security.txt s3://${BUCKET}/security.txt --cache-control ${SHORT_CACHE} --content-type "text/plain; charset=utf-8" --no-progress`;
+console.log('\n> S3 cp security.txt (text/plain)...');
+for (const key of ['.well-known/security.txt', 'security.txt']) {
+    await $`aws s3 cp ${dist}/security.txt s3://${BUCKET}/${key} --cache-control ${SHORT_CACHE} --content-type "text/plain; charset=utf-8" --no-progress`;
+}
 
 console.log('\n> S3 sync HTML/root (short cache, --delete)...');
-await $`aws s3 sync ${dist}/ s3://${BUCKET}/ --exclude "assets/*" --exclude "legal/*" --exclude "changelog.md" --exclude "security.txt" --exclude "deploy-metadata/*" --exclude "models.json" --cache-control ${SHORT_CACHE} --delete --no-progress`;
+await $`aws s3 sync ${dist}/ s3://${BUCKET}/ --exclude "assets/*" --exclude "legal/*" --exclude "changelog.md" --exclude "security.txt" --exclude ".well-known/*" --exclude "deploy-metadata/*" --exclude "models.json" --cache-control ${SHORT_CACHE} --delete --no-progress`;
 
 console.log('\n> CloudFront invalidation...');
 const invalidation =
@@ -121,4 +179,7 @@ for (let offset = 0; offset < retention.expired.length; offset += 1000) {
         );
 }
 
-console.log('\nDeployed: https://airmailai.net');
+console.log('\n> Verifying live security headers...');
+await verifySecurityHeaders();
+
+console.log(`\nDeployed: ${SITE_ORIGIN}`);

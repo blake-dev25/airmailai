@@ -1,11 +1,16 @@
 import { FileState, GoogleGenAI, type File as GoogleFile } from '@google/genai';
 import type { ProviderFileEntry, ProviderFileInfo } from '@airmailai/shared';
+import { makeDebugFetch } from './debug-fetch';
 
 const PROCESSING_POLL_MS = 1000;
 const PROCESSING_MAX_POLLS = 60;
 
 function fileClient(apiKey: string): GoogleGenAI {
-    return new GoogleGenAI({ apiKey });
+    const debugFetch = makeDebugFetch('google');
+    return new GoogleGenAI({
+        apiKey,
+        ...(debugFetch ? { httpOptions: { fetch: debugFetch } } : {}),
+    });
 }
 
 function toEntry(file: GoogleFile): ProviderFileEntry {
@@ -66,7 +71,6 @@ export async function listGoogleFiles(
         files.push({
             fileId: file.name,
             filename: file.displayName ?? file.name,
-            mediaType: file.mimeType ?? '',
             sizeBytes: file.sizeBytes ? Number(file.sizeBytes) : 0,
             createdAt: file.createTime
                 ? new Date(file.createTime).getTime()

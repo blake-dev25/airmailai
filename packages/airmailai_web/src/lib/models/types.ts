@@ -1,7 +1,9 @@
+import type { ProviderId } from '@airmailai/shared';
+
 export type ThinkingLevel =
     'none' | 'minimal' | 'low' | 'medium' | 'high' | 'max' | 'xhigh';
 
-export type VisibleModelTier = 'new' | 'latest' | 'previous' | 'legacy';
+export type VisibleModelTier = 'new' | 'latest' | 'legacy';
 export type ModelTier = VisibleModelTier | 'test';
 export type ModelTierFilter = Exclude<ModelTier, 'new'>;
 export type ModelTierAssignment =
@@ -46,7 +48,7 @@ export interface ModelOption {
 }
 
 export interface ProviderOption {
-    id: string;
+    id: ProviderId;
     name: string;
     models: ModelOption[];
     marketplace?: boolean;
@@ -55,7 +57,7 @@ export interface ProviderOption {
 
 export type ProviderMeta = Omit<ProviderOption, 'models'>;
 
-export type FirstPartyProviderId = 'anthropic' | 'openai' | 'google';
+export type FirstPartyProviderId = Exclude<ProviderId, 'openrouter'>;
 
 export interface ModelsFile {
     schemaVersion: 1;

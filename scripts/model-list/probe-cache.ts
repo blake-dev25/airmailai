@@ -2,14 +2,17 @@ import type { ModelProbeResult, ModelProbeStatus, Provider } from './shared';
 import type { StateStore } from './state-store';
 
 export const PROBE_CACHE_KEY = 'probe-cache.json';
-export const NON_200_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+export const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-const PROBE_STATUSES: ModelProbeStatus[] = ['ok', 'grandfathered', 'dead'];
+const PROBE_STATUSES: ModelProbeStatus[] = [
+    'ok',
+    'grandfathered',
+    'dead',
+    'unsupported',
+];
 const CACHE_PROVIDERS: Provider[] = ['anthropic', 'openai', 'google'];
 
-interface StoredProbe extends ModelProbeResult {
-    probedAt: number;
-}
+type StoredProbe = ModelProbeResult & { probedAt: number };
 
 type CacheSections = Record<Provider, Record<string, StoredProbe>>;
 
@@ -23,8 +26,8 @@ export interface ProbeCacheSection {
     set(key: string, result: ModelProbeResult): void;
 }
 
-export function non200Expired(cachedAt: number, now: number): boolean {
-    return now - cachedAt > NON_200_CACHE_TTL_MS;
+export function cacheExpired(cachedAt: number, now: number): boolean {
+    return now - cachedAt > CACHE_TTL_MS;
 }
 
 export class ProbeCache {
@@ -84,13 +87,12 @@ export class ProbeCache {
                 const stored = store[key];
                 if (!stored) return undefined;
                 if (
-                    stored.code !== '200' &&
-                    (this.options.retryNon200 ||
-                        non200Expired(stored.probedAt, Date.now()))
+                    cacheExpired(stored.probedAt, Date.now()) ||
+                    (stored.code !== '200' && this.options.retryNon200)
                 ) {
                     return undefined;
                 }
-                return { status: stored.status, code: stored.code };
+                return stored;
             },
             set: (key, result) => {
                 store[key] = { ...result, probedAt: Date.now() };
@@ -126,11 +128,12 @@ export function splitCachedProbes<T>(
 
 function isStoredProbe(value: unknown): value is StoredProbe {
     if (!value || typeof value !== 'object') return false;
-    const candidate = value as Partial<StoredProbe>;
+    const candidate = value as Record<string, unknown>;
     return (
-        candidate.status !== undefined &&
-        PROBE_STATUSES.includes(candidate.status) &&
+        PROBE_STATUSES.some((status) => status === candidate.status) &&
         typeof candidate.code === 'string' &&
-        typeof candidate.probedAt === 'number'
+        typeof candidate.probedAt === 'number' &&
+        (candidate.status !== 'unsupported' ||
+            typeof candidate.message === 'string')
     );
 }

@@ -1,32 +1,17 @@
 import type {
     AirmailAIMessage,
     DraftAttachment,
-    CustomModelConfig,
+    SiteChatMeta,
 } from '@airmailai/shared';
 
 export type Message = AirmailAIMessage;
 
 export type ChatLoadState = 'unloaded' | 'loading' | 'loaded';
 
-export interface Chat {
-    customModel: CustomModelConfig | null;
-    id: string;
-    title: string;
+export interface Chat extends SiteChatMeta {
     messages: AirmailAIMessage[];
     loadState: ChatLoadState;
-    createdAt: number;
-    lastMessageAt?: number;
     revision?: number;
-    systemPrompt: string;
-    providerId: string;
-    modelId: string;
-    temperature: number;
-    maxTokens: number;
-    thinkingLevel: string;
-    adaptiveThinking: boolean;
-    webSearch: boolean;
-    webFetch: boolean;
-    codeExecution: boolean;
     draftAttachments?: DraftAttachment[];
 }
 

@@ -1,4 +1,4 @@
-import { PROVIDER_ENV } from './env';
+import { BASE_URL, PROVIDER_ENV } from './env';
 import {
     test as base,
     expect,
@@ -39,7 +39,6 @@ const LEGAL_DIR = path.join(
     'static',
     'legal'
 );
-const BASE_URL = process.env.AIRMAILAI_BASE_URL ?? 'http://localhost:5173';
 
 export const QUICK_TIMEOUT = 30_000;
 export const TOOL_TURN_TIMEOUT = 120_000;
@@ -306,22 +305,29 @@ export class AirmailAI {
             .fill(text);
     }
 
-    async editAssistant(newText: string): Promise<void> {
-        const msg = this.assistantMessages().last();
+    private async editLastMessage(
+        role: 'user' | 'assistant',
+        newText: string
+    ): Promise<void> {
+        const messages =
+            role === 'user' ? this.userMessages() : this.assistantMessages();
+        const msg = messages.last();
         await msg.hover();
         await msg.getByRole('button', { name: 'Edit' }).click();
         const editor = msg.getByRole('textbox');
         await editor.fill(newText);
         await msg.getByRole('button', { name: 'Save', exact: true }).click();
+        await expect
+            .poll(async () => (await this.persistedTexts(role)).at(-1))
+            .toBe(newText);
+    }
+
+    async editAssistant(newText: string): Promise<void> {
+        await this.editLastMessage('assistant', newText);
     }
 
     async editUser(newText: string): Promise<void> {
-        const msg = this.userMessages().last();
-        await msg.hover();
-        await msg.getByRole('button', { name: 'Edit' }).click();
-        const editor = msg.getByRole('textbox');
-        await editor.fill(newText);
-        await msg.getByRole('button', { name: 'Save', exact: true }).click();
+        await this.editLastMessage('user', newText);
     }
 
     async expandCode(): Promise<void> {
@@ -410,6 +416,10 @@ export class AirmailAI {
 
     readDb(): Promise<{ metas: StoredMeta[]; messages: StoredMsg[] }> {
         return readExtDb(this.sw);
+    }
+
+    readSyncSettings(): Promise<Record<string, unknown>> {
+        return this.sw.evaluate(() => chrome.storage.sync.get());
     }
 
     async failNextDbPut(storeName: string): Promise<void> {
@@ -550,6 +560,11 @@ export class AirmailAI {
         chatId?: string
     ): Promise<StoredMsg[]> {
         const { metas, messages } = await this.readDb();
+        if (chatId === undefined && metas.length > 1) {
+            throw new Error(
+                `${metas.length} chats are stored - pass a chatId to choose one.`
+            );
+        }
         const id = chatId ?? metas[0]?.id;
         return messages
             .filter((m) => m.chatId === id && m.message.role === role)
@@ -625,9 +640,11 @@ export class AirmailAI {
                 .poll(async () => normalizeText(await lastPersisted()))
                 .toBe(target);
         } else {
-            await expect
-                .poll(async () => (await lastPersisted()).length)
-                .toBeGreaterThan(0);
+            const persisted = expect.poll(lastPersisted);
+            if (needle === undefined) await persisted.not.toBe('');
+            else if (typeof needle === 'string')
+                await persisted.toContain(needle);
+            else await persisted.toMatch(needle);
         }
     }
 }
@@ -655,10 +672,6 @@ export const test = base.extend<AirmailAIOptions & AirmailAIFixtures>({
     seedFileUploadsEnabled: [false, { option: true }],
     // eslint-disable-next-line no-empty-pattern
     context: async ({}, use) => {
-        // *** '' = ephemeral profile, auto-removed on close. headed: MV3 extensions
-        // don't load in old headless. Bundled Chromium (no `channel`): stable
-        // Chrome (~137+) blocks the --load-extension flag we rely on, while
-        // Playwright's Chromium still honors it.
         const context = await chromium.launchPersistentContext('', {
             headless: false,
             baseURL: BASE_URL,

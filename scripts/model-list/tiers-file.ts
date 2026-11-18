@@ -33,9 +33,15 @@ export function syncTiersFile(text: string, file: ModelsFile): TiersSync {
         let end = start + 1;
         while (end < lines.length && !SECTION_END.test(lines[end])) end++;
 
-        const entries = lines.slice(start + 1, end).flatMap((line) => {
+        const entries = lines.slice(start + 1, end).flatMap((line, offset) => {
+            if (line.trim() === '') return [];
             const match = line.match(TIER_ENTRY);
-            return match ? [{ id: match[1], assignment: match[2] }] : [];
+            if (!match) {
+                throw new Error(
+                    `${LOCAL_TIERS_FILE}:${start + 2 + offset} is not a single-line "'id': tier," entry in the ${provider} section: ${line.trim()}`
+                );
+            }
+            return [{ id: match[1], assignment: match[2] }];
         });
         const listed = new Set(ids);
         for (const entry of entries) {

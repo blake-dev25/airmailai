@@ -1,18 +1,5 @@
-import type { AirmailAIMessage, CustomModelConfig } from '@airmailai/shared';
+import type { AirmailAIMessage, ChatConfig } from '@airmailai/shared';
 import type { Chat } from './types';
-
-interface DemoConfig {
-    customModel: CustomModelConfig | null;
-    providerId: string;
-    modelId: string;
-    temperature: number;
-    maxTokens: number;
-    thinkingLevel: string;
-    adaptiveThinking: boolean;
-    webSearch: boolean;
-    webFetch: boolean;
-    codeExecution: boolean;
-}
 
 const eggsBenedict =
     "Classic eggs benedict - here's the rundown:\n\n" +
@@ -91,7 +78,7 @@ function assistantMsg(
     };
 }
 
-export function buildDemoChats(config: DemoConfig): Chat[] {
+export function buildDemoChats(config: ChatConfig): Chat[] {
     const now = Date.now();
     const id = () => crypto.randomUUID();
     let tick = 0;
@@ -108,8 +95,8 @@ export function buildDemoChats(config: DemoConfig): Chat[] {
             ],
             loadState: 'loaded',
             createdAt: now,
-            systemPrompt: '',
             ...config,
+            systemPrompt: '',
         },
         {
             id: 'demo-2',
@@ -126,8 +113,8 @@ export function buildDemoChats(config: DemoConfig): Chat[] {
             ],
             loadState: 'loaded',
             createdAt: now - 1000,
-            systemPrompt: '',
             ...config,
+            systemPrompt: '',
         },
         {
             id: 'demo-3',
@@ -138,8 +125,8 @@ export function buildDemoChats(config: DemoConfig): Chat[] {
             ],
             loadState: 'loaded',
             createdAt: now - 2000,
-            systemPrompt: '',
             ...config,
+            systemPrompt: '',
         },
     ];
 }

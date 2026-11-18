@@ -28,3 +28,6 @@ if (existsSync(ENV_PATH)) {
         if (!(key in process.env)) process.env[key] = value;
     }
 }
+
+export const BASE_URL =
+    process.env.AIRMAILAI_BASE_URL ?? 'http://localhost:5173';

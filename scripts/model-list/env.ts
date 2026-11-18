@@ -11,6 +11,7 @@ export const LOCAL_TIERS_FILE = resolve(
 );
 export const MODELS_FILE_KEY = 'models.json';
 export const SNAPSHOT_PREFIX = 'snapshots/';
+export const SNAPSHOT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 export type ApiKeyName =
     | 'ANTHROPIC_API_KEY'
@@ -71,6 +72,7 @@ export async function loadSecretsFromSsm(): Promise<void> {
     const { SSMClient, GetParametersByPathCommand } =
         await import('@aws-sdk/client-ssm');
     const client = new SSMClient({});
+    const secretNames: readonly string[] = SECRET_ENV_NAMES;
     let nextToken: string | undefined;
     let loaded = 0;
     do {
@@ -84,6 +86,12 @@ export async function loadSecretsFromSsm(): Promise<void> {
         for (const param of page.Parameters ?? []) {
             if (!param.Name || param.Value === undefined) continue;
             const name = param.Name.slice(param.Name.lastIndexOf('/') + 1);
+            if (!secretNames.includes(name)) {
+                console.log(
+                    `WARN ignoring unexpected SSM parameter ${param.Name}`
+                );
+                continue;
+            }
             process.env[name] = param.Value;
             loaded++;
         }

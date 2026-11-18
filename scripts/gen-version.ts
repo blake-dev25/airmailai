@@ -19,8 +19,10 @@ const [year, month, day] = commitDateIso.split('T')[0].split('-').map(Number);
 const dateCode = `${year % 100}.${month}.${day}`;
 
 const buildNum = process.env.BUILD_NUM ?? '1';
-if (!/^[1-9]\d*$/.test(buildNum)) {
-    throw new Error(`BUILD_NUM must be a positive integer, got "${buildNum}"`);
+if (!/^[1-9]\d*$/.test(buildNum) || Number(buildNum) > 65535) {
+    throw new Error(
+        `BUILD_NUM must be an integer from 1 to 65535, got "${buildNum}"`
+    );
 }
 
 const version = `${dateCode}.${buildNum}`;

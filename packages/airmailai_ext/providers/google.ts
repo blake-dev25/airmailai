@@ -1,5 +1,6 @@
 import {
     type Content,
+    type GenerateContentResponseUsageMetadata,
     GoogleGenAI,
     type GroundingChunk,
     type GroundingSupport,
@@ -16,11 +17,11 @@ import type {
     AirmailAIMessageMetadata,
     ProviderStreamArgs,
 } from '@airmailai/shared';
-import { log } from '../debug';
 import { base64ToBytes, hashBytes } from '../storage/encoding';
 import { type ProviderReplicas, resolveAttachments } from './attachments';
 import { foldReplayIntoText } from './fold-replay';
 import { customModelParameters, getCustomModel } from './custom-model';
+import { makeDebugFetch } from './debug-fetch';
 
 function outputFilename(index: number, mediaType: string): string {
     const subtype = mediaType.split('/')[1]?.split(';')[0] ?? '';
@@ -38,6 +39,7 @@ function mapStopReason(
         case 'STOP':
             return 'stop';
         case 'MAX_TOKENS':
+        case 'CONTINUATION':
             return 'length';
         case 'SAFETY':
         case 'RECITATION':
@@ -82,7 +84,7 @@ function buildThinkingConfig(
         medium: ThinkingLevel.MEDIUM,
         high: ThinkingLevel.HIGH,
         max: ThinkingLevel.HIGH,
-        xhigh: ThinkingLevel.HIGH,
+        xhigh: ThinkingLevel.XHIGH,
     };
     const level = levelMap[thinkingLevel];
     if (!level) return undefined;
@@ -100,7 +102,6 @@ function toGoogleContents(
         if (text) parts.push({ text });
         for (const att of resolveAttachments(msg, blobs, replicas)) {
             if (att.kind === 'provider') {
-                if (att.providerId !== 'google') continue;
                 if (att.uri) {
                     parts.push({
                         fileData: {
@@ -135,7 +136,11 @@ function toGoogleContents(
 export async function* streamGoogle(
     args: ProviderStreamArgs
 ): AsyncGenerator<AirmailAIChunk> {
-    const client = new GoogleGenAI({ apiKey: args.apiKey });
+    const debugFetch = makeDebugFetch('google');
+    const client = new GoogleGenAI({
+        apiKey: args.apiKey,
+        ...(debugFetch ? { httpOptions: { fetch: debugFetch } } : {}),
+    });
     const customModel = getCustomModel(args);
 
     const thinkingLevel = args.params.thinkingLevel as string | undefined;
@@ -159,7 +164,7 @@ export async function* streamGoogle(
 
     const replicas: ProviderReplicas | undefined =
         args.providerFiles && Object.keys(args.providerFiles).length
-            ? { providerId: 'google', files: args.providerFiles }
+            ? args.providerFiles
             : undefined;
     const requestBody = {
         model: args.model,
@@ -187,11 +192,6 @@ export async function* streamGoogle(
         },
     };
 
-    // *** @google/genai's GoogleGenAIOptions has no fetch override (only
-    // httpOptions: baseUrl/headers/timeout/extraBody), so unlike the other
-    // providers we can't use makeDebugFetch; we log the SDK input here instead.
-    log.debug('google: -> sdk input', requestBody);
-
     let mode: 'text' | 'reasoning' | null = null;
     let currentId = '';
     let counter = 0;
@@ -204,8 +204,7 @@ export async function* streamGoogle(
     let latestGroundingChunks: GroundingChunk[] = [];
     let latestGroundingSupports: GroundingSupport[] = [];
     let searchSuggestionsHtml = '';
-    let promptTokens = 0;
-    let candidateTokens = 0;
+    let usage: GenerateContentResponseUsageMetadata | undefined;
     let stopReason: AirmailAIMessageMetadata['stopReason'];
 
     try {
@@ -370,11 +369,7 @@ export async function* streamGoogle(
                       };
             }
 
-            const usage = chunk.usageMetadata;
-            if (usage?.promptTokenCount != null)
-                promptTokens = usage.promptTokenCount;
-            if (usage?.candidatesTokenCount != null)
-                candidateTokens = usage.candidatesTokenCount;
+            if (chunk.usageMetadata) usage = chunk.usageMetadata;
             if (candidate?.finishReason)
                 stopReason = mapStopReason(candidate.finishReason);
         }
@@ -431,7 +426,14 @@ export async function* streamGoogle(
         yield {
             type: 'finish',
             metadata: {
-                tokens: { input: promptTokens, output: candidateTokens },
+                tokens: {
+                    input:
+                        (usage?.promptTokenCount ?? 0) +
+                        (usage?.toolUsePromptTokenCount ?? 0),
+                    output:
+                        (usage?.candidatesTokenCount ?? 0) +
+                        (usage?.thoughtsTokenCount ?? 0),
+                },
                 ...(stopReason ? { stopReason } : {}),
             },
         };

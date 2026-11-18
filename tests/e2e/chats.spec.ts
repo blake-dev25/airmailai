@@ -96,8 +96,9 @@ test('renaming a chat updates the sidebar and persists', async ({
         airmailai.page.getByRole('button', { name: /Renamed Chat/ })
     ).toBeVisible();
 
-    const { metas } = await airmailai.readDb();
-    expect(metas[0].title).toBe('Renamed Chat');
+    await expect
+        .poll(async () => (await airmailai.readDb()).metas[0]?.title)
+        .toBe('Renamed Chat');
 });
 
 test('chats and messages persist across reload', async ({ airmailai }) => {
@@ -120,7 +121,12 @@ test('model config persists across reload', async ({ airmailai }) => {
     await airmailai.setProvider(openai.label);
     await airmailai.setModelById(openai.chat);
     await airmailai.setMaxTokens(5);
-    await airmailai.page.waitForTimeout(500);
+    await expect
+        .poll(async () => {
+            const settings = await airmailai.readSyncSettings();
+            return [settings.providerId, settings.modelId, settings.maxTokens];
+        })
+        .toEqual(['openai', openai.chat, 5]);
 
     await airmailai.page.reload();
     await expect(airmailai.composer()).toBeVisible();

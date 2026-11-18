@@ -1,4 +1,8 @@
-import type { CustomModelConfig, ProviderStreamArgs } from '@airmailai/shared';
+import type {
+    CustomModelConfig,
+    ProviderId,
+    ProviderStreamArgs,
+} from '@airmailai/shared';
 import { makeDebugFetch } from './debug-fetch';
 
 function numericValue(value: string): number | string | undefined {
@@ -12,7 +16,7 @@ function textValue(value: string): string | undefined {
 }
 
 export function customModelParameters(
-    provider: string,
+    provider: ProviderId,
     config: CustomModelConfig
 ): Record<string, unknown> {
     const temperature = numericValue(config.temperature);
@@ -20,7 +24,8 @@ export function customModelParameters(
     const thinkingLevel = textValue(config.thinkingLevel);
     const thinkingBudget = numericValue(config.thinkingBudget);
     const parameters: Record<string, unknown> = {};
-    if (temperature !== undefined) parameters.temperature = temperature;
+    if (temperature !== undefined && provider !== 'anthropic')
+        parameters.temperature = temperature;
     if (maxTokens !== undefined) {
         parameters[
             provider === 'anthropic'
@@ -32,7 +37,7 @@ export function customModelParameters(
     }
     if (provider === 'anthropic') {
         if (config.adaptiveThinking) {
-            parameters.thinking = { type: 'adaptive' };
+            parameters.thinking = { type: 'adaptive', display: 'summarized' };
             if (thinkingLevel !== undefined)
                 parameters.output_config = { effort: thinkingLevel };
         } else if (thinkingBudget !== undefined) {
@@ -89,6 +94,9 @@ export function makeModelFetch(
                   ? await input.clone().text()
                   : '';
         const body: Record<string, unknown> = JSON.parse(raw);
+        const keepDefaultMaxTokens =
+            provider === 'anthropic' &&
+            numericValue(config.maxTokens) === undefined;
         for (const key of [
             'model',
             'temperature',
@@ -98,6 +106,7 @@ export function makeModelFetch(
             'thinking',
             'output_config',
         ]) {
+            if (key === 'max_tokens' && keepDefaultMaxTokens) continue;
             delete body[key];
         }
         if (args.model.trim()) body.model = args.model;

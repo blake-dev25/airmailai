@@ -1,6 +1,8 @@
 import {
     type AirmailAIMessage,
     type CustomModelConfig,
+    type SiteChatMeta,
+    errorMessage,
 } from '@airmailai/shared';
 import { messageText } from './types';
 import {
@@ -10,19 +12,15 @@ import {
 
 export type ChatExportFormat = 'md' | 'airmailai' | 'lmstudio' | 'sillytavern';
 
-export interface TransferChatInfo {
-    customModel: CustomModelConfig | null;
-    title: string;
-    createdAt: number;
-    systemPrompt: string;
-    providerId: string;
-    modelId: string;
-}
-
-export interface TransferChatEntry {
-    info: TransferChatInfo;
-    messages: AirmailAIMessage[];
-}
+export type TransferChatInfo = Pick<
+    SiteChatMeta,
+    | 'customModel'
+    | 'title'
+    | 'createdAt'
+    | 'systemPrompt'
+    | 'providerId'
+    | 'modelId'
+>;
 
 export interface ImportedMessage {
     role: 'user' | 'assistant';
@@ -38,13 +36,9 @@ export interface ImportedChat {
     messages: ImportedMessage[];
 }
 
-export interface ChatTransferParseResult {
-    chats: ImportedChat[];
-    skipped: string[];
-}
+type ImportRecord = { chat: ImportedChat } | { error: string };
 
 export const MAX_IMPORT_FILE_BYTES = 100 * 1024 * 1024;
-const MAX_CHATS_PER_BACKUP = 5000;
 const MAX_MESSAGES_PER_CHAT = 20000;
 const MAX_TEXT_CHARS_PER_MESSAGE = 5 * 1024 * 1024;
 export const MAX_TITLE_CHARS = 255;
@@ -207,14 +201,23 @@ function airmailaiChatJson(
     };
 }
 
-export function buildBackupExport(chats: TransferChatEntry[]): string {
-    return (
-        chats
-            .map((c) =>
-                JSON.stringify(airmailaiChatJson(c.info, c.messages), null, 2)
-            )
-            .join('\n---\n') + '\n'
-    );
+export function buildBackupDocument(
+    info: TransferChatInfo,
+    messages: AirmailAIMessage[]
+): Blob {
+    try {
+        const record = airmailaiChatJson(info, messages);
+        parseConversation(record, true);
+        const blob = new Blob([JSON.stringify(record, null, 2), '\n']);
+        if (blob.size > MAX_IMPORT_FILE_BYTES)
+            throw new Error('chat exceeds the 100 MiB backup document limit');
+        return blob;
+    } catch (error) {
+        throw new Error(
+            `Conversation "${info.title}": ${errorMessage(error)}`,
+            { cause: error }
+        );
+    }
 }
 
 export function buildSillyTavernExport(
@@ -315,90 +318,93 @@ function looksLikeSillyTavern(text: string): boolean {
     }
 }
 
-function splitYamlDocuments(text: string): string[] {
-    const docs: string[] = [];
-    let current: string[] = [];
-    for (const rawLine of text.split('\n')) {
-        const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
-        if (line === '---') {
-            docs.push(current.join('\n'));
-            current = [];
-        } else {
-            current.push(line);
+async function* backupDocuments(file: Blob): AsyncGenerator<Blob> {
+    const chunkSize = 1024 * 1024;
+    const dash = 0x2d;
+    const lineFeed = 0x0a;
+    const carriageReturn = 0x0d;
+    let contentStart = 0;
+    let documentStart = 0;
+    for (let start = 0; start < file.size; start += chunkSize) {
+        const offset = Math.max(0, start - 1);
+        const end = Math.min(start + chunkSize, file.size);
+        const bytes = new Uint8Array(
+            await file.slice(offset, end + 4).arrayBuffer()
+        );
+        if (
+            start === 0 &&
+            bytes[0] === 0xef &&
+            bytes[1] === 0xbb &&
+            bytes[2] === 0xbf
+        ) {
+            contentStart = 3;
+            documentStart = contentStart;
+        }
+        for (
+            let i = bytes.indexOf(dash, start - offset);
+            i >= 0 && offset + i < end;
+            i = bytes.indexOf(dash, i + 1)
+        ) {
+            if (
+                (offset + i !== contentStart && bytes[i - 1] !== lineFeed) ||
+                bytes[i + 1] !== dash ||
+                bytes[i + 2] !== dash
+            )
+                continue;
+            const after = bytes[i + 3] === carriageReturn ? i + 4 : i + 3;
+            if (offset + after !== file.size && bytes[after] !== lineFeed)
+                continue;
+            yield file.slice(documentStart, offset + i);
+            documentStart = Math.min(file.size, offset + after + 1);
         }
     }
-    docs.push(current.join('\n'));
-    return docs.filter((d) => d.trim().length > 0);
+    yield file.slice(documentStart);
 }
 
-function hasYamlDelimiter(text: string): boolean {
-    return /\n---\r?(\n|$)/.test(text);
-}
-
-function singleChat(chat: ImportedChat): ChatTransferParseResult {
-    return { chats: [chat], skipped: [] };
-}
-
-export function parseChatTransferFile(
-    filename: string,
-    text: string
-): ChatTransferParseResult {
-    if (text.length > MAX_IMPORT_FILE_BYTES) {
-        throw new Error('file is too large');
-    }
-    const lower = filename.toLowerCase();
-    if (lower.endsWith('.yaml') || lower.endsWith('.yml')) {
-        return parseYamlBackupTransfer(text);
-    }
-    if (lower.endsWith('.jsonl')) {
-        return singleChat(
-            parseSillyTavernTransfer(titleFromFilename(filename), text)
-        );
-    }
-    if (lower.endsWith('.json')) return parseJsonTransfer(text);
-    if (lower.endsWith('.md')) return singleChat(parseMarkdownTransfer(text));
-    if (looksLikeSillyTavern(text)) {
-        return singleChat(
-            parseSillyTavernTransfer(titleFromFilename(filename), text)
-        );
-    }
-    if (text.trimStart().startsWith('{')) {
-        if (hasYamlDelimiter(text)) return parseYamlBackupTransfer(text);
-        return parseJsonTransfer(text);
-    }
-    return singleChat(parseMarkdownTransfer(text));
-}
-
-function parseYamlBackupTransfer(text: string): ChatTransferParseResult {
-    const docs = splitYamlDocuments(text);
-    if (docs.length === 0) throw new Error('file is empty');
-    if (docs.length > MAX_CHATS_PER_BACKUP) {
-        throw new Error(`backup has more than ${MAX_CHATS_PER_BACKUP} chats`);
-    }
-    const chats: ImportedChat[] = [];
-    const skipped: string[] = [];
+async function* readBackup(file: Blob): AsyncGenerator<ImportRecord> {
     let docNo = 0;
-    for (const doc of docs) {
-        docNo++;
-        let parsed: unknown;
-        try {
-            parsed = JSON.parse(doc);
-        } catch {
-            skipped.push(`document ${docNo} is not valid JSON`);
+    for await (const blob of backupDocuments(file)) {
+        if (blob.size > MAX_IMPORT_FILE_BYTES) {
+            yield { error: `document ${++docNo} exceeds 100 MiB` };
             continue;
         }
+        const doc = await blob.text();
+        if (!doc.trim()) continue;
+        docNo++;
         try {
-            chats.push(parseConversation(parsed));
+            yield { chat: parseJsonTransfer(doc, true) };
         } catch (err) {
-            skipped.push(
-                `document ${docNo}: ${err instanceof Error ? err.message : String(err)}`
-            );
+            yield { error: `document ${docNo}: ${errorMessage(err)}` };
         }
     }
-    if (chats.length === 0) {
-        throw new Error(skipped[0] ?? 'no chats found');
+    if (!docNo) throw new Error('file is empty');
+}
+
+export async function* readChatTransferFile(
+    file: File
+): AsyncGenerator<ImportRecord> {
+    const lower = file.name.toLowerCase();
+    if (/\.ya?ml$/.test(lower)) {
+        yield* readBackup(file);
+        return;
     }
-    return { chats, skipped };
+    if (file.size > MAX_IMPORT_FILE_BYTES)
+        throw new Error(`file is too large (${file.size} bytes)`);
+    const text = await file.text();
+    if (lower.endsWith('.jsonl'))
+        yield {
+            chat: parseSillyTavernTransfer(titleFromFilename(file.name), text),
+        };
+    else if (lower.endsWith('.json')) yield { chat: parseJsonTransfer(text) };
+    else if (lower.endsWith('.md')) yield { chat: parseMarkdownTransfer(text) };
+    else if (looksLikeSillyTavern(text))
+        yield {
+            chat: parseSillyTavernTransfer(titleFromFilename(file.name), text),
+        };
+    else if (text.trimStart().startsWith('{')) {
+        if (/\n---\r?(\n|$)/.test(text)) yield* readBackup(file);
+        else yield { chat: parseJsonTransfer(text) };
+    } else yield { chat: parseMarkdownTransfer(text) };
 }
 
 function parseSillyTavernTransfer(
@@ -517,14 +523,14 @@ function parseMarkdownTransfer(text: string): ImportedChat {
     return { title, createdAt, systemPrompt: '', model, messages };
 }
 
-function parseJsonTransfer(text: string): ChatTransferParseResult {
+function parseJsonTransfer(text: string, backup = false): ImportedChat {
     let parsed: unknown;
     try {
         parsed = JSON.parse(text);
     } catch (err) {
         throw new Error('file is not valid JSON', { cause: err });
     }
-    return singleChat(parseConversation(parsed));
+    return parseConversation(parsed, backup);
 }
 
 function textFromContent(content: unknown): string {
@@ -542,7 +548,7 @@ function textFromContent(content: unknown): string {
     return out;
 }
 
-function parseConversation(value: unknown): ImportedChat {
+function parseConversation(value: unknown, backup = false): ImportedChat {
     if (!isRecord(value)) throw new Error('chat is not a JSON object');
     const rawMessages = value.messages;
     if (!Array.isArray(rawMessages)) {
@@ -550,6 +556,24 @@ function parseConversation(value: unknown): ImportedChat {
     }
     if (rawMessages.length > MAX_MESSAGES_PER_CHAT) {
         throw new Error('chat has too many messages');
+    }
+    if (backup) {
+        if (
+            typeof value.title === 'string' &&
+            value.title.length > MAX_TITLE_CHARS
+        )
+            throw new Error('chat title is too long');
+        if (
+            typeof value.systemPrompt === 'string' &&
+            value.systemPrompt.length > MAX_SYSTEM_PROMPT_CHARS
+        )
+            throw new Error('system prompt is too long');
+        if (
+            !value.customModel &&
+            typeof value.model === 'string' &&
+            value.model.length > MAX_MODEL_CHARS
+        )
+            throw new Error('model name is too long');
     }
 
     const title =
@@ -584,8 +608,10 @@ function parseConversation(value: unknown): ImportedChat {
                       ? 'assistant'
                       : null;
             if (!role) continue;
-            const text = entry.text.trim();
-            if (!text) continue;
+            if (backup && entry.text.length > MAX_TEXT_CHARS_PER_MESSAGE)
+                throw new Error('message is too long');
+            const text = backup ? entry.text : entry.text.trim();
+            if (!text && !backup) continue;
             messages.push({ role, text: cleanBody(text) });
             continue;
         }
@@ -627,7 +653,8 @@ function parseConversation(value: unknown): ImportedChat {
         messages.push({ role, text: cleanBody(text) });
     }
 
-    if (messages.length === 0) throw new Error('no messages found');
+    if (messages.length === 0 && !(backup && rawMessages.length === 0))
+        throw new Error('no messages found');
     return {
         title,
         createdAt,

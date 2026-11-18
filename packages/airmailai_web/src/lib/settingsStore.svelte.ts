@@ -4,6 +4,8 @@ import {
     isCustomModelConfig,
     type CustomModelConfig,
     type BrandingMode,
+    type ChatConfig,
+    type ProviderId,
     type UserSettings,
 } from '@airmailai/shared';
 import { untrack } from 'svelte';
@@ -73,7 +75,7 @@ const SETTING_VALIDATORS: {
     chatWidth: isNumInRange(0, 100),
     smoothTextMode: isOneOf('smooth', 'raw'),
     submitKeystroke: isOneOf('enter', 'ctrl+enter'),
-    modelTier: isOneOf('latest', 'previous', 'legacy', 'test'),
+    modelTier: isOneOf('latest', 'legacy', 'test'),
     autoscrollMode: isOneOf('pin-user-message', 'pin-bottom', 'off'),
     chatSortOrder: isOneOf('modified', 'created'),
     enableWebSearch: isBool,
@@ -128,7 +130,7 @@ class SettingsStore implements UserSettings {
             : 'serif'
     );
     legalAcceptedVersion = $state('');
-    providerId = $state(PROVIDER_META[0].id);
+    providerId = $state<ProviderId>(PROVIDER_META[0].id);
     modelId = $state('');
     temperature = $state<number>(1);
     maxTokens = $state(8192);
@@ -140,6 +142,7 @@ class SettingsStore implements UserSettings {
     systemPrompt = $state('');
     loadState = $state<'unloaded' | 'loaded' | 'failed'>('unloaded');
     private lastSaved: Partial<UserSettings> = {};
+    private providerStorageSave = Promise.resolve();
     private pendingSave: Partial<UserSettings> | null = null;
     private pendingSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -224,7 +227,11 @@ class SettingsStore implements UserSettings {
             $effect(() => {
                 const snapshot: Partial<UserSettings> = {};
                 for (const key of SETTINGS_KEYS) {
-                    if (key === 'legalAcceptedVersion') continue;
+                    if (
+                        key === 'legalAcceptedVersion' ||
+                        key === 'enableProviderFileStorage'
+                    )
+                        continue;
                     setSettingValue(snapshot, key, this[key]);
                 }
                 snapshot.customModel = this.customModel
@@ -270,6 +277,11 @@ class SettingsStore implements UserSettings {
         for (const key of SETTINGS_KEYS) {
             const v = settings[key];
             if (v === undefined) continue;
+            if (key === 'modelTier' && v === 'previous') {
+                log.info('migrating stored modelTier previous -> legacy');
+                this.modelTier = 'legacy';
+                continue;
+            }
             if (!SETTING_VALIDATORS[key](v)) {
                 log.warn('ignoring invalid stored setting', key, v);
                 continue;
@@ -280,45 +292,23 @@ class SettingsStore implements UserSettings {
         this.loadState = 'loaded';
     }
 
-    applyChatConfig(meta: {
-        customModel: CustomModelConfig | null;
-        providerId: string;
-        modelId: string;
-        temperature: number;
-        maxTokens: number;
-        thinkingLevel: string;
-        adaptiveThinking?: boolean;
-        webSearch?: boolean;
-        webFetch?: boolean;
-        codeExecution?: boolean;
-        systemPrompt: string;
-    }): void {
-        this.customModel = meta.customModel ? { ...meta.customModel } : null;
-        this.providerId = meta.providerId;
-        this.modelId = meta.modelId;
-        this.temperature = meta.temperature;
-        this.maxTokens = meta.maxTokens;
-        this.thinkingLevel = meta.thinkingLevel;
-        this.adaptiveThinking = meta.adaptiveThinking ?? true;
-        this.webSearch = meta.webSearch ?? false;
-        this.webFetch = meta.webFetch ?? false;
-        this.codeExecution = meta.codeExecution ?? false;
-        this.systemPrompt = meta.systemPrompt;
+    applyChatConfig(config: ChatConfig): void {
+        this.customModel = config.customModel
+            ? { ...config.customModel }
+            : null;
+        this.providerId = config.providerId;
+        this.modelId = config.modelId;
+        this.temperature = config.temperature;
+        this.maxTokens = config.maxTokens;
+        this.thinkingLevel = config.thinkingLevel;
+        this.adaptiveThinking = config.adaptiveThinking;
+        this.webSearch = config.webSearch;
+        this.webFetch = config.webFetch;
+        this.codeExecution = config.codeExecution;
+        this.systemPrompt = config.systemPrompt;
     }
 
-    snapshotChatConfig(): {
-        customModel: CustomModelConfig | null;
-        systemPrompt: string;
-        providerId: string;
-        modelId: string;
-        temperature: number;
-        maxTokens: number;
-        thinkingLevel: string;
-        adaptiveThinking: boolean;
-        webSearch: boolean;
-        webFetch: boolean;
-        codeExecution: boolean;
-    } {
+    snapshotChatConfig(): ChatConfig {
         return {
             customModel: this.customModel ? { ...this.customModel } : null,
             systemPrompt: this.systemPrompt,
@@ -387,9 +377,31 @@ class SettingsStore implements UserSettings {
         if (!enabled && model) this.selectModel(model);
     }
 
+    setProviderFileStorageEnabled(on: boolean): void {
+        this.enableProviderFileStorage = on;
+        if (!this.shouldSave()) return;
+        const save = this.providerStorageSave
+            .then(async () => {
+                await saveToExtRaw({ enableProviderFileStorage: on });
+                this.lastSaved.enableProviderFileStorage = on;
+            })
+            .catch((err) => {
+                if (this.providerStorageSave === save) {
+                    this.enableProviderFileStorage =
+                        this.lastSaved.enableProviderFileStorage === true;
+                }
+                reportAppError(
+                    'provider file storage save failed',
+                    "Couldn't save the Provider File Storage setting",
+                    err
+                );
+            });
+        this.providerStorageSave = save;
+    }
+
     setFileUploadsEnabled(on: boolean): void {
         this.enableFileUploads = on;
-        this.enableProviderFileStorage = on;
+        this.setProviderFileStorageEnabled(on);
         if (on) this.enableCodeExecution = true;
     }
 }

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'opentype.js';
@@ -34,8 +35,8 @@ const PNG_SIZES = [16, 32, 48, 64, 128, 180, 192, 256, 512, 1024];
 const EXT_ICON_SIZES = [16, 32, 48, 128];
 
 const LORA_CSS_URL = 'https://fonts.googleapis.com/css2?family=Lora:wght@600';
-const LEGACY_UA =
-    'Mozilla/5.0 (Linux; U; Android 4.0.4; en-us; Galaxy Nexus Build/IMM76B) AppleWebKit/534.30 (KHTML, like Gecko) Version/4.0 Mobile Safari/534.30';
+const LORA_TTF_SHA256 =
+    '36120862013ba0d8059ee03b3f6155d6420cabbf0743ccf5542f22ef918c20a2';
 
 const STATIC_DIR = join(
     import.meta.dirname,
@@ -65,22 +66,33 @@ function wavePath(y: number): string {
 }
 
 async function fetchLoraSemiBold(): Promise<ArrayBuffer> {
-    const cssRes = await fetch(LORA_CSS_URL, {
-        headers: { 'User-Agent': LEGACY_UA },
-    });
+    const cssRes = await fetch(LORA_CSS_URL);
     if (!cssRes.ok) {
         throw new Error(`Lora CSS fetch failed: HTTP ${cssRes.status}`);
     }
     const css = await cssRes.text();
-    const match = css.match(/url\((https:[^)]+)\)/);
+    const match = css.match(
+        /url\((https:\/\/fonts\.gstatic\.com\/[^)]+\.ttf)\)/
+    );
     if (!match) {
-        throw new Error(`no font url in Google Fonts CSS response:\n${css}`);
+        throw new Error(
+            `no fonts.gstatic.com TTF url in Google Fonts CSS response:\n${css}`
+        );
     }
     const fontRes = await fetch(match[1]);
     if (!fontRes.ok) {
         throw new Error(`Lora TTF fetch failed: HTTP ${fontRes.status}`);
     }
-    return fontRes.arrayBuffer();
+    const ttf = await fontRes.arrayBuffer();
+    const sha256 = createHash('sha256')
+        .update(new Uint8Array(ttf))
+        .digest('hex');
+    if (sha256 !== LORA_TTF_SHA256) {
+        throw new Error(
+            `Lora TTF from ${match[1]} has SHA-256 ${sha256}, expected ${LORA_TTF_SHA256} - review the new font release, then update LORA_TTF_SHA256`
+        );
+    }
+    return ttf;
 }
 
 const font = parse(await fetchLoraSemiBold());

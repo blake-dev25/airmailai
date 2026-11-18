@@ -1,5 +1,13 @@
 import { createHash } from 'node:crypto';
-import { mkdir, open, readFile, unlink, writeFile } from 'node:fs/promises';
+import {
+    mkdir,
+    open,
+    readdir,
+    readFile,
+    stat,
+    unlink,
+    writeFile,
+} from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
 import type { S3Client } from '@aws-sdk/client-s3';
@@ -46,6 +54,27 @@ export class FsStateStore implements StateStore {
         const path = this.describe(key);
         await mkdir(dirname(path), { recursive: true });
         await writeFile(path, text);
+    }
+
+    async pruneOlderThan(prefix: string, maxAgeMs: number): Promise<number> {
+        const dir = this.describe(prefix);
+        let names: string[];
+        try {
+            names = await readdir(dir);
+        } catch (e) {
+            if ((e as NodeJS.ErrnoException).code === 'ENOENT') return 0;
+            throw e;
+        }
+        const cutoff = Date.now() - maxAgeMs;
+        let pruned = 0;
+        for (const name of names) {
+            const path = resolve(dir, name);
+            const info = await stat(path);
+            if (!info.isFile() || info.mtimeMs >= cutoff) continue;
+            await unlink(path);
+            pruned++;
+        }
+        return pruned;
     }
 
     async update(

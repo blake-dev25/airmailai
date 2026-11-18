@@ -1,3 +1,4 @@
+import { PutParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { $ } from 'bun';
 import { zipSync } from 'fflate';
 import { join } from 'node:path';
@@ -59,8 +60,16 @@ console.log(`> Deploying CloudFormation stack ${STACK_NAME}...`);
 await $`aws cloudformation deploy --template-file ${templatePath} --stack-name ${STACK_NAME} --capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset --parameter-overrides WwwBucketName=${wwwBucket} CloudFrontDistributionId=${distributionId} StateBucketName=${stateBucket} SsmPrefix=${SSM_PREFIX}`;
 
 console.log(`> Writing ${secrets.length} secret(s) to SSM ${SSM_PREFIX}...`);
+const ssm = new SSMClient({});
 for (const [name, value] of secrets) {
-    await $`aws ssm put-parameter --name ${SSM_PREFIX + name} --type SecureString --value ${value} --overwrite`.quiet();
+    await ssm.send(
+        new PutParameterCommand({
+            Name: SSM_PREFIX + name,
+            Value: value,
+            Type: 'SecureString',
+            Overwrite: true,
+        })
+    );
     console.log(`  ${SSM_PREFIX}${name}`);
 }
 

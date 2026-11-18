@@ -4,6 +4,7 @@ import type {
     AirmailAIMessage,
     ProviderStream,
 } from '../../packages/shared/src/messages';
+import { ANTHROPIC_API_VERSION } from '../../packages/shared/src/providers';
 import { PROVIDER_MODELS, PROVIDERS, type ProviderKey } from './models';
 import {
     TTFT_MAX_TOKENS,
@@ -122,14 +123,16 @@ interface GoogleEvent {
     candidates?: { content?: { parts?: { text?: string }[] } }[];
 }
 
-function responsesEffort(level: string): string {
-    return level === 'max' ? 'xhigh' : level;
-}
+const ANTHROPIC_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 
 function anthropicThinking(
     thinking: Thinking | undefined
 ): Record<string, unknown> {
-    if (!thinking || thinking.level === 'none') return {};
+    if (!thinking) return {};
+    if (thinking.level === 'none') return { thinking: { type: 'disabled' } };
+    if (thinking.level === 'minimal') {
+        return { thinking: { type: 'between_tools' } };
+    }
     if (!thinking.adaptive) {
         throw new Error(
             'raw anthropic request: non-adaptive thinking needs a 2048+ token budget, which a TTFT call cannot spare'
@@ -137,9 +140,20 @@ function anthropicThinking(
     }
     return {
         thinking: { type: 'adaptive', display: 'summarized' },
-        output_config: { effort: thinking.level },
+        ...(ANTHROPIC_EFFORTS.has(thinking.level)
+            ? { output_config: { effort: thinking.level } }
+            : {}),
     };
 }
+
+const GOOGLE_THINKING_LEVELS: Record<string, string> = {
+    minimal: 'MINIMAL',
+    low: 'LOW',
+    medium: 'MEDIUM',
+    high: 'HIGH',
+    max: 'HIGH',
+    xhigh: 'XHIGH',
+};
 
 function googleThinking(
     model: string,
@@ -151,10 +165,8 @@ function googleThinking(
             'raw google request: thinkingBudget-era (2.5) models are not supported'
         );
     }
-    const level =
-        thinking.level === 'max' || thinking.level === 'xhigh'
-            ? 'HIGH'
-            : thinking.level.toUpperCase();
+    const level = GOOGLE_THINKING_LEVELS[thinking.level];
+    if (!level) return {};
     return { thinkingConfig: { thinkingLevel: level, includeThoughts: true } };
 }
 
@@ -179,7 +191,7 @@ function rawRequest(
                 url: 'https://api.anthropic.com/v1/messages',
                 headers: {
                     'x-api-key': apiKey,
-                    'anthropic-version': '2023-06-01',
+                    'anthropic-version': ANTHROPIC_API_VERSION,
                 },
                 body: {
                     model,
@@ -207,7 +219,7 @@ function rawRequest(
                     ...(thinking
                         ? {
                               reasoning: {
-                                  effort: responsesEffort(thinking.level),
+                                  effort: thinking.level,
                                   summary: 'auto',
                               },
                           }
@@ -251,9 +263,7 @@ function rawRequest(
                                   thinking.level === 'none'
                                       ? { enabled: false }
                                       : {
-                                            effort: responsesEffort(
-                                                thinking.level
-                                            ),
+                                            effort: thinking.level,
                                             summary: 'auto',
                                         },
                           }

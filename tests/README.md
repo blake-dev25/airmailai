@@ -2,37 +2,6 @@
 
 Run all commands from the repository root. Install dependencies with `bun install`.
 
-## Unit tests (Bun)
-
-Tests in `tests/unit/` use Bun's built-in test runner. They run locally without
-a browser, built extension, API keys, or AWS credentials. External provider,
-AWS, and Discord requests are mocked, so these tests do not spend API tokens
-or publish changes.
-
-```bash
-bun test tests/unit
-bun test ./tests/unit/custom-model.test.ts
-bun test --watch tests/unit
-```
-
-Use `bun test tests/unit` for unit tests; `bun run test` runs Playwright E2E
-tests through the package script.
-
-Coverage:
-
-- [custom-model.test.ts](unit/custom-model.test.ts): Google model ID validation,
-  custom configuration validation and storage limits, chat import/export, and
-  provider tool configuration and request construction.
-- [model-list.test.ts](unit/model-list.test.ts): watcher acknowledgements,
-  model catalog merging and retirement, dry runs and unchanged publications,
-  Lambda partial failures, and Discord report limits.
-- [model-list-state.test.ts](unit/model-list-state.test.ts): conditional S3
-  updates, concurrent acknowledgements, error handling, and local file locking.
-  Filesystem tests create temporary files under `.tmp/` and clean them up.
-
-Run `bun run check:tests` to type-check the test files. Type-checking does not
-execute the tests.
-
 ## End-to-end tests (Playwright)
 
 Drives the real web app in Chrome with the AirmailAI extension loaded, against
@@ -63,6 +32,8 @@ bun run test --ui          # interactive (time-travel DOM snapshots)
 ```
 
 The suite builds the extension and loads `packages/airmailai_ext/.output/chrome-mv3`.
+When the base URL is on `localhost`, that build sets `WXT_ALLOW_LOCALHOST=true`
+so the extension accepts connections from the dev server.
 Set `AIRMAILAI_EXT_PATH` to an unpacked extension folder to load that build
 instead and skip the build step, e.g. to run the current web app against an
 older extension release.
@@ -78,9 +49,17 @@ older extension release.
   the DOM and the extension's IndexedDB (read directly via the service worker).
   `airmailai.expectAssistantRoundTrip()` ties them together: it confirms the
   same reply that rendered also persisted (normalized-equal by default; pass
-  `{ mode: 'contains' }` for web-search turns, whose link URLs / Sources UI live
-  on only one side). Lower-level helpers: `readDb()`, `persistedTexts()`,
-  `persistedSourceUrls()`.
+  `{ mode: 'contains' }` for turns whose link URLs / Sources UI live on only
+  one side - the needle must then appear on both sides). Lower-level helpers:
+  `readDb()`, `persistedTexts()`, `persistedSourceUrls()`. The `persisted*`
+  helpers read the only stored chat; with several chats stored they need a
+  `chatId`.
+- **Key redaction:** the fixture seeds real API keys through a service worker
+  call, and Playwright traces record call arguments. As each test finishes,
+  `redact-api-keys-reporter.ts` replaces every `.env` key value in the test's
+  file attachments (inside trace zips too) with `[REDACTED]`, before the HTML
+  report copies them. A run killed mid-test can leave an unredacted raw trace
+  under `test-results/` until the next run clears that folder.
 - **Model selection:** specs never name a model. The fixture seeds
   `modelTier: 'test'`, which narrows each first-party provider to the single
   model tagged `['<tier>', 'test']` in

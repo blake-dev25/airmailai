@@ -6,7 +6,7 @@ import type {
     StorageResponse,
     UserSettings,
 } from '@airmailai/shared';
-import { SETTINGS_KEYS } from '@airmailai/shared';
+import { SETTINGS_KEYS, errorMessage } from '@airmailai/shared';
 import { log } from '../debug';
 import {
     CACHE_KEY as OPENROUTER_CACHE_KEY,
@@ -17,6 +17,7 @@ import {
 } from '../openrouter-models';
 import { listAnthropicFiles } from '../providers/anthropic-files';
 import { listOpenAIFiles } from '../providers/openai-files';
+import { listOpenRouterFiles } from '../providers/openrouter-files';
 import { listGoogleFiles } from '../providers/google-files';
 import { testProviderKey } from '../providers/key-test';
 import {
@@ -69,7 +70,7 @@ function cleanupProviderFiles(
                 {
                     type: 'turn-warning',
                     chatId,
-                    message: `Couldn't clean up unused provider files: ${err instanceof Error ? err.message : String(err)}`,
+                    message: `Couldn't clean up unused provider files: ${errorMessage(err)}`,
                 },
                 sourceTabId
             );
@@ -186,42 +187,42 @@ async function handleStorage(
                     }
                 }
             }
-            const { refs, revision } = await dbPrepareTurn(
+            const { refs, revision, meta } = await dbPrepareTurn(
                 message.meta,
                 message.message
             );
             cleanupProviderFiles(refs, message.meta.id, message.sourceTabId);
-            broadcast(
-                { type: 'meta-changed', meta: message.meta },
-                message.sourceTabId
-            );
+            broadcast({ type: 'meta-changed', meta }, message.sourceTabId);
             log.info('-> storage response: turn prepared', revision);
             return { type: 'turn_prepared', revision };
         }
         case 'prepare_retry': {
-            const { refs, revision } = await dbPrepareRetry(
+            const { refs, revision, meta } = await dbPrepareRetry(
                 message.meta,
                 message.lastKeptId
             );
             cleanupProviderFiles(refs, message.meta.id, message.sourceTabId);
-            broadcast(
-                { type: 'meta-changed', meta: message.meta },
-                message.sourceTabId
-            );
+            broadcast({ type: 'meta-changed', meta }, message.sourceTabId);
             log.info('-> storage response: retry prepared', revision);
             return { type: 'turn_prepared', revision };
         }
         case 'remove_draft_attachment': {
-            const refs = await dbRemoveDraftAttachment(
+            const { refs, meta } = await dbRemoveDraftAttachment(
                 message.chatId,
                 message.key
             );
-            cleanupProviderFiles(refs, message.chatId, undefined);
+            if (meta)
+                broadcast({ type: 'meta-changed', meta }, message.sourceTabId);
+            cleanupProviderFiles(refs, message.chatId, message.sourceTabId);
             return { type: 'saved' };
         }
         case 'clear_draft_attachments': {
-            const refs = await dbClearDraftAttachments(message.chatId);
-            cleanupProviderFiles(refs, message.chatId, undefined);
+            const { refs, meta } = await dbClearDraftAttachments(
+                message.chatId
+            );
+            if (meta)
+                broadcast({ type: 'meta-changed', meta }, message.sourceTabId);
+            cleanupProviderFiles(refs, message.chatId, message.sourceTabId);
             return { type: 'saved' };
         }
         case 'put_message': {
@@ -254,7 +255,7 @@ async function handleStorage(
                 message.chatId,
                 message.messageId
             );
-            if (revision)
+            if (revision !== null)
                 broadcast({
                     type: 'message-changed',
                     chatId: message.chatId,
@@ -361,10 +362,7 @@ async function handleStorage(
             } else if (message.provider === 'google') {
                 files = await listGoogleFiles(apiKey);
             } else {
-                return {
-                    type: 'error',
-                    message: `File listing for ${message.provider} isn't supported yet.`,
-                };
+                files = await listOpenRouterFiles(apiKey);
             }
             const hashes = await dbLookupProviderFileHashes(message.provider);
             files = files.map((f) => {
@@ -486,7 +484,7 @@ export function dispatchStorage(
             log.error('storage handler threw', message.type, err);
             sendResponse({
                 type: 'error',
-                message: err instanceof Error ? err.message : String(err),
+                message: errorMessage(err),
             });
         });
     return true;

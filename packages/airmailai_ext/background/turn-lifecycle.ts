@@ -66,11 +66,6 @@ export class TurnLifecycle {
         this.outcome = { kind: 'errored', message, source: 'extension' };
     }
 
-    warn(message: string): void {
-        if (this.outcome?.kind === 'errored') return;
-        this.outcome = { kind: 'errored', message, source: 'extension' };
-    }
-
     truncateTo(): number | null {
         return this.outcome?.kind === 'stopped'
             ? this.outcome.truncateTo

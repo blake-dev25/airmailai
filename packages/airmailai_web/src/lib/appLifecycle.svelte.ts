@@ -32,7 +32,6 @@ class AppLifecycle {
     );
 
     private lastSnappedTier: ModelTierFilter | null = null;
-    private stopBridge: (() => void) | null = null;
     private markReady: () => void = () => {};
     readonly ready = new Promise<void>((resolve) => {
         this.markReady = resolve;
@@ -69,7 +68,7 @@ class AppLifecycle {
                         const model = defaultModelForProvider(fallback);
                         if (!model) return;
                         settingsStore.providerId = fallback.id;
-                        settingsStore.modelId = model.id;
+                        settingsStore.selectModel(model);
                         return;
                     }
                     if (
@@ -79,7 +78,7 @@ class AppLifecycle {
                     ) {
                         const model = defaultModelForProvider(provider);
                         if (!model) return;
-                        settingsStore.modelId = model.id;
+                        settingsStore.selectModel(model);
                     }
                 });
             });
@@ -132,7 +131,7 @@ class AppLifecycle {
             });
         }
 
-        if (detected) this.stopBridge = startBroadcastBridge();
+        if (detected) startBroadcastBridge();
     }
 
     enterDemoMode(): void {

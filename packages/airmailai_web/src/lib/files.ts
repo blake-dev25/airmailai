@@ -1,12 +1,16 @@
-import type { DraftAttachmentMeta } from '@airmailai/shared';
-import { getMimeTypeFromFilename } from '@airmailai/shared';
+import type { DraftAttachmentMeta, ProviderId } from '@airmailai/shared';
+import {
+    PROVIDER_INLINE_MAX_REQUEST_BYTES,
+    PROVIDER_STORED_MAX_FILE_BYTES,
+    TEXT_FILE_EXTENSIONS,
+    TEXT_FILE_MIME_TYPES,
+    getMimeTypeFromFilename,
+} from '@airmailai/shared';
 
 const MB = 1024 * 1024;
 
-export type FileProviderId = 'anthropic' | 'google' | 'openai' | 'openrouter';
-
 export interface FilePolicy {
-    providerId: FileProviderId;
+    providerId: ProviderId;
     maxAttachments: number;
     maxFileBytes: number;
     maxRequestBytes: number;
@@ -203,7 +207,7 @@ const OPENROUTER_MIME_TYPES_BY_MODALITY: Record<string, readonly string[]> = {
 };
 
 const ACCEPT_EXTENSIONS_BY_PROVIDER: Record<
-    Exclude<FileProviderId, 'openrouter'>,
+    Exclude<ProviderId, 'openrouter'>,
     readonly string[]
 > = {
     anthropic: [
@@ -298,18 +302,18 @@ const OPENROUTER_ACCEPT_EXTENSIONS_BY_MODALITY: Record<
     video: ['.mov', '.mp4', '.mpeg', '.webm'],
 };
 
-export const FILE_POLICIES: Record<FileProviderId, FilePolicy> = {
+export const FILE_POLICIES: Record<ProviderId, FilePolicy> = {
     anthropic: {
         providerId: 'anthropic',
         maxAttachments: 100,
-        maxFileBytes: 500 * MB,
+        maxFileBytes: PROVIDER_STORED_MAX_FILE_BYTES.anthropic,
         maxRequestBytes: 500 * MB,
         mimeTypes: ANTHROPIC_MIME_TYPES,
     },
     google: {
         providerId: 'google',
         maxAttachments: 100,
-        maxFileBytes: 2 * 1024 * MB,
+        maxFileBytes: PROVIDER_STORED_MAX_FILE_BYTES.google,
         maxRequestBytes: 2 * 1024 * MB,
         mimeTypes: GOOGLE_MIME_TYPES,
         maxAudioAttachments: 1,
@@ -318,30 +322,25 @@ export const FILE_POLICIES: Record<FileProviderId, FilePolicy> = {
     openai: {
         providerId: 'openai',
         maxAttachments: 20,
-        maxFileBytes: 512 * MB,
+        maxFileBytes: PROVIDER_STORED_MAX_FILE_BYTES.openai,
         maxRequestBytes: 512 * MB,
         mimeTypes: OPENAI_MIME_TYPES,
     },
     openrouter: {
         providerId: 'openrouter',
         maxAttachments: 8,
-        maxFileBytes: 8 * MB,
-        maxRequestBytes: 8 * MB,
+        maxFileBytes: PROVIDER_STORED_MAX_FILE_BYTES.openrouter,
+        maxRequestBytes: PROVIDER_INLINE_MAX_REQUEST_BYTES.openrouter,
         mimeTypes: EMPTY_MIME_TYPES,
     },
 };
 
-const ACCEPT_BY_PROVIDER = new Map<FileProviderId, string>();
-
-function toProviderId(providerId: string): FileProviderId {
-    return providerId in FILE_POLICIES
-        ? (providerId as FileProviderId)
-        : 'anthropic';
-}
+const ACCEPT_BY_PROVIDER = new Map<ProviderId, string>();
 
 export interface FilePolicyOptions {
     openRouterPdfEngine?: string;
     customModel?: boolean;
+    providerFileStorage?: boolean;
 }
 
 function getOpenRouterMimeTypes(
@@ -349,7 +348,7 @@ function getOpenRouterMimeTypes(
     pdfEngine: string | undefined,
     customModel: boolean | undefined
 ): Set<string> {
-    const mimeTypes = new Set<string>(['text/plain']);
+    const mimeTypes = new Set<string>(TEXT_FILE_MIME_TYPES);
     for (const modality of customModel
         ? Object.keys(OPENROUTER_MIME_TYPES_BY_MODALITY)
         : (model?.inputModalities ?? [])) {
@@ -364,21 +363,28 @@ function getOpenRouterMimeTypes(
 }
 
 export function getFilePolicy(
-    providerId: string,
+    providerId: ProviderId,
     model?: FilePolicyModel | null,
     opts: FilePolicyOptions = {}
 ): FilePolicy {
-    const id = toProviderId(providerId);
-    return id !== 'openrouter'
-        ? FILE_POLICIES[id]
-        : {
-              ...FILE_POLICIES.openrouter,
-              mimeTypes: getOpenRouterMimeTypes(
-                  model,
-                  opts.openRouterPdfEngine,
-                  opts.customModel
-              ),
-          };
+    const policy =
+        providerId !== 'openrouter'
+            ? FILE_POLICIES[providerId]
+            : {
+                  ...FILE_POLICIES.openrouter,
+                  mimeTypes: getOpenRouterMimeTypes(
+                      model,
+                      opts.openRouterPdfEngine,
+                      opts.customModel
+                  ),
+              };
+    if (opts.providerFileStorage === true) return policy;
+    const inlineMaxBytes = PROVIDER_INLINE_MAX_REQUEST_BYTES[providerId];
+    return {
+        ...policy,
+        maxFileBytes: inlineMaxBytes,
+        maxRequestBytes: inlineMaxBytes,
+    };
 }
 
 function getAcceptForOpenRouterModel(
@@ -386,7 +392,7 @@ function getAcceptForOpenRouterModel(
     pdfEngine: string | undefined,
     customModel: boolean | undefined
 ): readonly string[] {
-    const extensions = new Set<string>(['.md', '.txt']);
+    const extensions = new Set<string>(TEXT_FILE_EXTENSIONS);
     for (const modality of customModel
         ? Object.keys(OPENROUTER_ACCEPT_EXTENSIONS_BY_MODALITY)
         : (model?.inputModalities ?? [])) {
@@ -405,12 +411,11 @@ function toAcceptString(extensions: readonly string[]): string {
 }
 
 export function getAcceptForProvider(
-    providerId: string,
+    providerId: ProviderId,
     model?: FilePolicyModel | null,
     opts: FilePolicyOptions = {}
 ): string {
-    const id = toProviderId(providerId);
-    if (id === 'openrouter') {
+    if (providerId === 'openrouter') {
         return toAcceptString(
             getAcceptForOpenRouterModel(
                 model,
@@ -420,11 +425,11 @@ export function getAcceptForProvider(
         );
     }
 
-    const cached = ACCEPT_BY_PROVIDER.get(id);
+    const cached = ACCEPT_BY_PROVIDER.get(providerId);
     if (cached) return cached;
 
-    const accept = toAcceptString(ACCEPT_EXTENSIONS_BY_PROVIDER[id]);
-    ACCEPT_BY_PROVIDER.set(id, accept);
+    const accept = toAcceptString(ACCEPT_EXTENSIONS_BY_PROVIDER[providerId]);
+    ACCEPT_BY_PROVIDER.set(providerId, accept);
     return accept;
 }
 
@@ -435,7 +440,7 @@ function normalizeBrowserMimeType(mimeType: string): string | null {
 
 export function resolveFileMediaType(
     file: Pick<File, 'name' | 'type'>,
-    providerId: string,
+    providerId: ProviderId,
     model?: FilePolicyModel | null,
     opts: FilePolicyOptions = {}
 ): string | null {
@@ -516,7 +521,7 @@ export function validateFilename(
 
 export function validateReadyAttachments(
     attachments: DraftAttachmentMeta[],
-    providerId: string,
+    providerId: ProviderId,
     model?: FilePolicyModel | null,
     opts: FilePolicyOptions = {}
 ): { ok: true } | { ok: false; message: string } {

@@ -1,6 +1,6 @@
 import { fetchAnthropicModelIds } from './anthropic';
 import { fetchGoogleModelIds } from './google';
-import { errorMessage } from './http';
+import { errorMessage, sleep } from './http';
 import { fetchOpenAIModelIds } from './openai';
 import type { Provider } from './shared';
 import type { StateStore } from './state-store';
@@ -87,41 +87,56 @@ export function providersWithNewModels(report: WatcherReport): Provider[] {
     return ALL_PROVIDERS.filter((p) => (report.newIds[p]?.length ?? 0) > 0);
 }
 
-export async function runWatcher(store: StateStore): Promise<WatcherReport> {
+export async function runWatcher(
+    store: StateStore,
+    retryDelaysMs: readonly number[] = []
+): Promise<WatcherReport> {
     const previous = await loadState(store);
-    const started = Date.now();
-    const results = await Promise.allSettled(
-        ALL_PROVIDERS.map((provider) => FETCHERS[provider]())
-    );
-    console.log(`fetched provider model lists in ${Date.now() - started}ms`);
-
     const report: WatcherReport = {
         observedIds: {},
         counts: {},
         newIds: {},
         errors: {},
     };
-    ALL_PROVIDERS.forEach((provider, i) => {
-        const result = results[i];
-        if (result.status === 'rejected') {
-            report.errors[provider] = errorMessage(result.reason);
-            console.log(
-                `ERROR ${provider} fetch failed: ${report.errors[provider]}`
-            );
-            return;
-        }
-        const current = result.value;
-        const seen = new Set(previous[provider] ?? []);
-        const fresh = current.filter((id) => !seen.has(id));
-        report.counts[provider] = current.length;
-        report.newIds[provider] = fresh;
-        report.observedIds[provider] = current;
-        console.log(
-            fresh.length > 0
-                ? `got ${current.length} models from ${provider}, ${fresh.length} new: ${fresh.join(', ')}`
-                : `got ${current.length} models from ${provider}, no changes`
+    let pending: readonly Provider[] = ALL_PROVIDERS;
+    for (let round = 0; ; round++) {
+        const started = Date.now();
+        const results = await Promise.allSettled(
+            pending.map((provider) => FETCHERS[provider]())
         );
-    });
-
-    return report;
+        console.log(
+            `fetched ${pending.join(', ')} model list(s) in ${Date.now() - started}ms`
+        );
+        const failed: Provider[] = [];
+        pending.forEach((provider, i) => {
+            const result = results[i];
+            if (result.status === 'rejected') {
+                report.errors[provider] = errorMessage(result.reason);
+                failed.push(provider);
+                console.log(
+                    `ERROR ${provider} fetch failed: ${report.errors[provider]}`
+                );
+                return;
+            }
+            delete report.errors[provider];
+            const current = result.value;
+            const seen = new Set(previous[provider] ?? []);
+            const fresh = current.filter((id) => !seen.has(id));
+            report.counts[provider] = current.length;
+            report.newIds[provider] = fresh;
+            report.observedIds[provider] = current;
+            console.log(
+                fresh.length > 0
+                    ? `got ${current.length} models from ${provider}, ${fresh.length} new: ${fresh.join(', ')}`
+                    : `got ${current.length} models from ${provider}, no changes`
+            );
+        });
+        const delay = retryDelaysMs[round];
+        if (failed.length === 0 || delay === undefined) return report;
+        console.log(
+            `re-polling ${failed.join(', ')} in ${Math.round(delay / 1000)}s`
+        );
+        await sleep(delay);
+        pending = failed;
+    }
 }

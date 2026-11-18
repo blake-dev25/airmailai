@@ -1,3 +1,6 @@
+**26.11.17.1** - Website + Extension
+- Improved Web Search/Fetch display, added files/container support for OpenRouter, model updates, bugfixes
+
 **26.11.6.1** - Website + Extension
 - Code state improvements, updated models
 

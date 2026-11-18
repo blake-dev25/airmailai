@@ -1,7 +1,5 @@
 import { defineConfig } from '@playwright/test';
-import './tests/e2e/env';
-
-const BASE_URL = process.env.AIRMAILAI_BASE_URL ?? 'http://localhost:5173';
+import { BASE_URL } from './tests/e2e/env';
 
 export default defineConfig({
     testDir: './tests/e2e',
@@ -15,6 +13,7 @@ export default defineConfig({
         ['list'],
         ['html', { open: 'never' }],
         ['./tests/e2e/strip-error-context-reporter.ts'],
+        ['./tests/e2e/redact-api-keys-reporter.ts'],
     ],
     use: {
         baseURL: BASE_URL,

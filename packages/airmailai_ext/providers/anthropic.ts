@@ -11,7 +11,7 @@ import {
     decodeBase64Text,
     hashBytes,
 } from '../storage/encoding';
-import { FILES_BETA } from './anthropic-files';
+import { toReadableAnthropicError } from './anthropic-errors';
 import { type ProviderReplicas, resolveAttachments } from './attachments';
 import { makeModelFetch } from './custom-model';
 import { foldReplayIntoText } from './fold-replay';
@@ -25,6 +25,33 @@ const BUDGET_TOKENS: Record<Effort, number> = {
 };
 
 type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+function isEffort(level: string): level is Effort {
+    return Object.hasOwn(BUDGET_TOKENS, level);
+}
+
+function toThinkingConfig(
+    level: string | undefined,
+    adaptive: boolean,
+    maxTokens: number
+): Anthropic.Messages.ThinkingConfigParam | undefined {
+    if (!level) return undefined;
+    if (level === 'none') return { type: 'disabled' };
+    if (level === 'minimal') return { type: 'between_tools' };
+    if (adaptive) return { type: 'adaptive', display: 'summarized' };
+    if (maxTokens < 2048) {
+        throw new Error(
+            'Thinking needs a 1024+ token budget plus room for the response. Raise max output tokens to at least 2048 or disable thinking.'
+        );
+    }
+    return {
+        type: 'enabled',
+        budget_tokens: Math.min(
+            BUDGET_TOKENS[isEffort(level) ? level : 'high'],
+            Math.max(1024, maxTokens - 1024)
+        ),
+    };
+}
 
 function mapStopReason(
     reason: string | null
@@ -110,20 +137,25 @@ function readCodeExecFileIds(content: unknown): string[] {
     return ids;
 }
 
-function parseCodeCommand(json: string): string | undefined {
-    if (!json) return undefined;
+function parseServerToolInput(json: string): Record<string, unknown> {
+    if (!json) return {};
     let raw: unknown;
     try {
         raw = JSON.parse(json);
     } catch {
-        return undefined;
+        return {};
     }
-    if (raw && typeof raw === 'object') {
-        const o = raw as { command?: unknown; code?: unknown };
-        const v = typeof o.command === 'string' ? o.command : o.code;
-        if (typeof v === 'string') return v;
-    }
-    return undefined;
+    return raw && typeof raw === 'object'
+        ? (raw as Record<string, unknown>)
+        : {};
+}
+
+function readStringField(
+    input: Record<string, unknown>,
+    key: string
+): string | undefined {
+    const value = input[key];
+    return typeof value === 'string' ? value : undefined;
 }
 
 type AnthropicImageMedia =
@@ -135,6 +167,14 @@ function isImageMedia(mediaType: string): mediaType is AnthropicImageMedia {
         mediaType === 'image/png' ||
         mediaType === 'image/gif' ||
         mediaType === 'image/webp'
+    );
+}
+
+export function anthropicSupportsInlineFile(mediaType: string): boolean {
+    return (
+        isImageMedia(mediaType) ||
+        mediaType === 'application/pdf' ||
+        mediaType.startsWith('text/')
     );
 }
 
@@ -176,29 +216,31 @@ function attachmentBlock(
     throw new Error(`Anthropic does not support ${mediaType} attachments.`);
 }
 
+function isFileDocumentMedia(mediaType: string): boolean {
+    return mediaType === 'application/pdf' || mediaType === 'text/plain';
+}
+
 function providerFileBlock(
     mediaType: string,
     fileId: string,
     filename: string,
     isUser: boolean,
     codeExecEnabled: boolean
-): Anthropic.Messages.ContentBlockParam {
-    if (!isImageMedia(mediaType) && isUser && codeExecEnabled) {
+): Anthropic.Messages.ContentBlockParam | null {
+    if (isImageMedia(mediaType)) {
+        return { type: 'image', source: { type: 'file', file_id: fileId } };
+    }
+    const documentMedia = isFileDocumentMedia(mediaType);
+    if (codeExecEnabled && (isUser || !documentMedia)) {
         return { type: 'container_upload', file_id: fileId };
     }
-    const block:
-        | Anthropic.Beta.Messages.BetaImageBlockParam
-        | Anthropic.Beta.Messages.BetaRequestDocumentBlock = isImageMedia(
-        mediaType
-    )
-        ? { type: 'image', source: { type: 'file', file_id: fileId } }
-        : {
-              type: 'document',
-              source: { type: 'file', file_id: fileId },
-              title: filename,
-              citations: { enabled: true },
-          };
-    return block as Anthropic.Messages.ContentBlockParam;
+    if (!documentMedia) return null;
+    return {
+        type: 'document',
+        source: { type: 'file', file_id: fileId },
+        title: filename,
+        citations: { enabled: true },
+    };
 }
 
 interface DocFile {
@@ -207,18 +249,18 @@ interface DocFile {
     mediaType: string;
 }
 
+interface AttachmentBlock {
+    block: Anthropic.Messages.ContentBlockParam;
+    file: DocFile;
+}
+
 function buildAttachmentBlocks(
     msg: AirmailAIMessage,
     blobs: Record<string, { mediaType: string; base64: string }>,
     codeExecEnabled: boolean,
-    replicas: ProviderReplicas | undefined,
-    docFiles: DocFile[]
-): Anthropic.Messages.ContentBlockParam[] {
-    const blocks: Anthropic.Messages.ContentBlockParam[] = [];
-    for (const att of resolveAttachments(msg, blobs, replicas)) {
-        if (att.kind === 'provider' && att.providerId !== 'anthropic') {
-            continue;
-        }
+    replicas: ProviderReplicas | undefined
+): AttachmentBlock[] {
+    return resolveAttachments(msg, blobs, replicas).flatMap((att) => {
         const block =
             att.kind === 'provider'
                 ? providerFileBlock(
@@ -229,16 +271,18 @@ function buildAttachmentBlocks(
                       codeExecEnabled
                   )
                 : attachmentBlock(att.mediaType, att.base64, att.filename);
-        blocks.push(block);
-        if (block.type === 'document') {
-            docFiles.push({
-                hash: att.hash,
-                filename: att.filename,
-                mediaType: att.mediaType,
-            });
-        }
-    }
-    return blocks;
+        if (!block) return [];
+        return [
+            {
+                block,
+                file: {
+                    hash: att.hash,
+                    filename: att.filename,
+                    mediaType: att.mediaType,
+                },
+            },
+        ];
+    });
 }
 
 function toAnthropicMessages(
@@ -248,20 +292,34 @@ function toAnthropicMessages(
     replicas: ProviderReplicas | undefined,
     docFiles: DocFile[]
 ): Anthropic.Messages.MessageParam[] {
-    return messages.map((msg) => {
+    let assistantAttachments: AttachmentBlock[] = [];
+    return messages.flatMap((msg): Anthropic.Messages.MessageParam[] => {
         const text = foldReplayIntoText(msg);
-        const blocks = buildAttachmentBlocks(
+        const attachments = buildAttachmentBlocks(
             msg,
             blobs,
             codeExecEnabled,
-            replicas,
-            docFiles
+            replicas
         );
-        if (!blocks.length) return { role: msg.role, content: text };
-        const content: Anthropic.Messages.ContentBlockParam[] = [];
+        if (msg.role === 'assistant') {
+            assistantAttachments.push(...attachments);
+            return text ? [{ role: 'assistant', content: text }] : [];
+        }
+        const leading = assistantAttachments;
+        assistantAttachments = [];
+        for (const attachment of [...leading, ...attachments]) {
+            if (attachment.block.type === 'document')
+                docFiles.push(attachment.file);
+        }
+        if (!leading.length && !attachments.length) {
+            return text ? [{ role: 'user', content: text }] : [];
+        }
+        const content: Anthropic.Messages.ContentBlockParam[] = leading.map(
+            (a) => a.block
+        );
         if (text) content.push({ type: 'text', text });
-        content.push(...blocks);
-        return { role: msg.role, content };
+        content.push(...attachments.map((a) => a.block));
+        return [{ role: 'user', content }];
     });
 }
 
@@ -275,39 +333,19 @@ export async function* streamAnthropic(
     });
 
     const thinkingLevel = args.params.thinkingLevel as string | undefined;
-    const thinkingEnabled = !!thinkingLevel && thinkingLevel !== 'none';
     const adaptiveThinking =
         (args.params.adaptiveThinking as boolean | undefined) ?? true;
     const maxTokens = (args.params.maxTokens as number | undefined) ?? 8192;
 
-    if (thinkingEnabled && !adaptiveThinking && maxTokens < 2048) {
-        throw new Error(
-            'Thinking needs a 1024+ token budget plus room for the response. Raise max output tokens to at least 2048 or disable thinking.'
-        );
-    }
-
-    const thinking: Anthropic.Messages.ThinkingConfigParam | undefined =
-        thinkingEnabled
-            ? adaptiveThinking
-                ? { type: 'adaptive', display: 'summarized' }
-                : {
-                      type: 'enabled',
-                      budget_tokens: Math.min(
-                          BUDGET_TOKENS[thinkingLevel as Effort] ??
-                              BUDGET_TOKENS.high,
-                          Math.max(1024, maxTokens - 1024)
-                      ),
-                  }
-            : undefined;
-
-    const effort: Effort | undefined =
-        thinkingEnabled &&
-        adaptiveThinking &&
-        (thinkingLevel === 'low' ||
-            thinkingLevel === 'medium' ||
-            thinkingLevel === 'high' ||
-            thinkingLevel === 'xhigh' ||
-            thinkingLevel === 'max')
+    const thinking = toThinkingConfig(
+        thinkingLevel,
+        adaptiveThinking,
+        maxTokens
+    );
+    const effort =
+        thinking?.type === 'adaptive' &&
+        thinkingLevel &&
+        isEffort(thinkingLevel)
             ? thinkingLevel
             : undefined;
 
@@ -342,42 +380,37 @@ export async function* streamAnthropic(
 
     const replicas: ProviderReplicas | undefined =
         args.providerFiles && Object.keys(args.providerFiles).length
-            ? { providerId: 'anthropic', files: args.providerFiles }
+            ? args.providerFiles
             : undefined;
-    const needsFilesBeta = codeExecEnabled || !!replicas;
     const docFiles: DocFile[] = [];
 
-    const stream = await client.messages.create(
-        {
-            model: args.model,
-            max_tokens: maxTokens,
-            messages: toAnthropicMessages(
-                args.messages,
-                args.blobs ?? {},
-                codeExecEnabled,
-                replicas,
-                docFiles
-            ),
-            cache_control: { type: 'ephemeral' },
-            ...(args.system ? { system: args.system } : {}),
-            ...(args.params.temperature !== undefined
-                ? { temperature: args.params.temperature as number }
-                : {}),
-            ...(thinking ? { thinking } : {}),
-            ...(effort ? { output_config: { effort } } : {}),
-            ...(tools.length ? { tools } : {}),
-            ...(typeof args.params.container === 'string'
-                ? { container: args.params.container }
-                : {}),
-            stream: true,
-        },
-        {
-            signal: args.signal,
-            ...(needsFilesBeta
-                ? { headers: { 'anthropic-beta': FILES_BETA } }
-                : {}),
-        }
-    );
+    const stream = await client.messages
+        .create(
+            {
+                model: args.model,
+                max_tokens: maxTokens,
+                messages: toAnthropicMessages(
+                    args.messages,
+                    args.blobs ?? {},
+                    codeExecEnabled,
+                    replicas,
+                    docFiles
+                ),
+                cache_control: { type: 'ephemeral' },
+                ...(args.system ? { system: args.system } : {}),
+                ...(thinking ? { thinking } : {}),
+                ...(effort ? { output_config: { effort } } : {}),
+                ...(tools.length ? { tools } : {}),
+                ...(typeof args.params.container === 'string'
+                    ? { container: args.params.container }
+                    : {}),
+                stream: true,
+            },
+            { signal: args.signal }
+        )
+        .catch((e: unknown) => {
+            throw toReadableAnthropicError(e);
+        });
 
     const openText = new Set<number>();
     const openReasoning = new Set<number>();
@@ -388,8 +421,11 @@ export async function* streamAnthropic(
     const seenSourceUrls = new Set<string>();
     const seenDocIndices = new Set<number>();
     let inputTokens = 0;
+    let cacheCreationTokens = 0;
+    let cacheReadTokens = 0;
     let outputTokens = 0;
     let stopReason: AirmailAIMessageMetadata['stopReason'];
+    let refusalExplanation: string | undefined;
     let containerId: string | undefined;
     let containerExpiresAt: string | undefined;
 
@@ -398,10 +434,10 @@ export async function* streamAnthropic(
             switch (event.type) {
                 case 'message_start': {
                     const usage = event.message.usage;
-                    inputTokens =
-                        usage.input_tokens +
-                        (usage.cache_creation_input_tokens ?? 0) +
-                        (usage.cache_read_input_tokens ?? 0);
+                    inputTokens = usage.input_tokens;
+                    cacheCreationTokens =
+                        usage.cache_creation_input_tokens ?? 0;
+                    cacheReadTokens = usage.cache_read_input_tokens ?? 0;
                     if (event.message.container) {
                         containerId = event.message.container.id;
                         containerExpiresAt = event.message.container.expires_at;
@@ -482,14 +518,15 @@ export async function* streamAnthropic(
                         for (const fileId of readCodeExecFileIds(
                             block.content
                         )) {
-                            const meta =
-                                await client.beta.files.retrieveMetadata(
-                                    fileId,
-                                    { betas: [FILES_BETA] }
-                                );
-                            const resp = await client.beta.files.download(
+                            const meta = await client.files.retrieveMetadata(
                                 fileId,
-                                { betas: [FILES_BETA] }
+                                undefined,
+                                { signal: args.signal }
+                            );
+                            const resp = await client.files.download(
+                                fileId,
+                                undefined,
+                                { signal: args.signal }
                             );
                             const bytes = new Uint8Array(
                                 await resp.arrayBuffer()
@@ -595,19 +632,32 @@ export async function* streamAnthropic(
                         const pending = serverToolByIndex.get(event.index);
                         if (pending) {
                             serverToolByIndex.delete(event.index);
+                            const input = parseServerToolInput(pending.json);
                             if (pending.name === 'code_execution') {
-                                const code = parseCodeCommand(pending.json);
+                                const code =
+                                    readStringField(input, 'command') ??
+                                    readStringField(input, 'code');
                                 yield {
                                     type: 'tool-call',
                                     toolCallId: pending.id,
                                     name: 'code_execution',
                                     ...(code ? { input: { code } } : {}),
                                 };
-                            } else {
+                            } else if (pending.name === 'web_search') {
+                                const query = readStringField(input, 'query');
                                 yield {
                                     type: 'tool-call',
                                     toolCallId: pending.id,
-                                    name: pending.name,
+                                    name: 'web_search',
+                                    ...(query ? { input: { query } } : {}),
+                                };
+                            } else {
+                                const url = readStringField(input, 'url');
+                                yield {
+                                    type: 'tool-call',
+                                    toolCallId: pending.id,
+                                    name: 'web_fetch',
+                                    ...(url ? { input: { url } } : {}),
                                 };
                             }
                         }
@@ -615,11 +665,20 @@ export async function* streamAnthropic(
                     break;
                 }
                 case 'message_delta': {
-                    if (event.usage?.output_tokens != null) {
-                        outputTokens = event.usage.output_tokens;
-                    }
+                    const usage = event.usage;
+                    inputTokens = usage.input_tokens ?? inputTokens;
+                    cacheCreationTokens =
+                        usage.cache_creation_input_tokens ??
+                        cacheCreationTokens;
+                    cacheReadTokens =
+                        usage.cache_read_input_tokens ?? cacheReadTokens;
+                    outputTokens = usage.output_tokens;
                     if (event.delta.stop_reason) {
                         stopReason = mapStopReason(event.delta.stop_reason);
+                    }
+                    if (event.delta.stop_details?.explanation) {
+                        refusalExplanation =
+                            event.delta.stop_details.explanation;
                     }
                     if (event.delta.container) {
                         containerId = event.delta.container.id;
@@ -632,10 +691,16 @@ export async function* streamAnthropic(
                         type: 'finish',
                         metadata: {
                             tokens: {
-                                input: inputTokens,
+                                input:
+                                    inputTokens +
+                                    cacheCreationTokens +
+                                    cacheReadTokens,
                                 output: outputTokens,
                             },
                             ...(stopReason ? { stopReason } : {}),
+                            ...(refusalExplanation
+                                ? { refusalExplanation }
+                                : {}),
                         },
                         ...(containerId ? { containerId } : {}),
                         ...(containerExpiresAt ? { containerExpiresAt } : {}),
@@ -646,6 +711,6 @@ export async function* streamAnthropic(
         }
     } catch (e) {
         if (args.signal?.aborted) return;
-        throw e;
+        throw toReadableAnthropicError(e);
     }
 }

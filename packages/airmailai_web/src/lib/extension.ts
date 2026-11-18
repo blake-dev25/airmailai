@@ -16,8 +16,11 @@ import type {
     LocalFileInfo,
     OpenRouterModel,
     ProviderFileInfo,
+    ProviderId,
+    SiteChatMeta,
     StorageRequest,
     StorageResponse,
+    StorageResponseFor,
     StorageUsage,
     StoredChat,
     StoredMessage,
@@ -25,7 +28,11 @@ import type {
     TurnStartRequest,
     UserSettings,
 } from '@airmailai/shared';
-import { EXTENSION_ID, FILE_TRANSFER_CHUNK_BYTES } from '@airmailai/shared';
+import {
+    EXTENSION_ID,
+    FILE_TRANSFER_CHUNK_BYTES,
+    STORAGE_RESPONSE_TYPE,
+} from '@airmailai/shared';
 import { validateSettingsForStorage } from './settingsValidation';
 
 export interface StreamHandlers {
@@ -48,21 +55,28 @@ export const tabId = crypto.randomUUID();
 import { log } from './log';
 const KEEPALIVE_MS = 20_000;
 
-let extensionId: string | null = null;
-let extensionVersion: string | null = null;
-let extensionVersionName: string | null = null;
+interface DetectedExtension {
+    id: string;
+    version: string;
+    versionName: string | null;
+}
+
+let detectedExtension: DetectedExtension | null = null;
 
 export function getExtensionVersion(): {
     version: string | null;
     versionName: string | null;
 } {
-    return { version: extensionVersion, versionName: extensionVersionName };
+    return {
+        version: detectedExtension?.version ?? null,
+        versionName: detectedExtension?.versionName ?? null,
+    };
 }
 
 const DETECT_TIMEOUT_MS = 5000;
 
 export function waitForExtension(): Promise<boolean> {
-    if (extensionId) return Promise.resolve(true);
+    if (detectedExtension) return Promise.resolve(true);
     if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage)
         return Promise.resolve(false);
     return new Promise((resolve) => {
@@ -105,13 +119,15 @@ export function waitForExtension(): Promise<boolean> {
                         finish(false);
                         return;
                     }
-                    extensionId = EXTENSION_ID;
-                    extensionVersion = response.version;
-                    extensionVersionName = response.versionName;
+                    detectedExtension = {
+                        id: EXTENSION_ID,
+                        version: response.version,
+                        versionName: response.versionName,
+                    };
                     log.info(
                         'extension detected',
-                        extensionId,
-                        extensionVersion
+                        detectedExtension.id,
+                        detectedExtension.version
                     );
                     finish(true);
                 }
@@ -123,20 +139,40 @@ export function waitForExtension(): Promise<boolean> {
     });
 }
 
-async function sendStorageMessage(
-    request: StorageRequest
-): Promise<StorageResponse> {
-    if (!extensionId) {
+function isStorageResponseFor<T extends StorageRequest['type']>(
+    response: StorageResponse,
+    requestType: T
+): response is StorageResponseFor<T> {
+    return response.type === STORAGE_RESPONSE_TYPE[requestType];
+}
+
+async function sendStorageMessage<R extends StorageRequest>(
+    request: R
+): Promise<StorageResponseFor<R['type']>> {
+    if (!detectedExtension) {
         log.error('storage: extension not detected, cannot send', request.type);
         throw new Error('Extension not detected.');
     }
     log.info('-> storage', request.type);
+    const targetExtensionId = detectedExtension.id;
     const response = await new Promise<StorageResponse | undefined>(
-        (resolve) => {
+        (resolve, reject) => {
             chrome.runtime.sendMessage(
-                extensionId as string,
+                targetExtensionId,
                 request,
-                (resp: StorageResponse) => resolve(resp)
+                (resp: StorageResponse | undefined) => {
+                    const error = chrome.runtime.lastError;
+                    if (error) {
+                        log.error('<- storage: send failed', request.type);
+                        reject(
+                            new Error(
+                                `Extension didn't respond to ${request.type} (${error.message ?? 'no details'}). It may have been disabled or updated.`
+                            )
+                        );
+                        return;
+                    }
+                    resolve(resp);
+                }
             );
         }
     );
@@ -150,7 +186,12 @@ async function sendStorageMessage(
         log.error('<- storage error', response.message);
         throw new Error(response.message);
     }
-    log.info('<- storage', response.type);
+    const responseType = response.type;
+    if (!isStorageResponseFor<R['type']>(response, request.type)) {
+        log.error('<- storage: unexpected response', responseType);
+        throw new Error(`Unexpected response: ${responseType}`);
+    }
+    log.info('<- storage', responseType);
     return response;
 }
 
@@ -161,9 +202,11 @@ interface FileTransferChannel {
     disconnect: () => void;
 }
 
-function openFileTransferChannel(): FileTransferChannel {
-    if (!extensionId) throw new Error('Extension not detected.');
-    const port = chrome.runtime.connect(extensionId, { name: 'file-transfer' });
+function openFileTransferChannel(name = 'file-transfer'): FileTransferChannel {
+    if (!detectedExtension) throw new Error('Extension not detected.');
+    const port = chrome.runtime.connect(detectedExtension.id, {
+        name,
+    });
     const pending: Array<{
         resolve: (response: FileTransferResponse) => void;
         reject: (error: Error) => void;
@@ -224,35 +267,31 @@ async function settleBeforeThrow(
 }
 
 export async function saveApiKey(
-    provider: string,
+    provider: ProviderId,
     apiKey: string
 ): Promise<void> {
     await sendStorageMessage({ type: 'save_key', provider, apiKey });
 }
 
-export async function clearApiKey(provider: string): Promise<void> {
+export async function clearApiKey(provider: ProviderId): Promise<void> {
     await sendStorageMessage({ type: 'clear_key', provider });
 }
 
 export async function checkApiKeys(
-    providers: string[]
+    providers: ProviderId[]
 ): Promise<Record<string, boolean>> {
     const response = await sendStorageMessage({ type: 'has_keys', providers });
-    if (response.type === 'has_keys') return response.saved;
-    throw new Error(`Unexpected response: ${response.type}`);
+    return response.saved;
 }
 
 export async function testApiKey(
-    provider: string
+    provider: ProviderId
 ): Promise<{ ok: boolean; message?: string }> {
     const response = await sendStorageMessage({ type: 'test_key', provider });
-    if (response.type === 'key_test') {
-        return {
-            ok: response.ok,
-            ...(response.message ? { message: response.message } : {}),
-        };
-    }
-    throw new Error(`Unexpected response: ${response.type}`);
+    return {
+        ok: response.ok,
+        ...(response.message ? { message: response.message } : {}),
+    };
 }
 
 export async function saveSettings(
@@ -264,16 +303,15 @@ export async function saveSettings(
 
 export async function loadSettings(): Promise<Partial<UserSettings>> {
     const response = await sendStorageMessage({ type: 'load_settings' });
-    if (response.type === 'settings') return response.settings;
-    throw new Error(`Unexpected response: ${response.type}`);
+    return response.settings;
 }
 
-export async function saveMeta(meta: ChatMeta): Promise<void> {
+export async function saveMeta(meta: SiteChatMeta): Promise<void> {
     await sendStorageMessage({ type: 'save_meta', meta, sourceTabId: tabId });
 }
 
 export async function prepareTurn(
-    meta: ChatMeta,
+    meta: SiteChatMeta,
     message: StoredMessage
 ): Promise<number> {
     const response = await sendStorageMessage({
@@ -282,12 +320,11 @@ export async function prepareTurn(
         message,
         sourceTabId: tabId,
     });
-    if (response.type === 'turn_prepared') return response.revision;
-    throw new Error(`Unexpected response: ${response.type}`);
+    return response.revision;
 }
 
 export async function prepareRetry(
-    meta: ChatMeta,
+    meta: SiteChatMeta,
     lastKeptId: string
 ): Promise<number> {
     const response = await sendStorageMessage({
@@ -296,8 +333,7 @@ export async function prepareRetry(
         lastKeptId,
         sourceTabId: tabId,
     });
-    if (response.type === 'turn_prepared') return response.revision;
-    throw new Error(`Unexpected response: ${response.type}`);
+    return response.revision;
 }
 
 export async function putMessage(message: StoredMessage): Promise<void> {
@@ -308,19 +344,67 @@ export async function putMessage(message: StoredMessage): Promise<void> {
     });
 }
 
-export async function importChats(chats: ImportChatEntry[]): Promise<void> {
-    await sendStorageMessage({
-        type: 'import_chats',
+const IMPORT_MESSAGE_BYTES = 64 * 1024 * 1024;
+
+export async function importChats(
+    chats: ImportChatEntry[],
+    batchChars: number
+): Promise<void> {
+    const request = {
+        type: 'import_chats' as const,
         chats,
         sourceTabId: tabId,
-    });
+    };
+    if (
+        chats.length === 1 &&
+        batchChars > IMPORT_BATCH_CHARS &&
+        new Blob([JSON.stringify(request)]).size >= IMPORT_MESSAGE_BYTES
+    ) {
+        return importLargeChat(chats[0]);
+    }
+    await sendStorageMessage(request);
 }
+
+async function importLargeChat(chat: ImportChatEntry): Promise<void> {
+    const channel = openFileTransferChannel('chat-import');
+    const send = async (
+        messages: ImportChatEntry['messages'],
+        final: boolean
+    ) => {
+        const reply = await channel.request({
+            type: 'import_messages',
+            messages,
+            ...(final ? { finalMeta: chat.meta, sourceTabId: tabId } : {}),
+        });
+        if (reply.type !== 'import_ack')
+            throw new Error(`Unexpected response: ${reply.type}`);
+    };
+    try {
+        let batch: ImportChatEntry['messages'] = [];
+        let chars = 0;
+        for (const message of chat.messages) {
+            const size = JSON.stringify(message).length;
+            if (batch.length && chars + size > IMPORT_BATCH_CHARS) {
+                await send(batch, false);
+                batch = [];
+                chars = 0;
+            }
+            batch.push(message);
+            chars += size;
+        }
+        await send(batch, true);
+    } finally {
+        channel.disconnect();
+    }
+}
+
+export const IMPORT_BATCH_CHARS = 4 * 1024 * 1024;
 
 export async function stageDraftAttachment(
     chatId: string,
     attachment: DraftAttachmentMeta,
     file: File,
-    replicateTo?: string,
+    replicateTo?: ProviderId,
     onProgress?: (progress: number) => void
 ): Promise<DraftAttachment> {
     const chunkCount = Math.ceil(file.size / FILE_TRANSFER_CHUNK_BYTES);
@@ -389,11 +473,20 @@ export async function removeDraftAttachment(
     chatId: string,
     key: string
 ): Promise<void> {
-    await sendStorageMessage({ type: 'remove_draft_attachment', chatId, key });
+    await sendStorageMessage({
+        type: 'remove_draft_attachment',
+        chatId,
+        key,
+        sourceTabId: tabId,
+    });
 }
 
 export async function clearDraftAttachments(chatId: string): Promise<void> {
-    await sendStorageMessage({ type: 'clear_draft_attachments', chatId });
+    await sendStorageMessage({
+        type: 'clear_draft_attachments',
+        chatId,
+        sourceTabId: tabId,
+    });
 }
 
 export async function deleteMessage(
@@ -418,8 +511,7 @@ export async function deleteChat(chatId: string): Promise<void> {
 
 export async function loadChatMetas(): Promise<ChatMeta[]> {
     const response = await sendStorageMessage({ type: 'load_chat_metas' });
-    if (response.type === 'chat_metas') return response.metas;
-    throw new Error(`Unexpected response: ${response.type}`);
+    return response.metas;
 }
 
 export async function loadChatsByIds(ids: string[]): Promise<StoredChat[]> {
@@ -448,8 +540,6 @@ export async function loadChat(
                 cursor,
                 messageId,
             });
-            if (response.type !== 'chat_page')
-                throw new Error(`Unexpected response: ${response.type}`);
             if (!response.exists) return null;
             if (revision !== undefined && revision !== response.revision) {
                 changed = true;
@@ -483,28 +573,24 @@ export async function loadOpenRouterModels(): Promise<
     const response = await sendStorageMessage({
         type: 'load_openrouter_models',
     });
-    if (response.type === 'openrouter_models') return response.models;
-    throw new Error(`Unexpected response: ${response.type}`);
+    return response.models;
 }
 
 export async function getOpenRouterRefreshStatus(): Promise<number | null> {
     const response = await sendStorageMessage({
         type: 'get_openrouter_refresh_status',
     });
-    if (response.type === 'openrouter_refresh_status') {
-        return response.lastAttemptAt;
-    }
-    throw new Error(`Unexpected response: ${response.type}`);
+    return response.lastAttemptAt;
 }
 
 export async function refreshOpenRouterModels(): Promise<OpenRouterModel[]> {
     const response = await sendStorageMessage({
         type: 'refresh_openrouter_models',
     });
-    if (response.type === 'openrouter_models' && response.models) {
-        return response.models;
+    if (!response.models) {
+        throw new Error('The extension returned no OpenRouter models.');
     }
-    throw new Error(`Unexpected response: ${response.type}`);
+    return response.models;
 }
 
 const FILE_BLOB_CACHE_MAX_BYTES = 128 * 1024 * 1024;
@@ -611,32 +697,29 @@ async function downloadFileBlob(hash: string): Promise<Blob | null> {
 
 export async function getFileStatuses(
     hashes: string[],
-    provider: string
+    provider: ProviderId
 ): Promise<Record<string, FileAvailability>> {
     const response = await sendStorageMessage({
         type: 'file_status',
         hashes,
         provider,
     });
-    if (response.type === 'file_status') return response.statuses;
-    throw new Error(`Unexpected response: ${response.type}`);
+    return response.statuses;
 }
 
 export async function listLocalFiles(): Promise<LocalFileInfo[]> {
     const response = await sendStorageMessage({ type: 'list_local_files' });
-    if (response.type === 'local_files') return response.files;
-    throw new Error(`Unexpected response: ${response.type}`);
+    return response.files;
 }
 
 export async function listProviderFiles(
-    provider: string
+    provider: ProviderId
 ): Promise<ProviderFileInfo[]> {
     const response = await sendStorageMessage({
         type: 'list_provider_files',
         provider,
     });
-    if (response.type === 'provider_files') return response.files;
-    throw new Error(`Unexpected response: ${response.type}`);
+    return response.files;
 }
 
 export async function deleteStoredFile(
@@ -647,17 +730,13 @@ export async function deleteStoredFile(
         target,
         sourceTabId: tabId,
     });
-    if (response.type === 'stored_file_deleted') return response.chatIds;
-    throw new Error(`Unexpected response: ${response.type}`);
+    return response.chatIds;
 }
 
 export async function getStorageUsage(): Promise<StorageUsage> {
     const response = await sendStorageMessage({ type: 'get_storage_usage' });
-    if (response.type === 'storage_usage') {
-        const { type: _t, ...usage } = response;
-        return usage;
-    }
-    throw new Error(`Unexpected response: ${response.type}`);
+    const { type: _t, ...usage } = response;
+    return usage;
 }
 
 export async function clearAllChats(): Promise<void> {
@@ -672,7 +751,7 @@ export function sendToExtension(
     request: Omit<TurnStartRequest, 'type'>,
     handlers: StreamHandlers
 ): StreamHandle {
-    if (!extensionId) {
+    if (!detectedExtension) {
         log.error('chat: extension not detected');
         queueMicrotask(() =>
             handlers.onError(
@@ -691,7 +770,7 @@ export function sendToExtension(
     });
 
     let phase: 'open' | 'stopping' | 'closed' = 'open';
-    const port = chrome.runtime.connect(extensionId);
+    const port = chrome.runtime.connect(detectedExtension.id);
 
     port.onMessage.addListener((event: ExtensionStreamEvent) => {
         if (phase === 'closed') return;
@@ -791,13 +870,15 @@ export function subscribeToBroadcast(handlers: {
     function connect() {
         if (connection.kind === 'closed') return;
         release();
-        if (!extensionId) {
+        if (!detectedExtension) {
             retryLater();
             return;
         }
         let port: chrome.runtime.Port;
         try {
-            port = chrome.runtime.connect(extensionId, { name: 'broadcast' });
+            port = chrome.runtime.connect(detectedExtension.id, {
+                name: 'broadcast',
+            });
         } catch (err) {
             log.error('broadcast: connect failed', err);
             retryLater();

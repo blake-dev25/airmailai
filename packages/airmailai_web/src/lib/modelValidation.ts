@@ -1,10 +1,11 @@
+import type { ProviderId } from '@airmailai/shared';
 import {
     validateCustomModelConfig,
     validateModelIdLength,
 } from './settingsValidation';
 
 export function validateModelRequest(
-    provider: string,
+    provider: ProviderId,
     model: string,
     customModel: unknown
 ): void {

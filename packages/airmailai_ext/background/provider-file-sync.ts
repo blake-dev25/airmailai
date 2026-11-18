@@ -2,14 +2,27 @@ import type {
     AirmailAIMessage,
     ProviderFileEntry,
     ProviderFileRef,
+    ProviderId,
+} from '@airmailai/shared';
+import {
+    PROVIDER_INLINE_MAX_REQUEST_BYTES,
+    errorMessage,
+    isProviderId,
+    providerMaxFileBytes,
 } from '@airmailai/shared';
 import { log } from '../debug';
+import { bytesToBase64 } from '../storage/encoding';
 import {
     deleteAnthropicFile,
     uploadAnthropicFile,
 } from '../providers/anthropic-files';
 import { deleteOpenAIFile, uploadOpenAIFile } from '../providers/openai-files';
 import { deleteGoogleFile, uploadGoogleFile } from '../providers/google-files';
+import {
+    deleteOpenRouterFile,
+    openRouterStoresMediaType,
+    uploadOpenRouterFile,
+} from '../providers/openrouter-files';
 import {
     dbForgetProviderFile,
     dbGetFileBlob,
@@ -19,15 +32,17 @@ import {
 
 const API_KEY_PREFIX = 'apiKey_';
 
-export function apiKeyName(provider: string): string {
+export function apiKeyName(provider: ProviderId): string {
+    assertKnownProvider(provider);
     return `${API_KEY_PREFIX}${provider}`;
 }
 
 export async function readApiKey(
-    provider: string
+    provider: ProviderId
 ): Promise<string | undefined> {
-    const result = await chrome.storage.local.get(apiKeyName(provider));
-    return result[apiKeyName(provider)] as string | undefined;
+    const key = apiKeyName(provider);
+    const result = await chrome.storage.local.get(key);
+    return result[key] as string | undefined;
 }
 
 export async function readProviderFileStorageEnabled(): Promise<boolean> {
@@ -35,8 +50,28 @@ export async function readProviderFileStorageEnabled(): Promise<boolean> {
     return result.enableProviderFileStorage === true;
 }
 
+function httpStatus(error: unknown): number | undefined {
+    if (!(error instanceof Error)) return undefined;
+    if ('status' in error && typeof error.status === 'number') {
+        return error.status;
+    }
+    if ('statusCode' in error && typeof error.statusCode === 'number') {
+        return error.statusCode;
+    }
+    return undefined;
+}
+
+export function providerStoresFile(
+    provider: ProviderId,
+    mediaType: string,
+    providerFileStorage: boolean
+): boolean {
+    if (!providerFileStorage) return false;
+    return provider !== 'openrouter' || openRouterStoresMediaType(mediaType);
+}
+
 async function deleteRemoteProviderFile(
-    providerId: string,
+    providerId: ProviderId,
     apiKey: string,
     fileId: string
 ): Promise<void> {
@@ -47,16 +82,18 @@ async function deleteRemoteProviderFile(
             await deleteOpenAIFile(apiKey, fileId);
         } else if (providerId === 'google') {
             await deleteGoogleFile(apiKey, fileId);
+        } else if (providerId === 'openrouter') {
+            await deleteOpenRouterFile(apiKey, fileId);
+        } else {
+            throw new Error('Unknown file provider.');
         }
     } catch (error) {
-        const alreadyGone =
-            error instanceof Error && 'status' in error && error.status === 404;
-        if (!alreadyGone) throw error;
+        if (httpStatus(error) !== 404) throw error;
     }
 }
 
 export async function deleteProviderFile(
-    providerId: string,
+    providerId: ProviderId,
     apiKey: string,
     fileId: string
 ): Promise<string[]> {
@@ -69,7 +106,7 @@ export async function deleteProviderFiles(
 ): Promise<string[]> {
     const warnings: string[] = [];
     if (!refs.length) return warnings;
-    const byProvider = new Map<string, string[]>();
+    const byProvider = new Map<ProviderId, string[]>();
     const seen = new Set<string>();
     for (const ref of refs) {
         const key = `${ref.providerId}:${ref.fileId}`;
@@ -104,7 +141,7 @@ export async function deleteProviderFiles(
                         err
                     );
                     warnings.push(
-                        `Couldn't delete an unused ${providerId} file (${fileId}): ${err instanceof Error ? err.message : String(err)}. You can remove it from the Files tab.`
+                        `Couldn't delete an unused ${providerId} file (${fileId}): ${errorMessage(err)}. You can remove it from the Files tab.`
                     );
                 }
             })
@@ -113,59 +150,22 @@ export async function deleteProviderFiles(
     return warnings;
 }
 
-export async function deleteTemporaryProviderFiles(
-    refs: ProviderFileRef[],
-    apiKey: string
-): Promise<string[]> {
-    const warnings: string[] = [];
-    await Promise.all(
-        refs.map(async (ref) => {
-            try {
-                await deleteRemoteProviderFile(
-                    ref.providerId,
-                    apiKey,
-                    ref.fileId
-                );
-            } catch (error) {
-                log.error(
-                    'temporary provider file cleanup failed',
-                    ref.providerId,
-                    ref.fileId,
-                    error
-                );
-                warnings.push(
-                    `Couldn't delete a temporary ${ref.providerId} file (${ref.fileId}). You can remove it from the provider dashboard.`
-                );
-            }
-        })
-    );
-    return warnings;
-}
-
-export const FILE_PROVIDERS = new Set(['anthropic', 'openai', 'google']);
-const KNOWN_PROVIDERS = new Set([...FILE_PROVIDERS, 'openrouter']);
-
-const MB = 1024 * 1024;
-const PROVIDER_MAX_FILE_BYTES: Record<string, number> = {
-    anthropic: 500 * MB,
-    google: 2048 * MB,
-    openai: 512 * MB,
-    openrouter: 8 * MB,
-};
-
 export function fileTooLargeForProvider(
-    provider: string,
-    sizeBytes: number
+    provider: ProviderId,
+    sizeBytes: number,
+    providerFileStorage: boolean
 ): boolean {
-    const max = PROVIDER_MAX_FILE_BYTES[provider];
-    return max !== undefined && sizeBytes > max;
+    return sizeBytes > providerMaxFileBytes(provider, providerFileStorage);
 }
 
-export function assertKnownProvider(provider: string): void {
-    if (!KNOWN_PROVIDERS.has(provider)) {
-        throw new Error(`Unknown provider: ${provider}`);
+export function assertKnownProvider(
+    provider: unknown
+): asserts provider is ProviderId {
+    if (!isProviderId(provider)) {
+        throw new Error('Unknown provider.');
     }
 }
+
 const REPLICA_EXPIRY_MARGIN_MS = 60_000;
 
 export function replicaFresh(entry: ProviderFileEntry): boolean {
@@ -177,20 +177,35 @@ export function replicaFresh(entry: ProviderFileEntry): boolean {
 
 const inflightProviderUploads = new Map<string, Promise<ProviderFileEntry>>();
 
+export class DraftFileStorageDisabled extends Error {}
+
 export function uploadWithDedup(
     hash: string,
-    provider: string,
+    provider: ProviderId,
     apiKey: string,
     blob: Blob,
     mediaType: string,
     filename: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    source: 'draft' | 'turn' = 'turn'
 ): Promise<ProviderFileEntry> {
     const key = `${provider}:${hash}`;
     const inflight = inflightProviderUploads.get(key);
     if (inflight) {
         log.info('dedup: joining in-flight provider upload', key);
-        return inflight;
+        if (source === 'draft') return inflight;
+        return inflight.catch((error: unknown) => {
+            if (!(error instanceof DraftFileStorageDisabled)) throw error;
+            return uploadWithDedup(
+                hash,
+                provider,
+                apiKey,
+                blob,
+                mediaType,
+                filename,
+                signal
+            );
+        });
     }
     const task = (async () => {
         const existing = await dbLookupProviderFile(hash, provider);
@@ -198,6 +213,8 @@ export function uploadWithDedup(
             log.info('dedup: reusing provider file', provider, existing.fileId);
             return existing;
         }
+        if (source === 'draft' && !(await readProviderFileStorageEnabled()))
+            throw new DraftFileStorageDisabled();
         const entry = await uploadProviderBlob(
             provider,
             apiKey,
@@ -208,14 +225,13 @@ export function uploadWithDedup(
         );
         await dbRecordProviderFile(hash, provider, entry, filename, mediaType);
         return entry;
-    })();
+    })().finally(() => inflightProviderUploads.delete(key));
     inflightProviderUploads.set(key, task);
-    task.catch(() => {}).finally(() => inflightProviderUploads.delete(key));
     return task;
 }
 
 async function uploadProviderBlob(
-    provider: string,
+    provider: ProviderId,
     apiKey: string,
     blob: Blob,
     mediaType: string,
@@ -247,13 +263,38 @@ async function uploadProviderBlob(
     if (provider === 'google') {
         return uploadGoogleFile(apiKey, blob, mediaType, filename, signal);
     }
-    throw new Error(`Provider file storage is not supported for ${provider}.`);
+    if (provider === 'openrouter') {
+        return {
+            fileId: await uploadOpenRouterFile(apiKey, blob, filename, signal),
+        };
+    }
+    throw new Error('Unknown file provider.');
 }
 
 interface PreparedProviderFiles {
     files: Record<string, ProviderFileEntry> | undefined;
-    ephemeral: ProviderFileRef[];
+    blobs: Record<string, { mediaType: string; base64: string }>;
     missing: string[];
+}
+
+const BYTES_PER_MB = 1024 * 1024;
+
+function formatMegabytes(bytes: number): string {
+    return `${Math.ceil((bytes / BYTES_PER_MB) * 10) / 10} MB`;
+}
+
+function inlineTotalTooLargeError(
+    provider: ProviderId,
+    totalBytes: number,
+    providerFileStorage: boolean
+): Error {
+    const total = formatMegabytes(totalBytes);
+    const limit = formatMegabytes(PROVIDER_INLINE_MAX_REQUEST_BYTES[provider]);
+    return new Error(
+        providerFileStorage
+            ? `Files sent inline in this chat total ${total}, over the ${limit} limit for ${provider}. Delete files from this chat.`
+            : `Files in this chat total ${total}, over the ${limit} limit for sending files without Provider File Storage. Turn on Provider File Storage in Settings, or delete files from this chat.`
+    );
 }
 
 const PROVIDER_UPLOAD_CONCURRENCY = 3;
@@ -285,20 +326,26 @@ async function runWithConcurrency<T>(
 
 export async function prepareProviderFiles(
     messages: AirmailAIMessage[],
-    provider: string,
+    provider: ProviderId,
     apiKey: string,
-    persistent: boolean,
+    providerFileStorage: boolean,
     signal?: AbortSignal,
     requiredHashes: ReadonlySet<string> = new Set()
 ): Promise<PreparedProviderFiles> {
     const infos = new Map<
         string,
-        { filename: string; mediaType: string; sizeBytes: number }
+        {
+            filename: string;
+            mediaType: string;
+            sizeBytes: number;
+            occurrences: number;
+        }
     >();
     for (const msg of messages) {
         for (const part of msg.parts) {
             if (part.type === 'file') {
                 infos.set(part.hash, {
+                    occurrences: (infos.get(part.hash)?.occurrences ?? 0) + 1,
                     filename: part.filename,
                     mediaType: part.mediaType,
                     sizeBytes: part.sizeBytes,
@@ -306,103 +353,108 @@ export async function prepareProviderFiles(
             }
         }
     }
-    if (!infos.size) return { files: undefined, ephemeral: [], missing: [] };
     const map: Record<string, ProviderFileEntry> = {};
-    const ephemeral: ProviderFileRef[] = [];
+    const inline = new Map<string, { blob: Blob; mediaType: string }>();
     const missing: string[] = [];
-    try {
-        await runWithConcurrency(
-            [...infos],
-            PROVIDER_UPLOAD_CONCURRENCY,
-            async ([hash, info]) => {
-                signal?.throwIfAborted();
-                if (fileTooLargeForProvider(provider, info.sizeBytes)) {
-                    if (requiredHashes.has(hash))
-                        throw new Error(
-                            `${info.filename} is too large for ${provider}. Remove it before sending.`
-                        );
-                    missing.push(hash);
-                    log.info(
-                        'skipping provider upload, file exceeds provider limit',
-                        provider,
-                        info.filename,
-                        info.sizeBytes
+    let inlineBytes = 0;
+    await runWithConcurrency(
+        [...infos],
+        PROVIDER_UPLOAD_CONCURRENCY,
+        async ([hash, info]) => {
+            signal?.throwIfAborted();
+            if (
+                fileTooLargeForProvider(
+                    provider,
+                    info.sizeBytes,
+                    providerFileStorage
+                )
+            ) {
+                if (requiredHashes.has(hash))
+                    throw new Error(
+                        `${info.filename} is too large for ${provider}. Remove it before sending.`
                     );
-                    return;
-                }
-                let entry = persistent
-                    ? await dbLookupProviderFile(hash, provider)
-                    : undefined;
+                missing.push(hash);
+                log.info(
+                    'skipping file, exceeds provider limit',
+                    provider,
+                    info.filename,
+                    info.sizeBytes
+                );
+                return;
+            }
+            const storesFile = providerStoresFile(
+                provider,
+                info.mediaType,
+                providerFileStorage
+            );
+            if (storesFile) {
+                const entry = await dbLookupProviderFile(hash, provider);
                 if (entry && replicaFresh(entry)) {
                     map[hash] = entry;
-                    return;
+                    if (provider !== 'google' || entry.uri) return;
                 }
-                const blob = await dbGetFileBlob(hash);
-                if (!blob) {
-                    if (requiredHashes.has(hash)) {
-                        throw new Error(
-                            `${info.filename} is unavailable. Reattach it before sending.`
-                        );
-                    }
-                    missing.push(hash);
-                    return;
-                }
-                if (!FILE_PROVIDERS.has(provider)) return;
-                log.info('uploading file to provider', provider, hash);
-                if (persistent) {
-                    entry = await uploadWithDedup(
-                        hash,
-                        provider,
-                        apiKey,
-                        blob,
-                        blob.type || info.mediaType,
-                        info.filename,
-                        signal
-                    );
-                } else {
-                    entry = await uploadProviderBlob(
-                        provider,
-                        apiKey,
-                        blob,
-                        blob.type || info.mediaType,
-                        info.filename,
-                        signal
-                    );
-                    ephemeral.push({
-                        providerId: provider,
-                        fileId: entry.fileId,
-                    });
-                }
-                map[hash] = entry;
             }
+            const blob = await dbGetFileBlob(hash);
+            if (!blob) {
+                if (requiredHashes.has(hash)) {
+                    throw new Error(
+                        `${info.filename} is unavailable. Reattach it before sending.`
+                    );
+                }
+                missing.push(hash);
+                return;
+            }
+            if (storesFile && !map[hash]) {
+                log.info('uploading file to provider', provider, hash);
+                const entry = await uploadWithDedup(
+                    hash,
+                    provider,
+                    apiKey,
+                    blob,
+                    blob.type || info.mediaType,
+                    info.filename,
+                    signal
+                );
+                map[hash] = entry;
+                if (provider !== 'google' || entry.uri) return;
+            }
+            inlineBytes += blob.size * info.occurrences;
+            inline.set(hash, { blob, mediaType: blob.type || info.mediaType });
+        }
+    );
+    if (inlineBytes > PROVIDER_INLINE_MAX_REQUEST_BYTES[provider]) {
+        throw inlineTotalTooLargeError(
+            provider,
+            inlineBytes,
+            providerFileStorage
         );
-    } catch (error) {
-        const warnings = await deleteTemporaryProviderFiles(ephemeral, apiKey);
-        if (!warnings.length) throw error;
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`${message}\n${warnings.join('\n')}`, {
-            cause: error,
-        });
+    }
+    const blobs: PreparedProviderFiles['blobs'] = {};
+    for (const [hash, { blob, mediaType }] of inline) {
+        signal?.throwIfAborted();
+        blobs[hash] = {
+            mediaType,
+            base64: bytesToBase64(new Uint8Array(await blob.arrayBuffer())),
+        };
     }
     return {
         files: Object.keys(map).length ? map : undefined,
-        ephemeral,
+        blobs,
         missing,
     };
 }
 
 export async function recoverRejectedProviderFiles(
     error: unknown,
-    provider: string,
+    provider: ProviderId,
     files: Record<string, ProviderFileEntry> | undefined
 ): Promise<boolean> {
-    if (!(error instanceof Error) || !files || !('status' in error))
-        return false;
-    if (error.status !== 400 && error.status !== 403 && error.status !== 404)
-        return false;
+    if (!(error instanceof Error) || !files) return false;
+    const status = httpStatus(error);
+    if (status !== 400 && status !== 403 && status !== 404) return false;
     const message = error.message.toLowerCase();
     if (
-        !/not[ _-]?found|does not exist|cannot (?:find|access)|could not (?:find|access)|inaccessible|permission|access denied|not authorized|expired/.test(
+        !/not[ _-]?found|does not exist|cannot (?:find|access)|could not (?:find|access)|inaccessible|permission|access denied|not authorized|expired|invalid file_id/.test(
             message
         )
     )

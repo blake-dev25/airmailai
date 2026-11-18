@@ -1,3 +1,5 @@
+import { ANTHROPIC_API_VERSION, type ProviderId } from '@airmailai/shared';
+
 const TEST_TIMEOUT_MS = 10_000;
 
 export interface KeyTestResult {
@@ -6,7 +8,7 @@ export interface KeyTestResult {
 }
 
 function testEndpoint(
-    provider: string,
+    provider: ProviderId,
     apiKey: string
 ): { url: string; headers: Record<string, string> } {
     if (provider === 'anthropic') {
@@ -14,7 +16,7 @@ function testEndpoint(
             url: 'https://api.anthropic.com/v1/models?limit=1',
             headers: {
                 'x-api-key': apiKey,
-                'anthropic-version': '2023-06-01',
+                'anthropic-version': ANTHROPIC_API_VERSION,
             },
         };
     }
@@ -54,7 +56,7 @@ async function extractErrorMessage(resp: Response): Promise<string> {
 }
 
 export async function testProviderKey(
-    provider: string,
+    provider: ProviderId,
     apiKey: string
 ): Promise<KeyTestResult> {
     const { url, headers } = testEndpoint(provider, apiKey);

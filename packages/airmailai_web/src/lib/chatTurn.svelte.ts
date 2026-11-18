@@ -45,6 +45,7 @@ export type TurnState =
           kind: 'local-streaming';
           handle: StreamHandle;
           pipeline: StreamPipeline;
+          stopRequested: boolean;
       }
     | { kind: 'remote-streaming'; pipeline: StreamPipeline }
     | { kind: 'remote-joined-midway' }

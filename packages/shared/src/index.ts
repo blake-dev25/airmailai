@@ -1,8 +1,8 @@
 export type {
     BroadcastEvent,
-    BroadcastKeepaliveRequest,
     BroadcastRequest,
     BrandingMode,
+    ChatConfig,
     ChatMeta,
     ChatPage,
     ChatPageCursor,
@@ -27,6 +27,7 @@ export type {
     FileTransferResponse,
     ProviderStream,
     ProviderStreamArgs,
+    SiteChatMeta,
     ExtensionStreamEvent,
     ImportChatEntry,
     LocalFileInfo,
@@ -36,6 +37,7 @@ export type {
     ProviderFileRef,
     StorageRequest,
     StorageResponse,
+    StorageResponseFor,
     StorageUsage,
     StoredChat,
     StoredMessage,
@@ -50,6 +52,7 @@ export {
     HISTORY_PAGE_CHARS,
     OPENROUTER_REFRESH_COOLDOWN_MS,
     SETTINGS_KEYS,
+    STORAGE_RESPONSE_TYPE,
 } from './messages';
 export {
     createMessageAssembler,
@@ -57,7 +60,22 @@ export {
     truncateMessageTextParts,
     type MessageAssemblerState,
 } from './assemble';
-export { getMimeTypeFromFilename } from './mime';
+export { errorMessage } from './errors';
+export {
+    ANTHROPIC_API_VERSION,
+    PROVIDER_IDS,
+    PROVIDER_INLINE_MAX_REQUEST_BYTES,
+    PROVIDER_STORED_MAX_FILE_BYTES,
+    isProviderId,
+    providerMaxFileBytes,
+    type ProviderId,
+} from './providers';
+export {
+    TEXT_FILE_EXTENSIONS,
+    TEXT_FILE_MIME_TYPES,
+    getMimeTypeFromFilename,
+    isTextMimeType,
+} from './mime';
 export {
     type CustomModelConfig,
     MAX_CUSTOM_MODEL_FIELD_CHARS,

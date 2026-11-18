@@ -1,3 +1,4 @@
+import type { ProviderId } from '@airmailai/shared';
 import { AsyncResource } from './asyncResource.svelte';
 import {
     buildFirstPartyProviders,
@@ -65,7 +66,7 @@ class ProvidersStore {
         Object.values(this.savedKeys.value ?? {}).some(Boolean)
     );
 
-    hasSavedKey(providerId: string): boolean {
+    hasSavedKey(providerId: ProviderId): boolean {
         return this.savedKeys.value?.[providerId] === true;
     }
 
@@ -113,19 +114,19 @@ class ProvidersStore {
         return (this.openRouterCatalog.value?.models.length ?? 0) > 0;
     }
 
-    private setSavedKey(providerId: string, saved: boolean): void {
+    private setSavedKey(providerId: ProviderId, saved: boolean): void {
         this.savedKeys.set({
             ...(this.savedKeys.value ?? {}),
             [providerId]: saved,
         });
     }
 
-    onApiKeySaved(providerId: string): void {
+    onApiKeySaved(providerId: ProviderId): void {
         this.setSavedKey(providerId, true);
         if (providerId === 'openrouter') this.ensureOpenRouterCatalog();
     }
 
-    onApiKeyCleared(providerId: string): void {
+    onApiKeyCleared(providerId: ProviderId): void {
         this.setSavedKey(providerId, false);
     }
 

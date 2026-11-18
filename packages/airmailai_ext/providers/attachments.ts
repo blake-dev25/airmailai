@@ -10,7 +10,6 @@ export type ResolvedAttachment =
       }
     | {
           kind: 'provider';
-          providerId: string;
           fileId: string;
           uri?: string;
           hash: string;
@@ -19,10 +18,7 @@ export type ResolvedAttachment =
           base64?: string;
       };
 
-export interface ProviderReplicas {
-    providerId: string;
-    files: Record<string, ProviderFileEntry>;
-}
+export type ProviderReplicas = Record<string, ProviderFileEntry>;
 
 export function resolveAttachments(
     msg: AirmailAIMessage,
@@ -34,11 +30,10 @@ export function resolveAttachments(
         if (part.type !== 'file') continue;
         const { hash, filename, mediaType } = part;
         const entry = blobs[hash];
-        const replica = replicas?.files[hash];
+        const replica = replicas?.[hash];
         if (replica) {
             resolved.push({
                 kind: 'provider',
-                providerId: replicas!.providerId,
                 fileId: replica.fileId,
                 ...(replica.uri ? { uri: replica.uri } : {}),
                 hash,

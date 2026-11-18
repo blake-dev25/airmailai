@@ -1,8 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { ProviderFileInfo } from '@airmailai/shared';
+import { toReadableAnthropicError } from './anthropic-errors';
 import { makeDebugFetch } from './debug-fetch';
-
-export const FILES_BETA = 'files-api-2025-04-14';
 
 function fileClient(apiKey: string): Anthropic {
     return new Anthropic({
@@ -20,38 +19,45 @@ export async function uploadAnthropicFile(
     signal?: AbortSignal
 ): Promise<string> {
     const file = new File([blob], filename, { type: mediaType });
-    const result = await fileClient(apiKey).beta.files.upload(
-        {
-            file,
-            betas: [FILES_BETA],
-        },
-        { signal }
-    );
-    return result.id;
+    try {
+        const result = await fileClient(apiKey).files.upload(
+            { file },
+            { signal }
+        );
+        return result.id;
+    } catch (e) {
+        throw toReadableAnthropicError(e);
+    }
 }
 
 export async function deleteAnthropicFile(
     apiKey: string,
     fileId: string
 ): Promise<void> {
-    await fileClient(apiKey).beta.files.delete(fileId, { betas: [FILES_BETA] });
+    try {
+        await fileClient(apiKey).files.delete(fileId);
+    } catch (e) {
+        throw toReadableAnthropicError(e);
+    }
 }
 
 export async function listAnthropicFiles(
     apiKey: string
 ): Promise<ProviderFileInfo[]> {
     const files: ProviderFileInfo[] = [];
-    for await (const file of fileClient(apiKey).beta.files.list({
-        betas: [FILES_BETA],
-        limit: 1000,
-    })) {
-        files.push({
-            fileId: file.id,
-            filename: file.filename,
-            mediaType: file.mime_type,
-            sizeBytes: file.size_bytes,
-            createdAt: new Date(file.created_at).getTime(),
-        });
+    try {
+        for await (const file of fileClient(apiKey).files.list({
+            limit: 1000,
+        })) {
+            files.push({
+                fileId: file.id,
+                filename: file.filename,
+                sizeBytes: file.size_bytes,
+                createdAt: new Date(file.created_at).getTime(),
+            });
+        }
+    } catch (e) {
+        throw toReadableAnthropicError(e);
     }
     return files;
 }

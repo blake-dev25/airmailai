@@ -1,39 +1,30 @@
 <script lang="ts">
-    import type {
-        DraftAttachmentMeta,
-        FileAvailability,
-    } from '@airmailai/shared';
+    import type { FileAvailability } from '@airmailai/shared';
     import { tick, untrack } from 'svelte';
     import { SvelteSet } from 'svelte/reactivity';
     import { appLifecycle } from './appLifecycle.svelte';
     import { appMode } from './appMode.svelte';
+    import { createAttachmentUploads } from './attachmentUploads.svelte';
+    import AttachmentTray from './chat/AttachmentTray.svelte';
+    import ChatBanners from './chat/ChatBanners.svelte';
+    import SystemPromptBar from './chat/SystemPromptBar.svelte';
     import { chatStore } from './chatStore.svelte';
-    import { EXTENSION_STORE_URL, GITHUB_ISSUES_URL } from './constants';
-    import { errorStore, reportAppError } from './errorStore.svelte';
+    import { reportAppError } from './errorStore.svelte';
     import { getFileStatuses } from './extension';
-    import {
-        type FilePolicyOptions,
-        formatFileSize,
-        getAcceptForProvider,
-        getFilePolicy,
-        resolveFileMediaType,
-        validateFilename,
-        validateReadyAttachments,
-    } from './files';
     import Icon from './Icon.svelte';
     import MessageItem from './MessageItem.svelte';
-    import type { ModelOption } from './models';
     import { providersStore } from './providersStore.svelte';
     import { settingsStore } from './settingsStore.svelte';
     import { createChatScroll } from './chatScroll.svelte';
     import { createSmoothText } from './smoothText.svelte';
     import { messageText } from './types';
-    import { versionCheck } from './versionCheck.svelte';
 
-    let systemExpanded = $state(false);
+    const uploads = createAttachmentUploads();
     const expandedThinking = new SvelteSet<string>();
     const expandedSources = new SvelteSet<string>();
     const expandedCode = new SvelteSet<string>();
+    const expandedWebSearch = new SvelteSet<string>();
+    const expandedWebFetch = new SvelteSet<string>();
     const expandedSuggestions = new SvelteSet<string>();
     let inputText = $state('');
     let messagesEl = $state<HTMLElement | null>(null);
@@ -42,14 +33,6 @@
     let fileInputEl = $state<HTMLInputElement | null>(null);
     let dragDepth = $state(0);
     let isAtTop = $state(true);
-    let pendingAttachments = $derived(chatStore.activeDraftAttachments);
-    let processingAttachments = $state<
-        Array<{ id: string; chatId: string; name: string; progress: number }>
-    >([]);
-    const activeProcessingAttachments = $derived(
-        processingAttachments.filter((a) => a.chatId === chatStore.activeChatId)
-    );
-    let fileErrors = $state<string[]>([]);
     let hoveredMessageId = $state<string | null>(null);
     let hoverHideTimer: ReturnType<typeof setTimeout> | null = null;
     let editing = $state<{
@@ -101,35 +84,9 @@
         };
     });
 
-    let fileProcessingQueue = Promise.resolve();
-    let filePolicyOpts = $derived({
-        openRouterPdfEngine: settingsStore.openRouterPdfEngine,
-        customModel: !!settingsStore.customModel,
-    });
-    let filePolicy = $derived(
-        getFilePolicy(
-            settingsStore.providerId,
-            providersStore.selectedModel,
-            filePolicyOpts
-        )
-    );
     let providerName = $derived(
         providersStore.providers.find((p) => p.id === settingsStore.providerId)
             ?.name ?? settingsStore.providerId
-    );
-    let fileAccept = $derived(
-        getAcceptForProvider(
-            settingsStore.providerId,
-            providersStore.selectedModel,
-            filePolicyOpts
-        )
-    );
-    let canAttachFiles = $derived(filePolicy.mimeTypes.size > 0);
-    let attachmentTotalBytes = $derived(
-        pendingAttachments.reduce(
-            (total, attachment) => total + attachment.sizeBytes,
-            0
-        )
     );
 
     const chatScroll = createChatScroll();
@@ -198,7 +155,9 @@
         if (chatId === scrolledChatId) return;
         scrolledChatId = chatId;
         untrack(() =>
-            chatScroll.onChatChange(chatStore.highlightMessageIndex == null)
+            chatScroll.onChatChange(
+                chatStore.search.highlightMessageIndex == null
+            )
         );
     });
 
@@ -214,7 +173,7 @@
     });
 
     $effect(() => {
-        const idx = chatStore.highlightMessageIndex;
+        const idx = chatStore.search.highlightMessageIndex;
         if (idx == null) return;
         if (
             chatStore.activeChatLoading ||
@@ -229,7 +188,7 @@
                     `[data-msg-index="${idx}"]`
                 ) as HTMLElement | null;
                 if (!el) return;
-                chatStore.highlightMessageIndex = null;
+                chatStore.search.highlightMessageIndex = null;
                 el.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 el.classList.add('search-highlight');
                 setTimeout(() => el.classList.remove('search-highlight'), 1500);
@@ -260,10 +219,10 @@
         await appLifecycle.ready;
         const text = inputText.trim();
         if (
-            (!text && !pendingAttachments.length) ||
+            (!text && !uploads.pending.length) ||
             chatStore.isActiveChatBusy ||
             chatStore.activeChatLoading ||
-            activeProcessingAttachments.length
+            uploads.activeProcessing.length
         ) {
             return;
         }
@@ -272,19 +231,7 @@
             return;
         }
 
-        const fileValidation = validateReadyAttachments(
-            pendingAttachments,
-            settingsStore.providerId,
-            providersStore.selectedModel,
-            filePolicyOpts
-        );
-        if (!fileValidation.ok) {
-            fileErrors = [
-                `File Error: ${fileValidation.message}`,
-                ...untrack(() => fileErrors),
-            ].slice(0, 3);
-            return;
-        }
+        if (!uploads.validateForSend()) return;
 
         const submittedInput = inputText;
         inputText = '';
@@ -325,236 +272,48 @@
         fileInputEl?.click();
     }
 
-    function addFileError(message: string) {
-        fileErrors = [
-            `File Error: ${message}`,
-            ...untrack(() => fileErrors),
-        ].slice(0, 3);
-    }
-
-    function setProcessingProgress(id: string, progress: number) {
-        processingAttachments = processingAttachments.map((attachment) =>
-            attachment.id === id ? { ...attachment, progress } : attachment
-        );
-    }
-
-    function removeProcessingAttachment(id: string) {
-        processingAttachments = processingAttachments.filter(
-            (attachment) => attachment.id !== id
-        );
-    }
-
-    async function processFile(
-        file: File,
-        id: string,
-        uploadProviderId: string,
-        uploadModel: ModelOption | null,
-        uploadOpts: FilePolicyOptions,
-        chatId: string,
-        replicateTo: string | undefined
-    ) {
-        const policy = getFilePolicy(uploadProviderId, uploadModel, uploadOpts);
-
-        try {
-            setProcessingProgress(id, 12);
-            const nameCheck = validateFilename(file.name);
-            if (!nameCheck.ok) {
-                addFileError(nameCheck.message);
-                removeProcessingAttachment(id);
-                return;
-            }
-
-            const mediaType = resolveFileMediaType(
-                file,
-                uploadProviderId,
-                uploadModel,
-                uploadOpts
-            );
-            if (!mediaType) {
-                addFileError(`${file.name} is not supported by this provider.`);
-                removeProcessingAttachment(id);
-                return;
-            }
-
-            setProcessingProgress(id, 24);
-            if (!policy.mimeTypes.has(mediaType)) {
-                addFileError(
-                    `${file.name} (${mediaType}) is not supported by this provider.`
-                );
-                removeProcessingAttachment(id);
-                return;
-            }
-
-            setProcessingProgress(id, 38);
-            if (file.size > policy.maxFileBytes) {
-                addFileError(
-                    `${file.name} is ${formatFileSize(file.size)}. Limit: ${formatFileSize(policy.maxFileBytes)}.`
-                );
-                removeProcessingAttachment(id);
-                return;
-            }
-
-            setProcessingProgress(id, 48);
-            const draftAtt: DraftAttachmentMeta = {
-                name: file.name,
-                mediaType,
-                sizeBytes: file.size,
-                encodedSizeBytes: Math.ceil(file.size / 3) * 4,
-            };
-            const nextAttachments = [
-                ...(chatStore.chats.find((c) => c.id === chatId)
-                    ?.draftAttachments ?? []),
-                draftAtt,
-            ];
-            const validation = validateReadyAttachments(
-                nextAttachments,
-                uploadProviderId,
-                uploadModel,
-                uploadOpts
-            );
-            if (!validation.ok) {
-                addFileError(validation.message);
-                removeProcessingAttachment(id);
-                return;
-            }
-
-            await chatStore.addDraftAttachment(
-                chatId,
-                replicateTo,
-                draftAtt,
-                file,
-                (progress) => setProcessingProgress(id, 50 + progress * 50)
-            );
-            removeProcessingAttachment(id);
-        } catch (error) {
-            addFileError(
-                error instanceof Error
-                    ? `${file.name}: ${error.message}`
-                    : `${file.name} could not be processed.`
-            );
-            removeProcessingAttachment(id);
-        }
-    }
-
     function handleFileChange(e: Event) {
         const files = Array.from((e.target as HTMLInputElement).files ?? []);
         if (!fileInputEl) return;
         fileInputEl.value = '';
-        addFiles(files);
+        uploads.addFiles(files);
     }
-
-    async function addFiles(files: File[]) {
-        if (!files.length) return;
-        await appLifecycle.ready;
-
-        fileErrors = [];
-        const uploadProviderId = settingsStore.providerId;
-        const uploadModel = providersStore.selectedModel;
-        const uploadOpts = filePolicyOpts;
-        const replicateTo = settingsStore.enableProviderFileStorage
-            ? uploadProviderId
-            : undefined;
-        let chatId: string;
-        try {
-            chatId = await chatStore.prepareAttachmentUpload();
-        } catch (error) {
-            reportAppError(
-                'prepare attachment upload failed',
-                "Couldn't attach files",
-                error
-            );
-            return;
-        }
-        const uploadPolicy = getFilePolicy(
-            uploadProviderId,
-            uploadModel,
-            uploadOpts
-        );
-        const slots = Math.max(
-            0,
-            uploadPolicy.maxAttachments -
-                (chatStore.chats.find((c) => c.id === chatId)?.draftAttachments
-                    ?.length ?? 0) -
-                processingAttachments.filter((a) => a.chatId === chatId).length
-        );
-        const toAdd = files.slice(0, slots);
-
-        if (toAdd.length < files.length) {
-            addFileError(
-                `Only ${uploadPolicy.maxAttachments} files can be attached for this provider.`
-            );
-        }
-
-        const queued = toAdd.map((file) => ({
-            file,
-            id: crypto.randomUUID(),
-        }));
-        processingAttachments = [
-            ...processingAttachments,
-            ...queued.map(({ file, id }) => ({
-                id,
-                chatId,
-                name: file.name,
-                progress: 0,
-            })),
-        ];
-        fileProcessingQueue = fileProcessingQueue.then(async () => {
-            for (const { file, id } of queued) {
-                await processFile(
-                    file,
-                    id,
-                    uploadProviderId,
-                    uploadModel,
-                    uploadOpts,
-                    chatId,
-                    replicateTo
-                );
-            }
-        });
-    }
-
-    let canAcceptFileDrops = $derived(
-        settingsStore.enableFileUploads &&
-            !appMode.isDemo &&
-            canAttachFiles &&
-            !chatStore.isActiveChatBusy
-    );
 
     function dragHasFiles(e: DragEvent): boolean {
         return !!e.dataTransfer?.types.includes('Files');
     }
 
     function handleDragEnter(e: DragEvent) {
-        if (!canAcceptFileDrops || !dragHasFiles(e)) return;
+        if (!uploads.canAcceptDrops || !dragHasFiles(e)) return;
         e.preventDefault();
         dragDepth++;
     }
 
     function handleDragOver(e: DragEvent) {
-        if (!canAcceptFileDrops || !dragHasFiles(e)) return;
+        if (!uploads.canAcceptDrops || !dragHasFiles(e)) return;
         e.preventDefault();
         if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
     }
 
     function handleDragLeave(e: DragEvent) {
-        if (!canAcceptFileDrops || !dragHasFiles(e)) return;
+        if (!uploads.canAcceptDrops || !dragHasFiles(e)) return;
         dragDepth = Math.max(0, dragDepth - 1);
     }
 
     function handleDrop(e: DragEvent) {
         dragDepth = 0;
-        if (!canAcceptFileDrops || !dragHasFiles(e)) return;
+        if (!uploads.canAcceptDrops || !dragHasFiles(e)) return;
         e.preventDefault();
-        addFiles(Array.from(e.dataTransfer?.files ?? []));
+        uploads.addFiles(Array.from(e.dataTransfer?.files ?? []));
     }
 
     function handlePaste(e: ClipboardEvent) {
-        if (!canAcceptFileDrops) return;
+        if (appLifecycle.view !== 'chat' || !uploads.canAcceptDrops) return;
         if (document.querySelector('[role="dialog"]')) return;
         const files = Array.from(e.clipboardData?.files ?? []);
         if (!files.length) return;
         e.preventDefault();
-        addFiles(files);
+        uploads.addFiles(files);
     }
 
     function resizeTextarea(ta: HTMLTextAreaElement) {
@@ -654,46 +413,7 @@
             >
         </div>
     {/if}
-    <div class="relative shrink-0 bg-canvas border-b border-border">
-        <button
-            type="button"
-            class="flex items-center gap-2 w-full h-11 px-4 bg-transparent border-0 text-sm font-medium text-fg cursor-pointer text-left transition-[color] duration-100 box-border"
-            onclick={() => (systemExpanded = !systemExpanded)}
-        >
-            <Icon
-                name="chevron-down"
-                class="transition-transform duration-200 {systemExpanded
-                    ? 'rotate-180'
-                    : ''}"
-            />
-            <span>System Prompt</span>
-            {#if settingsStore.systemPrompt.trim()}
-                <span
-                    class="w-1.5 h-1.5 rounded-full bg-accent-bg shrink-0"
-                    aria-label="System prompt is set"
-                ></span>
-            {/if}
-        </button>
-        {#if appMode.isDemo}
-            <a
-                href={EXTENSION_STORE_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                class="absolute top-0 right-4 h-11 flex items-center gap-1.25 px-2 bg-transparent border-0 font-sans text-xs font-medium text-accent-fg no-underline cursor-pointer rounded transition-[color,background-color] duration-150 hover:text-accent-fg-hover hover:underline"
-            >
-                <span>Install the extension</span>
-                <Icon name="external-link" />
-            </a>
-        {/if}
-        {#if systemExpanded}
-            <div class="px-4 pb-3">
-                <textarea
-                    class="w-full min-h-20 max-h-45 px-3 py-2.5 bg-canvas border border-border rounded-lg text-fg font-sans text-sm leading-[1.6] resize-y box-border outline-none transition-[border-color] duration-150 focus:border-accent-fg placeholder:text-fg-muted"
-                    placeholder="Give the model a persona, instructions, or context..."
-                    bind:value={settingsStore.systemPrompt}></textarea>
-            </div>
-        {/if}
-    </div>
+    <SystemPromptBar />
 
     <div class="flex-1 relative min-h-0">
         <div
@@ -763,7 +483,7 @@
                             {messageContent}
                             {displayContent}
                             {fileStatuses}
-                            maxFileBytes={filePolicy.maxFileBytes}
+                            maxFileBytes={uploads.policy.maxFileBytes}
                             {providerName}
                             isStreaming={chatStore.isActiveChatBusy}
                             isLastStreaming={isLastStreaming ||
@@ -771,7 +491,7 @@
                             deferRender={i <
                                 chatStore.activeMessages.length -
                                     IMMEDIATE_RENDER_TAIL &&
-                                chatStore.highlightMessageIndex == null}
+                                chatStore.search.highlightMessageIndex == null}
                             editing={editingMessage?.id === message.id}
                             bind:editingText={
                                 () => editing?.text ?? '',
@@ -784,6 +504,10 @@
                             thinkingExpanded={expandedThinking.has(message.id)}
                             sourcesExpanded={expandedSources.has(message.id)}
                             codeExpanded={expandedCode.has(message.id)}
+                            webSearchExpanded={expandedWebSearch.has(
+                                message.id
+                            )}
+                            webFetchExpanded={expandedWebFetch.has(message.id)}
                             suggestionsExpanded={expandedSuggestions.has(
                                 message.id
                             )}
@@ -808,6 +532,16 @@
                                 if (expandedCode.has(message.id))
                                     expandedCode.delete(message.id);
                                 else expandedCode.add(message.id);
+                            }}
+                            onwebsearchtoggle={() => {
+                                if (expandedWebSearch.has(message.id))
+                                    expandedWebSearch.delete(message.id);
+                                else expandedWebSearch.add(message.id);
+                            }}
+                            onwebfetchtoggle={() => {
+                                if (expandedWebFetch.has(message.id))
+                                    expandedWebFetch.delete(message.id);
+                                else expandedWebFetch.add(message.id);
                             }}
                             onsuggestionstoggle={() => {
                                 if (expandedSuggestions.has(message.id))
@@ -839,181 +573,14 @@
         {/if}
     </div>
 
-    {#if versionCheck.notice}
-        <div
-            class="shrink-0 flex items-center gap-3 px-4 py-2 text-sm text-fg border-t border-border bg-canvas"
-            role="status"
-        >
-            <span class="min-w-0 flex-1 wrap-break-word"
-                >{versionCheck.notice.message}</span
-            >
-            {#if versionCheck.notice.refresh}
-                <button
-                    type="button"
-                    class="shrink-0 px-2.5 py-1 text-xs bg-surface-sunken border border-border rounded-md text-fg cursor-pointer transition-[background-color] duration-150 hover:bg-border"
-                    onclick={() => location.reload()}
-                >
-                    Refresh
-                </button>
-            {/if}
-            <button
-                type="button"
-                class="shrink-0 flex items-center justify-center w-6 h-6 p-0 bg-transparent border-0 rounded-md text-fg cursor-pointer opacity-70 transition-[opacity,background-color] duration-150 hover:opacity-100 hover:bg-surface-sunken"
-                onclick={() => versionCheck.dismiss()}
-                aria-label="Dismiss update notice"
-            >
-                <Icon name="close" />
-            </button>
-        </div>
-    {/if}
-
-    {#if errorStore.appWarning?.kind === 'model-unavailable'}
-        <div
-            class="shrink-0 flex items-center gap-3 px-4 py-2 text-sm text-fg border-t border-border bg-canvas"
-            role="status"
-            data-testid="model-unavailable-warning"
-        >
-            <span class="min-w-0 flex-1 wrap-break-word"
-                >Warning: previously selected model '{errorStore.appWarning
-                    .modelId}' is not available. This is usually due to the
-                model being retired by the API provider. Selected model has been
-                switched to the current provider default. If you believe this is
-                incorrect, please open an issue on
-                <a
-                    href={GITHUB_ISSUES_URL}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="inline-flex items-center gap-0.5 text-accent-fg no-underline hover:underline"
-                    >GitHub<Icon name="external-link" /></a
-                >.</span
-            >
-            <button
-                type="button"
-                class="shrink-0 flex items-center justify-center w-6 h-6 p-0 bg-transparent border-0 rounded-md text-fg cursor-pointer opacity-70 transition-[opacity,background-color] duration-150 hover:opacity-100 hover:bg-surface-sunken"
-                onclick={() => errorStore.clearAppWarning()}
-                aria-label="Dismiss warning"
-            >
-                <Icon name="close" />
-            </button>
-        </div>
-    {/if}
-
-    {#if errorStore.appError}
-        <div
-            class="shrink-0 flex items-center gap-3 px-4 py-2 text-sm text-accent-fg border-t border-border bg-canvas"
-            role="alert"
-        >
-            <span class="min-w-0 flex-1 wrap-break-word"
-                >{errorStore.appError}</span
-            >
-            <button
-                type="button"
-                class="shrink-0 flex items-center justify-center w-6 h-6 p-0 bg-transparent border-0 rounded-md text-accent-fg cursor-pointer opacity-70 transition-[opacity,background-color] duration-150 hover:opacity-100 hover:bg-surface-sunken"
-                onclick={() => errorStore.clearAppError()}
-                aria-label="Dismiss error"
-            >
-                <Icon name="close" />
-            </button>
-        </div>
-    {/if}
-
-    {#if chatStore.activeStreamError}
-        <div
-            class="shrink-0 flex items-center gap-3 px-4 py-2 text-sm text-accent-fg border-t border-border bg-canvas"
-            role="alert"
-        >
-            <span class="min-w-0 flex-1 wrap-break-word"
-                >{chatStore.activeStreamError}</span
-            >
-            <button
-                type="button"
-                class="shrink-0 flex items-center justify-center w-6 h-6 p-0 bg-transparent border-0 rounded-md text-accent-fg cursor-pointer opacity-70 transition-[opacity,background-color] duration-150 hover:opacity-100 hover:bg-surface-sunken"
-                onclick={() => chatStore.clearActiveChatError()}
-                aria-label="Dismiss error"
-            >
-                <Icon name="close" />
-            </button>
-        </div>
-    {/if}
+    <ChatBanners />
 
     <div class="shrink-0 border-t border-border bg-canvas">
-        {#if fileErrors.length}
-            <div class="flex flex-col gap-1 px-4 pt-2">
-                {#each fileErrors as error, i (i)}
-                    <div
-                        class="flex items-center gap-2 text-xs text-accent-fg"
-                        role="alert"
-                    >
-                        <span class="min-w-0 flex-1 wrap-break-word"
-                            >{error}</span
-                        >
-                        <button
-                            type="button"
-                            class="flex items-center justify-center w-4 h-4 bg-transparent border-0 p-0 text-accent-fg opacity-60 cursor-pointer shrink-0 transition-opacity duration-150 hover:opacity-100"
-                            onclick={() =>
-                                (fileErrors = fileErrors.filter(
-                                    (_, j) => j !== i
-                                ))}
-                            aria-label="Dismiss file error"
-                        >
-                            <Icon name="close" />
-                        </button>
-                    </div>
-                {/each}
-            </div>
-        {/if}
-        {#if pendingAttachments.length || activeProcessingAttachments.length}
-            <div class="flex items-start justify-between gap-3 px-4 pt-2">
-                <div class="flex flex-wrap gap-1 min-w-0">
-                    {#each activeProcessingAttachments.toReversed() as att (att.id)}
-                        <div
-                            class="relative overflow-hidden inline-flex items-center gap-1.5 pl-2.5 pr-2 py-1.25 bg-surface-sunken border border-border rounded-lg text-xs text-fg max-w-60"
-                        >
-                            <span
-                                class="absolute top-0 left-0 h-0.5 bg-accent-3-bg transition-[width] duration-150"
-                                style="width: {att.progress}%"
-                            ></span>
-                            <Icon name="spinner" />
-                            <span
-                                class="overflow-hidden text-ellipsis whitespace-nowrap max-w-45"
-                                >{att.name}</span
-                            >
-                        </div>
-                    {/each}
-                    {#each pendingAttachments.toReversed() as att (att.hash)}
-                        <div
-                            class="inline-flex items-center gap-1.5 pl-2.5 pr-2 py-1.25 bg-surface-sunken border border-border rounded-lg text-xs text-fg max-w-60"
-                        >
-                            <Icon name="file" />
-                            <span
-                                class="overflow-hidden text-ellipsis whitespace-nowrap max-w-45"
-                                >{att.name}</span
-                            >
-                            <button
-                                type="button"
-                                class="flex items-center justify-center w-4 h-4 bg-transparent border-0 p-0 text-fg opacity-50 cursor-pointer shrink-0 transition-opacity duration-150 hover:opacity-100"
-                                onclick={() =>
-                                    chatStore.removeDraftAttachment(att.hash)}
-                                aria-label="Remove attachment"
-                            >
-                                <Icon name="close" />
-                            </button>
-                        </div>
-                    {/each}
-                </div>
-                <div
-                    class="shrink-0 pt-1 text-[0.6875rem] leading-none text-fg-muted tabular-nums"
-                >
-                    {formatFileSize(attachmentTotalBytes)} / {formatFileSize(
-                        filePolicy.maxRequestBytes
-                    )}
-                </div>
-            </div>
-        {/if}
+        <AttachmentTray {uploads} />
         <div class="flex items-end gap-2 px-4 py-3 bg-canvas shrink-0">
             <input
                 type="file"
-                accept={fileAccept}
+                accept={uploads.accept}
                 multiple
                 class="hidden"
                 bind:this={fileInputEl}
@@ -1030,10 +597,9 @@
                 ]}
                 onclick={openFilePicker}
                 disabled={chatStore.isActiveChatBusy ||
-                    !canAttachFiles ||
-                    pendingAttachments.length +
-                        activeProcessingAttachments.length >=
-                        filePolicy.maxAttachments}
+                    !uploads.canAttach ||
+                    uploads.pending.length + uploads.activeProcessing.length >=
+                        uploads.policy.maxAttachments}
                 aria-disabled={!settingsStore.enableFileUploads}
                 title={settingsStore.enableFileUploads
                     ? undefined
@@ -1067,8 +633,8 @@
                     onclick={submit}
                     disabled={chatStore.isActiveChatBusy ||
                         chatStore.activeChatLoading ||
-                        activeProcessingAttachments.length > 0 ||
-                        (!inputText.trim() && !pendingAttachments.length)}
+                        uploads.activeProcessing.length > 0 ||
+                        (!inputText.trim() && !uploads.pending.length)}
                     aria-label="Send message"
                 >
                     <Icon name="send" />

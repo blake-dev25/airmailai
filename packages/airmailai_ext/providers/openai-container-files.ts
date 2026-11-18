@@ -15,7 +15,6 @@ export interface OpenAIContainerFile {
     filename: string;
     mediaType: string;
     source: string;
-    bytes: number | null;
 }
 
 export async function listOpenAIContainerFiles(
@@ -36,7 +35,6 @@ export async function listOpenAIContainerFiles(
             mediaType:
                 getMimeTypeFromFilename(filename) ?? 'application/octet-stream',
             source: f.source,
-            bytes: f.bytes ?? null,
         });
     }
     return out;

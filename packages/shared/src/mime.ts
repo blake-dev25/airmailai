@@ -55,7 +55,6 @@ const MIME_BY_EXTENSION: Record<string, string> = {
     '.heic': 'image/heic',
     '.heif': 'image/heif',
     '.hh': 'text/x-c++',
-    '.hql': 'text/x-hcl',
     '.hs': 'text/x-haskell',
     '.htm': 'text/html',
     '.html': 'text/html',
@@ -168,6 +167,33 @@ const MIME_BY_EXTENSION: Record<string, string> = {
     '.zip': 'application/zip',
     '.zsh': 'text/x-zsh',
 };
+
+const TEXT_APPLICATION_MIME_TYPES = new Set([
+    'application/graphql',
+    'application/json',
+    'application/json5',
+    'application/x-ndjson',
+    'application/x-powershell',
+]);
+
+export function isTextMimeType(mimeType: string): boolean {
+    return (
+        mimeType.startsWith('text/') ||
+        TEXT_APPLICATION_MIME_TYPES.has(mimeType)
+    );
+}
+
+const TEXT_FILE_ENTRIES = Object.entries(MIME_BY_EXTENSION).filter(
+    ([, mimeType]) => isTextMimeType(mimeType)
+);
+
+export const TEXT_FILE_EXTENSIONS: readonly string[] = TEXT_FILE_ENTRIES.map(
+    ([extension]) => extension
+);
+
+export const TEXT_FILE_MIME_TYPES: readonly string[] = [
+    ...new Set(TEXT_FILE_ENTRIES.map(([, mimeType]) => mimeType)),
+];
 
 export function getMimeTypeFromFilename(filename: string): string | null {
     const dot = filename.lastIndexOf('.');

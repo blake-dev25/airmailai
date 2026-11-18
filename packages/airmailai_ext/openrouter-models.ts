@@ -1,5 +1,8 @@
 import type { OpenRouterModel } from '@airmailai/shared';
-import { OPENROUTER_REFRESH_COOLDOWN_MS } from '@airmailai/shared';
+import {
+    OPENROUTER_REFRESH_COOLDOWN_MS,
+    errorMessage,
+} from '@airmailai/shared';
 import { log } from './debug';
 
 const FRESH_MS = 24 * 60 * 60 * 1000;
@@ -100,10 +103,6 @@ async function fetchAndSlim(apiKey: string): Promise<OpenRouterModel[]> {
         throw new Error('OpenRouter returned an empty model catalog');
     }
     return models;
-}
-
-function errorMessage(e: unknown): string {
-    return e instanceof Error ? e.message : String(e);
 }
 
 function formatRetryTime(at: number): string {

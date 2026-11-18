@@ -1,3 +1,5 @@
+import type { ProviderId } from './providers';
+
 export const MAX_CUSTOM_MODEL_FIELD_CHARS = 128;
 
 export interface CustomModelConfig {
@@ -11,7 +13,9 @@ export interface CustomModelConfig {
     codeExecution: boolean | string;
 }
 
-export function emptyCustomModelConfig(provider: string): CustomModelConfig {
+export function emptyCustomModelConfig(
+    provider: ProviderId
+): CustomModelConfig {
     return {
         temperature: '',
         maxTokens: '',

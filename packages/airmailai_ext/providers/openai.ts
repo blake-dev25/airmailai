@@ -13,18 +13,18 @@ import { makeModelFetch } from './custom-model';
 import { foldReplayIntoText } from './fold-replay';
 import { decodeBase64Text } from '../storage/encoding';
 
-type Effort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+type Effort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 function toEffort(level: string | undefined): Effort | undefined {
     if (!level) return undefined;
-    if (level === 'max') return 'xhigh';
     if (
         level === 'none' ||
         level === 'minimal' ||
         level === 'low' ||
         level === 'medium' ||
         level === 'high' ||
-        level === 'xhigh'
+        level === 'xhigh' ||
+        level === 'max'
     ) {
         return level;
     }
@@ -39,6 +39,45 @@ function isContainerExpired(e: unknown): boolean {
     );
 }
 
+function* webSearchCallChunks(
+    item: OpenAI.Responses.ResponseFunctionWebSearch
+): Generator<AirmailAIChunk> {
+    const failed = item.status === 'failed' || item.status === 'incomplete';
+    const action = item.action;
+    if (action.type === 'search') {
+        const queries = action.queries?.length
+            ? action.queries
+            : [action.query];
+        for (const [i, query] of queries.entries()) {
+            const toolCallId = `${item.id}:${i}`;
+            yield {
+                type: 'tool-call',
+                toolCallId,
+                name: 'web_search',
+                ...(query ? { input: { query } } : {}),
+            };
+            yield {
+                type: 'tool-result',
+                toolCallId,
+                ...(failed ? { errorText: `web search ${item.status}` } : {}),
+            };
+        }
+        return;
+    }
+    const url = action.url;
+    yield {
+        type: 'tool-call',
+        toolCallId: item.id,
+        name: 'web_fetch',
+        ...(url ? { input: { url } } : {}),
+    };
+    yield {
+        type: 'tool-result',
+        toolCallId: item.id,
+        ...(failed ? { errorText: `web fetch ${item.status}` } : {}),
+    };
+}
+
 function buildContent(
     msg: AirmailAIMessage,
     atts: ResolvedAttachment[],
@@ -49,7 +88,7 @@ function buildContent(
     if (msg.role === 'assistant') {
         if (codeExecEnabled) {
             for (const att of atts) {
-                if (att.kind === 'provider' && att.providerId === 'openai') {
+                if (att.kind === 'provider') {
                     sandboxFileIds.push(att.fileId);
                 }
             }
@@ -59,7 +98,6 @@ function buildContent(
     const content: OpenAI.Responses.ResponseInputContent[] = [];
     for (const att of atts) {
         if (att.kind === 'provider') {
-            if (att.providerId !== 'openai') continue;
             if (att.mediaType.startsWith('image/')) {
                 content.push({
                     type: 'input_image',
@@ -156,7 +194,7 @@ export async function* streamOpenAI(
     const codeExecEnabled = !!wireTools.codeExecution;
     const replicas: ProviderReplicas | undefined =
         args.providerFiles && Object.keys(args.providerFiles).length
-            ? { providerId: 'openai', files: args.providerFiles }
+            ? args.providerFiles
             : undefined;
     const built = buildInput(
         args.messages,
@@ -362,22 +400,9 @@ export async function* streamOpenAI(
                     }
                     break;
                 }
-                case 'response.output_item.added': {
-                    if (event.item.type === 'web_search_call') {
-                        yield {
-                            type: 'tool-call',
-                            toolCallId: event.item.id,
-                            name: 'web_search',
-                        };
-                    }
-                    break;
-                }
                 case 'response.output_item.done': {
                     if (event.item.type === 'web_search_call') {
-                        yield {
-                            type: 'tool-result',
-                            toolCallId: event.item.id,
-                        };
+                        yield* webSearchCallChunks(event.item);
                     } else if (event.item.type === 'shell_call') {
                         const item = event.item;
                         if (item.environment?.type === 'container_reference') {
@@ -471,9 +496,6 @@ export async function* streamOpenAI(
                         event.response.error?.message ??
                             'OpenAI response failed'
                     );
-                }
-                case 'error': {
-                    throw new Error(event.message ?? 'OpenAI stream error');
                 }
             }
         }

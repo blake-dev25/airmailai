@@ -25,6 +25,12 @@
         messageThinking,
         type Message,
     } from './types';
+    import {
+        buildWebActivityView,
+        webCallCounts,
+        webCallStatusText,
+        type WebCallView,
+    } from './webActivity';
 
     let {
         message,
@@ -44,6 +50,8 @@
         thinkingExpanded,
         sourcesExpanded,
         codeExpanded,
+        webSearchExpanded,
+        webFetchExpanded,
         suggestionsExpanded,
         onhoverenter,
         onhoverleave,
@@ -54,6 +62,8 @@
         onthinkingtoggle,
         onsourcestoggle,
         oncodetoggle,
+        onwebsearchtoggle,
+        onwebfetchtoggle,
         onsuggestionstoggle,
         onretry,
         ondelete,
@@ -76,6 +86,8 @@
         thinkingExpanded: boolean;
         sourcesExpanded: boolean;
         codeExpanded: boolean;
+        webSearchExpanded: boolean;
+        webFetchExpanded: boolean;
         suggestionsExpanded: boolean;
         onhoverenter: () => void;
         onhoverleave: () => void;
@@ -86,6 +98,8 @@
         onthinkingtoggle: () => void;
         onsourcestoggle: () => void;
         oncodetoggle: () => void;
+        onwebsearchtoggle: () => void;
+        onwebfetchtoggle: () => void;
         onsuggestionstoggle: () => void;
         onretry: () => void;
         ondelete: () => void;
@@ -142,14 +156,20 @@
     }
     const thinking = $derived(messageThinking(message));
     const codeExecutions = $derived(messageCodeExecutions(message));
+    const webActivity = $derived(
+        buildWebActivityView(message, isLastStreaming)
+    );
 
     const stopNotice = $derived.by(() => {
         if (message.role !== 'assistant') return null;
+        const explanation = message.metadata?.refusalExplanation;
         switch (message.metadata?.stopReason) {
             case 'length':
                 return 'Response truncated (max tokens reached)';
             case 'refusal':
-                return 'Model declined to continue';
+                return explanation
+                    ? `Model declined to continue: ${explanation}`
+                    : 'Model declined to continue';
             case 'content-filter':
                 return 'Stopped by content filter';
             case 'paused':
@@ -179,6 +199,8 @@
         !isUser &&
             (chips.length > 0 ||
                 codeExecutions.length > 0 ||
+                webActivity.searches.length > 0 ||
+                webActivity.fetches.length > 0 ||
                 citationView.sources.length > 0 ||
                 suggestionsSrcdoc !== null)
     );
@@ -253,13 +275,17 @@
 
     const expandoBtnClass =
         'flex items-center gap-1.5 w-full bg-transparent border-0 text-on-bubble-assistant font-sans text-xs font-medium opacity-60 cursor-pointer text-left transition-opacity duration-150 hover:opacity-100';
+    const webExpandoBtnClass =
+        'group flex items-center gap-1.5 w-full bg-transparent border-0 text-on-bubble-assistant font-sans text-xs font-medium cursor-pointer text-left';
+    const webExpandoDimClass =
+        'opacity-60 transition-opacity duration-150 group-hover:opacity-100';
     const codePreClass =
         'm-0 px-2.5 py-2 bg-canvas border border-border rounded-md font-mono text-xs leading-normal overflow-x-auto whitespace-pre-wrap wrap-break-word';
-    const codeLabelClass = 'text-[11px] font-medium opacity-50';
+    const codeLabelClass = 'text-[0.6875rem] font-medium opacity-50';
     const extraSectionClass =
         'not-first:mt-2 not-first:pt-2 not-first:border-t border-current/15';
     const chipBtnClass =
-        'flex items-center justify-center w-4 h-4 p-0 bg-transparent border-0 text-current opacity-50 cursor-pointer shrink-0 transition-opacity duration-150 hover:opacity-100';
+        'flex items-center justify-center w-4 h-4 p-0 bg-transparent border-0 text-current opacity-50 cursor-pointer shrink-0 transition-opacity duration-150 enabled:hover:opacity-100 disabled:opacity-[0.18] disabled:cursor-not-allowed';
 </script>
 
 {#snippet chip(c: ChipModel)}
@@ -311,11 +337,75 @@
             class={chipBtnClass}
             title="Remove {c.filename}"
             aria-label="Remove {c.filename}"
+            disabled={isStreaming}
             onclick={() => ondeletefile(c.key)}
         >
             <Icon name="trash" />
         </button>
     </span>
+{/snippet}
+
+{#snippet webCalls(
+    title: string,
+    untargetedLabel: string,
+    calls: WebCallView[],
+    expanded: boolean,
+    ontoggle: () => void
+)}
+    {@const counts = webCallCounts(calls)}
+    <div class={extraSectionClass}>
+        <button type="button" class={webExpandoBtnClass} onclick={ontoggle}>
+            <span class={webExpandoDimClass}>{title}</span>
+            <span class="flex items-center gap-1 font-normal">
+                {#each counts as count, i (count.kind)}
+                    <span
+                        class={count.kind === 'error'
+                            ? 'text-accent-fg'
+                            : webExpandoDimClass}
+                        >{count.text}{i < counts.length - 1 ? ',' : ''}</span
+                    >
+                {/each}
+            </span>
+            <span class="flex items-center {webExpandoDimClass}">
+                <Icon
+                    name="chevron-right"
+                    class="transition-transform duration-200 {expanded
+                        ? 'rotate-90'
+                        : ''}"
+                />
+            </span>
+        </button>
+        {#if expanded}
+            <ul
+                class="mt-1.5 mb-0 p-0 list-none flex flex-col gap-1 text-xs leading-[1.6]"
+            >
+                {#each calls as call (call.id)}
+                    <li class="wrap-break-word">
+                        {#if call.href}
+                            <a
+                                href={call.href}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                class="text-accent-fg hover:underline"
+                                >{call.target}</a
+                            >
+                        {:else}
+                            <span class="opacity-80"
+                                >{call.target ?? untargetedLabel}</span
+                            >
+                        {/if}
+                        <span class="opacity-50">:</span>
+                        <span
+                            class={call.status.kind === 'error'
+                                ? 'text-accent-fg'
+                                : 'opacity-60'}
+                            >{webCallStatusText(call.status)}</span
+                        >
+                    </li>
+                {/each}
+            </ul>
+        {/if}
+    </div>
 {/snippet}
 
 <div
@@ -473,7 +563,7 @@
                                             {/if}
                                             {#if ce.stderr}
                                                 <div
-                                                    class="text-[11px] font-medium text-accent-fg"
+                                                    class="text-[0.6875rem] font-medium text-accent-fg"
                                                 >
                                                     Error
                                                 </div>
@@ -484,7 +574,7 @@
                                             {/if}
                                             {#if ce.errorText}
                                                 <div
-                                                    class="text-[11px] text-accent-fg opacity-90"
+                                                    class="text-[0.6875rem] text-accent-fg opacity-90"
                                                 >
                                                     {ce.errorText}
                                                 </div>
@@ -494,6 +584,24 @@
                                 </div>
                             {/if}
                         </div>
+                    {/if}
+                    {#if webActivity.searches.length}
+                        {@render webCalls(
+                            'Web Search',
+                            'Search',
+                            webActivity.searches,
+                            webSearchExpanded,
+                            onwebsearchtoggle
+                        )}
+                    {/if}
+                    {#if webActivity.fetches.length}
+                        {@render webCalls(
+                            'Web Fetch',
+                            'Fetch',
+                            webActivity.fetches,
+                            webFetchExpanded,
+                            onwebfetchtoggle
+                        )}
                     {/if}
                     {#if citationView.sources.length}
                         <div class={extraSectionClass}>
@@ -660,7 +768,7 @@
         border: 1px solid var(--color-border);
         padding: 2px 7px;
         border-radius: 5px;
-        font-size: 11px;
+        font-size: 0.6875rem;
         font-weight: 500;
         white-space: nowrap;
         pointer-events: none;

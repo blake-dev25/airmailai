@@ -1,10 +1,10 @@
 import type { CustomModelConfig } from './custom-model';
+import type { ProviderId } from './providers';
 
 export interface DraftAttachmentMeta {
     name: string;
     mediaType: string;
     sizeBytes: number;
-    encodedSizeBytes: number;
 }
 
 export interface DraftAttachment extends DraftAttachmentMeta {
@@ -21,15 +21,22 @@ export type FileTransferRequest =
           chatId: string;
           attachment: DraftAttachmentMeta;
           chunkCount: number;
-          replicateTo?: string;
+          replicateTo?: ProviderId;
           sourceTabId?: string;
       }
     | { type: 'upload_chunk'; index: number; base64: string }
     | { type: 'upload_complete' }
+    | {
+          type: 'import_messages';
+          messages: AirmailAIMessage[];
+          finalMeta?: SiteChatMeta;
+          sourceTabId?: string;
+      }
     | { type: 'download_start'; hash: string }
     | { type: 'download_chunk'; index: number };
 
 export type FileTransferResponse =
+    | { type: 'import_ack' }
     | { type: 'upload_ready' }
     | { type: 'upload_chunk_saved'; index: number }
     | { type: 'upload_saved'; hash: string }
@@ -49,6 +56,7 @@ export interface AirmailAIMessageMetadata {
     tokens?: { input: number; output: number };
     stopReason?:
         'stop' | 'length' | 'refusal' | 'content-filter' | 'paused' | 'error';
+    refusalExplanation?: string;
 }
 
 export type AirmailAIToolName = 'web_search' | 'web_fetch' | 'code_execution';
@@ -69,7 +77,6 @@ export interface AirmailAITextPart {
     state: 'streaming' | 'done';
 }
 
-// thinking / reasoning summary.
 export interface AirmailAIReasoningPart {
     type: 'reasoning';
     text: string;
@@ -134,7 +141,7 @@ export interface AirmailAIFilePart {
 
 export type FileDeleteTarget =
     | { kind: 'local'; hash: string }
-    | { kind: 'provider'; providerId: string; fileId: string };
+    | { kind: 'provider'; providerId: ProviderId; fileId: string };
 
 export type FileAvailability = 'local' | 'provider' | 'expired' | 'missing';
 
@@ -209,11 +216,6 @@ export type AirmailAIChunk =
           replicaFileId?: string;
       }
     | {
-          type: 'start';
-          messageId?: string;
-          metadata?: Partial<AirmailAIMessageMetadata>;
-      }
-    | {
           type: 'finish';
           metadata?: Partial<AirmailAIMessageMetadata>;
           containerId?: string;
@@ -243,11 +245,11 @@ export interface TurnStartRequest {
     type: 'start';
     chatId: string;
     sourceTabId: string;
-    provider: string;
+    provider: ProviderId;
     model: string;
     system?: string;
     params?: Record<string, unknown>;
-    meta: ChatMeta;
+    meta: SiteChatMeta;
     assistantMessageId: string;
     assistantCreatedAt: number;
 }
@@ -283,7 +285,7 @@ export type BroadcastEvent =
           type: 'turn-start';
           chatId: string;
           sourceTabId: string;
-          meta: ChatMeta;
+          meta: SiteChatMeta;
           assistantMessageId: string;
           assistantCreatedAt: number;
       }
@@ -306,7 +308,7 @@ export type BroadcastEvent =
     | {
           type: 'replica-warning';
           chatId: string;
-          provider: string;
+          provider: ProviderId;
           filename: string;
           message: string;
       }
@@ -334,7 +336,7 @@ export interface UserSettings {
     chatWidth: number;
     smoothTextMode: 'smooth' | 'raw';
     submitKeystroke: 'enter' | 'ctrl+enter';
-    modelTier: 'latest' | 'previous' | 'legacy' | 'test';
+    modelTier: 'latest' | 'legacy' | 'test';
     autoscrollMode: 'pin-user-message' | 'pin-bottom' | 'off';
     chatSortOrder: 'modified' | 'created';
     enableWebSearch: boolean;
@@ -342,7 +344,7 @@ export interface UserSettings {
     enableCodeExecution: boolean;
     enableFileUploads: boolean;
     enableProviderFileStorage: boolean;
-    providerId: string;
+    providerId: ProviderId;
     modelId: string;
     temperature: number;
     maxTokens: number;
@@ -386,14 +388,9 @@ export const SETTINGS_KEYS = Object.keys(
     SETTINGS_KEY_MAP
 ) as (keyof UserSettings)[];
 
-export interface ChatMeta {
+export interface ChatConfig {
     customModel: CustomModelConfig | null;
-    id: string;
-    title: string;
-    createdAt: number;
-    lastMessageAt?: number;
-    revision?: number;
-    providerId: string;
+    providerId: ProviderId;
     modelId: string;
     temperature: number;
     maxTokens: number;
@@ -403,6 +400,17 @@ export interface ChatMeta {
     webFetch: boolean;
     codeExecution: boolean;
     systemPrompt: string;
+}
+
+export interface SiteChatMeta extends ChatConfig {
+    id: string;
+    title: string;
+    createdAt: number;
+    lastMessageAt?: number;
+}
+
+export interface ChatMeta extends SiteChatMeta {
+    revision?: number;
     draftAttachments?: DraftAttachment[];
     containerId?: string;
     containerProvider?: string;
@@ -432,7 +440,7 @@ export interface ChatPage {
 export const HISTORY_PAGE_CHARS = 16 * 1024 * 1024;
 
 export interface ImportChatEntry {
-    meta: ChatMeta;
+    meta: SiteChatMeta;
     messages: AirmailAIMessage[];
 }
 
@@ -459,14 +467,13 @@ export interface LocalFileInfo {
 export interface ProviderFileInfo {
     fileId: string;
     filename: string;
-    mediaType: string;
     sizeBytes: number;
     createdAt: number;
     hash?: string;
 }
 
 export interface ProviderFileRef {
-    providerId: string;
+    providerId: ProviderId;
     fileId: string;
 }
 
@@ -477,27 +484,32 @@ export interface ProviderFileEntry {
 }
 
 export type StorageRequest =
-    | { type: 'save_key'; provider: string; apiKey: string }
-    | { type: 'clear_key'; provider: string }
-    | { type: 'has_keys'; providers: string[] }
-    | { type: 'test_key'; provider: string }
+    | { type: 'save_key'; provider: ProviderId; apiKey: string }
+    | { type: 'clear_key'; provider: ProviderId }
+    | { type: 'has_keys'; providers: ProviderId[] }
+    | { type: 'test_key'; provider: ProviderId }
     | { type: 'save_settings'; settings: Partial<UserSettings> }
     | { type: 'load_settings' }
-    | { type: 'save_meta'; meta: ChatMeta; sourceTabId?: string }
+    | { type: 'save_meta'; meta: SiteChatMeta; sourceTabId?: string }
     | {
           type: 'prepare_turn';
-          meta: ChatMeta;
+          meta: SiteChatMeta;
           message: StoredMessage;
           sourceTabId?: string;
       }
     | {
           type: 'prepare_retry';
-          meta: ChatMeta;
+          meta: SiteChatMeta;
           lastKeptId: string;
           sourceTabId?: string;
       }
-    | { type: 'remove_draft_attachment'; chatId: string; key: string }
-    | { type: 'clear_draft_attachments'; chatId: string }
+    | {
+          type: 'remove_draft_attachment';
+          chatId: string;
+          key: string;
+          sourceTabId?: string;
+      }
+    | { type: 'clear_draft_attachments'; chatId: string; sourceTabId?: string }
     | { type: 'put_message'; message: StoredMessage; sourceTabId?: string }
     | { type: 'import_chats'; chats: ImportChatEntry[]; sourceTabId?: string }
     | {
@@ -517,9 +529,9 @@ export type StorageRequest =
     | { type: 'load_openrouter_models' }
     | { type: 'get_openrouter_refresh_status' }
     | { type: 'refresh_openrouter_models' }
-    | { type: 'file_status'; hashes: string[]; provider: string }
+    | { type: 'file_status'; hashes: string[]; provider: ProviderId }
     | { type: 'list_local_files' }
-    | { type: 'list_provider_files'; provider: string }
+    | { type: 'list_provider_files'; provider: ProviderId }
     | {
           type: 'delete_stored_file';
           target: FileDeleteTarget;
@@ -538,7 +550,7 @@ export interface StorageUsage {
 }
 
 export type StorageResponse =
-    | { type: 'saved'; warning?: string }
+    | { type: 'saved' }
     | { type: 'turn_prepared'; revision: number }
     | { type: 'has_keys'; saved: Record<string, boolean> }
     | { type: 'key_test'; ok: boolean; message?: string }
@@ -553,3 +565,38 @@ export type StorageResponse =
     | { type: 'stored_file_deleted'; chatIds: string[] }
     | ({ type: 'storage_usage' } & StorageUsage)
     | { type: 'error'; message: string };
+
+export const STORAGE_RESPONSE_TYPE = {
+    save_key: 'saved',
+    clear_key: 'saved',
+    has_keys: 'has_keys',
+    test_key: 'key_test',
+    save_settings: 'saved',
+    load_settings: 'settings',
+    save_meta: 'saved',
+    prepare_turn: 'turn_prepared',
+    prepare_retry: 'turn_prepared',
+    remove_draft_attachment: 'saved',
+    clear_draft_attachments: 'saved',
+    put_message: 'saved',
+    import_chats: 'saved',
+    delete_message: 'saved',
+    delete_chat: 'saved',
+    load_chat_metas: 'chat_metas',
+    load_chat_page: 'chat_page',
+    load_openrouter_models: 'openrouter_models',
+    get_openrouter_refresh_status: 'openrouter_refresh_status',
+    refresh_openrouter_models: 'openrouter_models',
+    file_status: 'file_status',
+    list_local_files: 'local_files',
+    list_provider_files: 'provider_files',
+    delete_stored_file: 'stored_file_deleted',
+    get_storage_usage: 'storage_usage',
+    clear_chats: 'saved',
+    clear_all: 'saved',
+} as const satisfies Record<StorageRequest['type'], StorageResponse['type']>;
+
+export type StorageResponseFor<T extends StorageRequest['type']> = Extract<
+    StorageResponse,
+    { type: (typeof STORAGE_RESPONSE_TYPE)[T] }
+>;

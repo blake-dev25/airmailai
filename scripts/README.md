@@ -8,13 +8,24 @@ the repo root; Bun auto-loads `.env` (see `.env.example`).
 | `update-model-list.ts`          | Rebuild `models.json` from the provider APIs and docs. `bun run models:update`                         |
 | `model-watcher.ts`              | Report provider model ids not yet acknowledged by a successful update. `bun run models:watch`         |
 | `deploy-model-list.ts`          | Deploy the watcher/updater Lambdas and their infra. `bun run deploy:model-list`                        |
-| `deploy-web.ts`                 | Build and deploy the website to S3 + CloudFront. `bun run deploy:web`                                  |
+| `deploy-web.ts`                 | Build and deploy the website to S3 + CloudFront, then verify the live security headers against `EXPECTED_SECURITY_HEADERS`. `bun run deploy:web` |
 | `asset-retention.ts`            | Library used by `deploy-web.ts` to prune hashed assets unused for seven days                           |
 | `gen-version.ts`                | Write `VERSION` / `VERSION_NAME` from the git state (runs at the start of every build)                 |
 | `gen-third-party-licenses.ts`   | Regenerate the third-party license notices from runtime dependencies                                   |
 | `gen-logo.ts`, `gen-graphics.ts` | Render the stamp logo and store/promo graphics into `packages/airmailai_web/static/`                  |
 | `provider-test.ts`              | Isolation harness for the extension's provider streams and server tools                                |
 | `model-list/`                   | Library shared by the model list scripts and the Lambda handlers (see below)                           |
+| `cli-flags.ts`                  | Flag parsing shared by the scripts; an unknown `--flag` or a flag missing its value is an error        |
+
+## Website deploy
+
+`deploy-web.ts` refuses to run with uncommitted changes unless `--allow-dirty`
+is passed.
+
+```
+bun run deploy:web                            deploy a clean tree
+bun run deploy:web --allow-dirty              deploy the working tree as-is
+```
 
 ## The model list
 
@@ -29,7 +40,7 @@ single output of everything in `model-list/`.
 | Published model list          | `packages/airmailai_web/static/models.json`      | `s3://<www-bucket>/models.json` (via CloudFront) |
 | Docs cache, probe cache       | `scripts/.tmp/{docs,probe}-cache.json`           | `s3://<state-bucket>/{docs,probe}-cache.json`    |
 | Watcher state                 | `scripts/.tmp/watcher-state.json`                | `s3://<state-bucket>/watcher-state.json`         |
-| Run snapshots (debug)         | `scripts/.tmp/snapshots/`                        | `s3://<state-bucket>/snapshots/` (30-day expiry) |
+| Run snapshots (debug)         | `scripts/.tmp/snapshots/` (30-day expiry)        | `s3://<state-bucket>/snapshots/` (30-day expiry) |
 | Tier assignments              | `packages/airmailai_web/src/lib/models/tiers.ts` | shipped inside the site bundle                   |
 | Per-model overrides           | `scripts/model-list/overrides.ts`                | bundled into the Lambda                          |
 
@@ -64,7 +75,13 @@ updater before attempting its notification.
 2. For each requested provider, run its pipeline: list models from the API,
    fill gaps from OpenRouter metadata and the provider's docs pages (cached),
    apply `overrides.ts`, and probe each model once with a one-token request
-   (cached, 30-day TTL on non-200s).
+   (cached, 30-day TTL, so retired models fail their next probe). A docs page
+   is cached as a success only when its required fields parsed; anything else
+   is cached as an `unparsed` failure with a 30-day TTL, so `--retry-non-200`
+   re-scrapes it.
+   Values pinned in `overrides.ts` win over docs values. Every listed id the
+   pipeline does not publish is recorded with a reason; `--verbose` prints
+   them all.
 3. Merge per provider: fresh models replace matching ids, models the provider
    no longer lists are **kept verbatim** and reported as "unlisted". Models are
    removed only when explicitly listed in `RETIRED_MODEL_IDS` in `overrides.ts`.
@@ -112,8 +129,23 @@ bun run models:update --anthropic-scrape-test <docs-slug> [--show-md]
 `model-watcher.ts` fetches each provider's raw model id list and diffs it against
 the acknowledged ids in `watcher-state.json`. Detection alone never advances
 that state. With `--update` it runs the updater for providers with unacknowledged
-ids. In AWS the watcher runs hourly at :05 and invokes the updater Lambda
-asynchronously, passing the observed ids along with the requested providers.
+ids and syncs `tiers.ts`. In AWS the watcher runs hourly at :05 and invokes the
+updater Lambda asynchronously, passing the observed and new ids along with the
+requested providers.
+
+Polling is retried at three levels. Every HTTP request is attempted three
+times. The watcher Lambda then re-polls only the providers whose fetch still
+failed, one minute and three minutes after the first attempt, before it
+reports; a provider that recovers in that window is not reported as an error.
+The watcher has no Lambda-level retry, because the next hourly run is its
+retry. The updater Lambda keeps Lambda's two asynchronous retries; its caches
+make a re-run cheap.
+
+When the watcher supplies new ids, the update report warns about each one the
+pipeline listed but did not publish, with the reason (no docs page yet, missing
+metadata, failed probe, not a chat model). Those ids are still acknowledged.
+A docs-page failure is cached for 30 days, so once the page exists run
+`bun run models:update --write --retry-non-200 --<provider>`.
 
 After publication completes, the updater acknowledges only the observed ids
 for successful provider pipelines. Acknowledgements merge with existing state
@@ -121,8 +153,10 @@ using conditional S3 writes, so overlapping completions cannot erase each
 other's acknowledgements or acknowledge ids detected by a later invocation.
 Failed handoffs and failed provider updates remain detectable on the next
 hourly run. Failed provider outcomes also throw from the Lambda handler to
-enable Lambda's asynchronous error retries. A successful pipeline acknowledges
-the raw list it processed, including non-chat models skipped by its filters.
+enable Lambda's asynchronous error retries; they are reported once, in the
+update report. A successful pipeline acknowledges the raw list it processed,
+including non-chat models skipped by its filters. Each Lambda posts a warning
+to Discord shortly before its timeout would kill it.
 
 Running `models:watch` without `--update` only reports; repeated runs continue
 to report unacknowledged ids. A standalone `models:update --write` does not
@@ -134,9 +168,6 @@ Local locks are released when an update finishes or throws. If a process is
 terminated while holding a lock, the next update reports its path after a
 five-second wait. Confirm no model-list process is running before removing
 that stale lock.
-
-Run `bun test tests/unit` for the local regression suite. The model-list tests
-mock provider, AWS, and Discord requests and do not publish or spend API tokens.
 
 ### Tiers and the "New" group
 
@@ -168,7 +199,8 @@ for a tier.
   alias ids where the pipeline normalizes provider ids. Deploy all publishers
   with the retirement list before publishing the removal; outdated code does
   not know which models are retired. The updater reports explicit retirements
-  separately and warns about OpenAI models with a published shutdown date.
+  separately. A retired model surfaces as a failed runtime probe or an
+  unlisted model; add it to `RETIRED_MODEL_IDS` then.
 
 ### Overrides
 
@@ -183,12 +215,14 @@ entries whose model is no longer listed.
 
 1. Bundles `model-list/lambda.ts` with `Bun.build` into one ESM file and zips
    it.
-2. Deploys `infra/model-list.cfn.yaml`: the private state bucket, an IAM role
-   scoped to the two buckets, the distribution, and the SSM path, both
-   functions (Node 26, arm64), the hourly EventBridge rule, and 30-day log
-   groups.
+2. Deploys `infra/model-list.cfn.yaml`: the private state bucket, one IAM role
+   per function (the watcher reads its state and invokes the updater; the
+   updater writes the state bucket, `models.json`, and the invalidation), both
+   functions (Node 26, arm64) with their retry settings, the hourly
+   EventBridge rule, and 30-day log groups.
 3. Copies the four provider keys and the Discord webhook from `.env` into SSM
-   as SecureString parameters under `/airmailai/model-list/`.
+   as SecureString parameters under `/airmailai/model-list/`. The Lambdas load
+   only those five names from that path.
 4. Uploads the zip to `airmailai-model-list-watcher` and
    `airmailai-model-list-updater`.
 
@@ -209,23 +243,28 @@ Omit `providers` to run all three. Logs are in CloudWatch under
 ## Third-party licenses
 
 `gen-third-party-licenses.ts` generates the license notices for the runtime
-dependencies actually bundled into the shipped web app and extension, writing
-identical copies to `THIRD_PARTY_LICENSES` at the repo root,
+dependencies of the shipped web app and extension, writing identical copies to
+`THIRD_PARTY_LICENSES` at the repo root,
 `packages/airmailai_web/static/legal/third-party-licenses.txt`, and
 `packages/airmailai_ext/public/third-party-licenses.txt`.
 
-It walks the `dependencies` (not `devDependencies`) of `airmailai_web` and
-`airmailai_ext`, drops the workspace package `@airmailai/shared`, reads each
-installed package's license and copyright from its `package.json` and `LICENSE`
-file, and emits one attribution block per package followed by the full text of
-every distinct license referenced. Apache-2.0 packages that ship a `NOTICE`
-file have it reproduced in their block (Apache-2.0 Section 4(d)). Packages
-offered under an SPDX "X OR Y" choice get a single elected license (see
-`LICENSE_ELECTIONS` in the script) so the attribution states the terms we
-actually rely on.
+It starts from the `dependencies` (not `devDependencies`) of `airmailai_web`
+and `airmailai_ext` and follows every package's own `dependencies` and
+installed `optionalDependencies`, resolving each one from the directory of the
+package that requires it. The result is the full runtime closure: a superset
+of what the bundlers ship, since tree-shaken packages are still listed.
+Workspace packages under `@airmailai/` are walked but not attributed. For each
+package it reads the license from `package.json` and the text from every
+`LICENSE`/`LICENCE`/`COPYING` file, and emits one attribution block per package
+followed by the full text of every distinct license referenced. `NOTICE` files
+are reproduced in their package's block (Apache-2.0 Section 4(d)). Packages
+offered under an SPDX "X OR Y" choice must have a single elected license in
+`LICENSE_ELECTIONS` so the attribution states the terms we actually rely on.
+A package installed in several versions gets one block per distinct set of
+terms.
 
 ```
-bun scripts/gen-third-party-licenses.ts            dry run (prints)
+bun scripts/gen-third-party-licenses.ts            dry run (lists packages)
 bun scripts/gen-third-party-licenses.ts --write    write all three files
 ```
 

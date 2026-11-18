@@ -12,7 +12,7 @@ import type {
 export interface MessageAssemblerState {
     message: AirmailAIMessage;
     textById: Map<string, AirmailAITextPart>;
-    textInfoById: Map<string, { part: AirmailAITextPart; textIndex: number }>;
+    textIndexById: Map<string, number>;
     reasoningById: Map<string, AirmailAIReasoningPart>;
     toolById: Map<string, AirmailAIToolPart>;
     sourceIds: Set<string>;
@@ -24,7 +24,7 @@ export function createMessageAssembler(
     return {
         message,
         textById: new Map(),
-        textInfoById: new Map(),
+        textIndexById: new Map(),
         reasoningById: new Map(),
         toolById: new Map(),
         sourceIds: new Set(),
@@ -85,10 +85,7 @@ export function applyAirmailAIChunk(
                 state: 'streaming',
             });
             state.textById.set(chunk.id, part);
-            state.textInfoById.set(chunk.id, {
-                part,
-                textIndex: state.textInfoById.size,
-            });
+            state.textIndexById.set(chunk.id, state.textIndexById.size);
             break;
         }
         case 'text-delta': {
@@ -123,6 +120,11 @@ export function applyAirmailAIChunk(
             break;
         }
         case 'tool-call': {
+            const started = state.toolById.get(chunk.toolCallId);
+            if (started) {
+                if (chunk.input) Object.assign(started, { input: chunk.input });
+                break;
+            }
             const part = pushPart(state, {
                 type: 'tool',
                 toolCallId: chunk.toolCallId,
@@ -168,12 +170,12 @@ export function applyAirmailAIChunk(
             break;
         }
         case 'citation': {
-            const info = state.textInfoById.get(chunk.textId);
-            if (!info) break;
+            const textIndex = state.textIndexById.get(chunk.textId);
+            if (textIndex === undefined) break;
             pushPart(state, {
                 type: 'citation',
                 sourceId: chunk.sourceId,
-                textIndex: info.textIndex,
+                textIndex,
                 textEnd: chunk.textEnd ?? -1,
                 ...(chunk.textStart !== undefined
                     ? { textStart: chunk.textStart }
@@ -205,11 +207,6 @@ export function applyAirmailAIChunk(
                 sizeBytes: chunk.sizeBytes,
                 hash: chunk.hash,
             });
-            break;
-        }
-        case 'start': {
-            if (chunk.messageId) state.message.id = chunk.messageId;
-            if (chunk.metadata) mergeMetadata(state, chunk.metadata);
             break;
         }
         case 'finish': {

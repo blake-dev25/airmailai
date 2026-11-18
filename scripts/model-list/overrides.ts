@@ -21,7 +21,14 @@ export const RETIRED_MODEL_IDS: Record<
         'o3-mini',
         'o4-mini',
     ],
-    google: [],
+    google: [
+        'antigravity-preview-05-2026',
+        'antigravity-preview-09-2026',
+        'deep-research-max-preview-04-2026',
+        'deep-research-pro-preview-12-2025',
+        'deep-research-preview-04-2026',
+        'gemini-2.5-computer-use-preview-10-2025',
+    ],
 };
 
 interface ThinkingOverride {
@@ -40,10 +47,9 @@ export interface ModelOverride {
     defaultTemperature?: number;
     knowledgeCutoff?: string;
     thinking?: ThinkingOverride;
-    thinkingExtraLevels?: ThinkingLevel[];
     // *** Server-side tool support. Only anthropic pins tools here: the string
     // IS the Anthropic API tool `type` (versioned by date), and /v1/models
-    // returns code_execution support as a boolean but not the version string.
+    // reports tool support (capabilities.server_tools) but not the version.
     // OpenAI/Google version their server tools globally, so their support is
     // attached provider-wide in packages/airmailai_web/src/lib/models/index.ts.
     tools?: ModelTools;
@@ -78,12 +84,6 @@ export function applyOverride(m: DerivedModel, o: ModelOverride): void {
             ...(adaptive ? { adaptive } : {}),
         };
     }
-    if (o.thinkingExtraLevels && m.thinking) {
-        m.thinking.levels = sortLevels([
-            ...m.thinking.levels,
-            ...o.thinkingExtraLevels,
-        ]);
-    }
     if (o.tools) m.tools = o.tools;
 }
 
@@ -91,9 +91,8 @@ export function applyOverride(m: DerivedModel, o: ModelOverride): void {
 // https://platform.claude.com/docs/en/agents-and-tools/tool-use/
 // (web-search-tool, web-fetch-tool, code-execution-tool). Models without a
 // tools override default to ANTHROPIC_TOOLS_LATEST - new Anthropic models
-// support the latest variants. Older models can't use the newer _20260209
-// variants because they don't support programmatic tool calling - we pin
-// them to the direct-only legacy versions below.
+// support the latest variants. Older models that can't use the latest
+// variants are pinned to the versions they support below.
 export const ANTHROPIC_TOOLS_LATEST: ModelTools = {
     webSearch: 'web_search_20260318',
     webFetch: 'web_fetch_20260318',
@@ -112,22 +111,10 @@ const ANTHROPIC_TOOLS_LEGACY: ModelTools = {
 
 // *** Anthropic's /v1/models response is rich, and knowledgeCutoff comes from
 // scraping the models overview docs page. The only routine gaps are aliases
-// for date-suffixed ids, rare extra effort levels, and non-latest tool
-// version pins (capabilities.code_execution gives boolean support but not
-// the version, and unpinned models default to ANTHROPIC_TOOLS_LATEST).
+// for date-suffixed ids and non-latest tool version pins
+// (capabilities.server_tools gives boolean support but not the version, and
+// unpinned models default to ANTHROPIC_TOOLS_LATEST).
 export const ANTHROPIC_OVERRIDES: Record<string, ModelOverride> = {
-    // *** Fable 5 rejects thinking: {type: "disabled"} (400) - thinking is
-    // always on, so a 'none' level would silently run adaptive thinking at
-    // default effort. Derived adaptive: 'required' is preserved by the
-    // override-apply helpers.
-    'claude-fable-5': {
-        thinking: {
-            levels: ['low', 'medium', 'high', 'xhigh', 'max'],
-            defaultLevel: 'high',
-        },
-    },
-    'claude-opus-4-8': { thinkingExtraLevels: ['xhigh'] },
-    'claude-opus-4-7': { thinkingExtraLevels: ['xhigh'] },
     'claude-opus-4-5-20251101': { tools: ANTHROPIC_TOOLS_4_5 },
     'claude-sonnet-4-5-20250929': { tools: ANTHROPIC_TOOLS_4_5 },
     'claude-haiku-4-5-20251001': {
@@ -161,7 +148,7 @@ export const OPENAI_OVERRIDES: Record<string, ModelOverride> = {
 // generation accepts sampling parameters, so temperature is derived for
 // those ids alone (an explicit temperatureMax override still applies).
 // Thinking levels come from the model table scraped off
-// https://ai.google.dev/gemini-api/docs/thinking; overrides remain only where
+// https://aistudio.google.com/docs/thinking; overrides remain only where
 // that table falls short:
 // - 2.5 models take thinkingBudget; 0 disables (except Pro, which can't
 //   disable), -1 is dynamic (the API default for Pro and Flash). The table
